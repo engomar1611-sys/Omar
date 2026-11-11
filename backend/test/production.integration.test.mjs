@@ -70,6 +70,10 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(Number(costJournal.rows[0].total_credit),12);
     const costJournalLines = await pool.query('SELECT a.code,l.debit,l.credit FROM journal_lines l JOIN gl_accounts a ON a.id=l.account_id WHERE l.journal_entry_id=$1 ORDER BY a.code',[costJournal.rows[0].id]);
     assert.deepEqual(costJournalLines.rows.map(x=>[x.code,Number(x.debit),Number(x.credit)]),[['1200',12,0],['5100',0,10],['5200',0,2]]);
+    const duplicateCosts = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/costs',headers,payload:{
+      components:[{componentCode:'LABOR',description:'أجور اختبار',amount:10}]
+    }});
+    assert.equal(duplicateCosts.statusCode,409);
     const failed = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/quality',headers,payload:{result:'FAIL',notes:'فشل اختبار'}});
     assert.equal(failed.statusCode,200,failed.body);
     assert.equal(failed.json().availableForSale,false);
