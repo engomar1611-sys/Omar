@@ -43,3 +43,10 @@ INSERT INTO permissions(code, name_ar, module_code) VALUES
   ('FEED_TYPES.READ', 'عرض أنواع الأعلاف', 'MASTER_DATA'),
   ('FEED_PRODUCTS.READ', 'عرض منتجات الأعلاف', 'MASTER_DATA')
 ON CONFLICT (code) DO NOTHING;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_item_barcodes_primary
+  ON item_barcodes(item_id) WHERE is_primary = TRUE;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_warehouse_location_code_lower
+  ON warehouse_locations(warehouse_id, LOWER(code));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_warehouse_code_lower
+  ON warehouses(plant_id, LOWER(code));
