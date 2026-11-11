@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS sales_invoice_lines (
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
  sales_invoice_id UUID NOT NULL REFERENCES sales_invoices(id) ON DELETE RESTRICT,
  item_id UUID NOT NULL REFERENCES items(id) ON DELETE RESTRICT,
+ lot_no VARCHAR(80) NOT NULL DEFAULT '',
  quantity NUMERIC(18,6) NOT NULL CHECK(quantity>0),
  unit_price NUMERIC(18,6) NOT NULL CHECK(unit_price>=0),
  unit_cost NUMERIC(18,6) NOT NULL CHECK(unit_cost>=0),
