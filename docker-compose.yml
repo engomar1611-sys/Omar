@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: new-feed-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: newfeed_erp
+      POSTGRES_USER: newfeed
+      POSTGRES_PASSWORD: newfeed_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - new_feed_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U newfeed -d newfeed_erp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  new_feed_pgdata:
