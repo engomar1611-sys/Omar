@@ -299,7 +299,7 @@ export async function operationsRoutes(app, { db }) {
         if(extraTotal>0){
           const period=await c.query('SELECT status FROM accounting_periods WHERE CURRENT_DATE BETWEEN start_date AND end_date FOR UPDATE');
           if(period.rowCount&&period.rows[0].status!=='OPEN')throw Object.assign(new Error('الفترة المحاسبية مغلقة أو مقفلة'),{code:'P0001'});
-          const mapping={LABOR:'5100',ENERGY:'5200',OVERHEAD:'5300',PACKAGING:'5400',WASTE:'5300'};
+          const mapping={LABOR:'5100',ENERGY:'5200',OVERHEAD:'5300',PACKAGING:'5410',WASTE:'5300'};
           const requiredCodes=['1200',...new Set(components.filter(x=>Number(x.amount)>0).map(x=>mapping[x.componentCode]))];
           const found=await c.query('SELECT id,code FROM gl_accounts WHERE code=ANY($1::text[]) AND is_active=TRUE',[requiredCodes]);
           const ids=Object.fromEntries(found.rows.map(x=>[x.code,x.id]));
