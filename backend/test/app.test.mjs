@@ -300,7 +300,8 @@ test('commercial and accounting endpoints require authentication', async () => {
     const paths = [
       '/api/v1/customers',
       '/api/v1/sales/invoices',
-      '/api/v1/accounting/journals'
+      '/api/v1/accounting/journals',
+      '/api/v1/quality/finished-goods/11111111-1111-4111-8111-111111111111/inspect'
     ];
     for (const url of paths) {
       const response = await app.inject({ method: 'GET', url });
@@ -311,6 +312,24 @@ test('commercial and accounting endpoints require authentication', async () => {
       ['/api/v1/sales/returns', {}],
       ['/api/v1/accounting/expenses', {}]
     ]) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test('payables, supplier returns, period close and returned-goods quality endpoints require authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    const cases = [
+      ['/api/v1/accounting/supplier-payments', {}],
+      ['/api/v1/purchases/returns', {}],
+      ['/api/v1/accounting/periods/close', {}],
+      ['/api/v1/quality/sales-returns/11111111-1111-4111-8111-111111111111/inspect', { result: 'PASS' }]
+    ];
+    for (const [url, payload] of cases) {
       const response = await app.inject({ method: 'POST', url, payload });
       assert.equal(response.statusCode, 401, url);
     }
