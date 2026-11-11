@@ -25,6 +25,8 @@ async function journal(c,{no,date,sourceType,sourceId,description,actor,lines}){
 }
 
 async function reverseJournal(c,{sourceType,sourceId,reversalType,reversalNo,actor,reason}){
+ const period=await c.query('SELECT status FROM accounting_periods WHERE CURRENT_DATE BETWEEN start_date AND end_date FOR UPDATE');
+ if(period.rowCount&&period.rows[0].status!=='OPEN')throw Object.assign(new Error('لا يمكن عكس مستند في فترة محاسبية مغلقة'),{code:'P0001'});
  const original=await c.query("SELECT * FROM journal_entries WHERE source_type=$1 AND source_id=$2 AND status='POSTED' FOR UPDATE",[sourceType,sourceId]);
  if(!original.rowCount)throw Object.assign(new Error('القيد الأصلي غير موجود أو سبق عكسه'),{code:'P0001'});
  const lines=await c.query('SELECT account_id,debit,credit,description FROM journal_lines WHERE journal_entry_id=$1',[original.rows[0].id]);
