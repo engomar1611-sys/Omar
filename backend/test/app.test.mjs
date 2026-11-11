@@ -342,7 +342,7 @@ test('payables, supplier returns, period close and returned-goods quality endpoi
 test('formulation lifecycle and inventory adjustment endpoints require authentication', async () => {
   const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
   try {
-    for (const url of ['/api/v1/formulations', '/api/v1/inventory/movements']) {
+    for (const url of ['/api/v1/formulations', '/api/v1/inventory/movements', '/api/v1/reports/trial-balance', '/api/v1/reports/inventory-valuation', '/api/v1/reports/production-costs', '/api/v1/reports/sales-summary']) {
       const response = await app.inject({ method: 'GET', url });
       assert.equal(response.statusCode, 401, url);
     }
@@ -350,7 +350,8 @@ test('formulation lifecycle and inventory adjustment endpoints require authentic
       ['/api/v1/formulations', {}],
       ['/api/v1/inventory/adjustments', {}],
       ['/api/v1/formulations/11111111-1111-4111-8111-111111111111/approve', {}],
-      ['/api/v1/inventory/adjustments/11111111-1111-4111-8111-111111111111/approve', {}]
+      ['/api/v1/inventory/adjustments/11111111-1111-4111-8111-111111111111/approve', {}],
+      ['/api/v1/production/orders/11111111-1111-4111-8111-111111111111/losses', {}]
     ]) {
       const response = await app.inject({ method: 'POST', url, payload });
       assert.equal(response.statusCode, 401, url);
