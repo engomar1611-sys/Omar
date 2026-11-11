@@ -13,12 +13,14 @@ export const config = Object.freeze({
   host: process.env.HOST ?? '127.0.0.1',
   port: positiveInteger(process.env.PORT, 3000, 'PORT'),
   databaseUrl: process.env.DATABASE_URL,
+  authJwtSecret: process.env.AUTH_JWT_SECRET,
   logLevel: process.env.LOG_LEVEL ?? 'info'
 });
 
 export function validateConfig(value = config) {
-  if (!value.databaseUrl) {
-    throw new Error('DATABASE_URL is required');
+  if (!value.databaseUrl) throw new Error('DATABASE_URL is required');
+  if (!value.authJwtSecret || value.authJwtSecret.length < 32) {
+    throw new Error('AUTH_JWT_SECRET must contain at least 32 characters');
   }
   return value;
 }
