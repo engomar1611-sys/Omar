@@ -79,6 +79,17 @@ export async function operationsRoutes(app, { db }) {
     }catch(e){return failure(reply,e);}
   });
 
+  app.get('/api/v1/goods-receipts', auth(app,'PURCHASES.READ'), async(_req,reply)=>{
+    try{return (await db.query(`SELECT g.*,p.order_no,s.name_ar supplier_name,
+      COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'lotNo',l.lot_no,
+        'receivedQty',l.received_qty,'acceptedQty',l.accepted_qty,'rejectedQty',l.rejected_qty))
+        FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
+      FROM goods_receipts g JOIN purchase_orders p ON p.id=g.purchase_order_id
+      JOIN suppliers s ON s.id=p.supplier_id LEFT JOIN goods_receipt_lines l ON l.goods_receipt_id=g.id
+      GROUP BY g.id,p.order_no,s.name_ar ORDER BY g.received_at DESC`)).rows;}
+    catch(e){return failure(reply,e);}
+  });
+
   app.post('/api/v1/goods-receipts', auth(app,'RECEIVING.MANAGE'), async(req,reply)=>{
     const b=req.body??{};
     if(!text(b.receiptNo,40)||!b.purchaseOrderId||!Array.isArray(b.lines)||!b.lines.length||
@@ -156,6 +167,15 @@ export async function operationsRoutes(app, { db }) {
     try{return (await db.query(`SELECT b.*,i.code item_code,i.name_ar item_name,w.code warehouse_code
       FROM inventory_balances b JOIN items i ON i.id=b.item_id JOIN warehouses w ON w.id=b.warehouse_id
       WHERE ($1::uuid IS NULL OR b.warehouse_id=$1) ORDER BY i.code,b.lot_no`,[req.query?.warehouseId??null])).rows;}
+    catch(e){return failure(reply,e);}
+  });
+
+  app.get('/api/v1/production/orders', auth(app,'PRODUCTION.READ'), async(_req,reply)=>{
+    try{return (await db.query(`SELECT p.*,fp.code product_code,fp.name_ar product_name,
+      f.version_no formulation_version,w.name_ar warehouse_name
+      FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id
+      JOIN formulations f ON f.id=p.formulation_id JOIN warehouses w ON w.id=p.warehouse_id
+      ORDER BY p.created_at DESC`)).rows;}
     catch(e){return failure(reply,e);}
   });
 
