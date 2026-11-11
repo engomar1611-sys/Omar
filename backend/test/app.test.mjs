@@ -446,7 +446,7 @@ test('production editing, costing and finished-goods quality routes require auth
 
 test('operations web interface script parses successfully', () => {
   const html = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
-  const scripts = [...html.matchAll(/<script>([\\s\\S]*?)<\\/script>/gi)];
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
   assert.ok(scripts.length > 0, 'expected an inline application script');
   for (const script of scripts) assert.doesNotThrow(() => new Function(script[1]));
 });
