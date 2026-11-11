@@ -148,12 +148,21 @@ DECLARE
   target_id UUID;
   current_status VARCHAR(20);
 BEGIN
-  target_id := COALESCE(NEW.formulation_id, OLD.formulation_id);
+  IF TG_OP = 'DELETE' THEN
+    target_id := OLD.formulation_id;
+  ELSE
+    target_id := NEW.formulation_id;
+  END IF;
+
   SELECT status INTO current_status FROM formulations WHERE id = target_id;
   IF current_status = 'APPROVED' THEN
     RAISE EXCEPTION 'Approved formulation lines are immutable; create a new version';
   END IF;
-  RETURN COALESCE(NEW, OLD);
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
