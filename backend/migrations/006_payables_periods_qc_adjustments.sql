@@ -1,3 +1,6 @@
+ALTER TABLE inventory_balances
+ ADD COLUMN IF NOT EXISTS quality_status VARCHAR(16) NOT NULL DEFAULT 'RELEASED'
+ CHECK(quality_status IN ('PENDING_QC','RELEASED','QUARANTINED'));
 -- Payables, supplier returns, period controls, finished-goods QC, production loss and inventory adjustments.
 CREATE TABLE IF NOT EXISTS accounting_periods (
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(), period_code VARCHAR(20) NOT NULL UNIQUE,
