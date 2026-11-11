@@ -173,6 +173,15 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     const purchaseReturnList = await app.inject({method:'GET',url:'/api/v1/purchases/returns',headers});
     assert.equal(purchaseReturnList.statusCode,200,purchaseReturnList.body);
     assert.ok(purchaseReturnList.json().some(x=>x.id===purchaseReturn.json().returnId));
+    const purchaseReturnReversal = await app.inject({method:'POST',url:'/api/v1/purchases/returns/'+purchaseReturn.json().returnId+'/reverse',headers,payload:{reason:'اختبار عكس مردود المشتريات'}});
+    assert.equal(purchaseReturnReversal.statusCode,200,purchaseReturnReversal.body);
+    const restoredPurchaseLot = await pool.query('SELECT quantity,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,raw.id,'BUYLOT-'+suffix]);
+    assert.equal(Number(restoredPurchaseLot.rows[0].quantity),5);
+    assert.equal(restoredPurchaseLot.rows[0].quality_status,'RELEASED');
+    const supplierPaymentReversal = await app.inject({method:'POST',url:'/api/v1/accounting/supplier-payments/'+supplierPayment.json().id+'/reverse',headers,payload:{reason:'اختبار عكس سند صرف المورد'}});
+    assert.equal(supplierPaymentReversal.statusCode,200,supplierPaymentReversal.body);
+    const reversedPayment = await pool.query('SELECT status FROM supplier_payments WHERE id=$1',[supplierPayment.json().id]);
+    assert.equal(reversedPayment.rows[0].status,'REVERSED');
     const periods = await app.inject({method:'GET',url:'/api/v1/accounting/periods',headers});
     assert.equal(periods.statusCode,200,periods.body);
     assert.equal(userId.length,36);
