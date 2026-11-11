@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { pool } from './db/pool.mjs';
 import { masterDataRoutes } from './master-data.mjs';
+import { operationsRoutes } from './operations.mjs';
 
 const SESSION_HOURS = 8;
 const MAX_FAILED_LOGINS = 5;
@@ -195,6 +196,7 @@ export function buildApp({ logger = true, db = pool, jwtSecret = process.env.AUT
   });
 
   app.register(masterDataRoutes, { db });
+  app.register(operationsRoutes, { db });
 
   return app;
 }
