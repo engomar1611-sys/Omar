@@ -120,7 +120,7 @@ export async function operationsRoutes(app, { db }) {
             WHERE l.id=$1 AND l.goods_receipt_id=$2 FOR UPDATE`,[x.receiptLineId,req.params.id]);
           if(!lr.rowCount) throw Object.assign(new Error('سطر الاستلام غير موجود'),{code:'P0001'});
           const line=lr.rows[0], a=Number(x.acceptedQty), rej=Number(x.rejectedQty);
-          if(a+rej>Number(line.received_qty)) throw Object.assign(new Error('كميات الفحص تتجاوز الكمية المستلمة'),{code:'P0001'});
+          if(Math.abs((a+rej)-Number(line.received_qty))>0.000001) throw Object.assign(new Error('يجب أن يساوي مجموع المقبول والمرفوض كامل الكمية المستلمة'),{code:'P0001'});
           await c.query(`INSERT INTO quality_inspections(goods_receipt_line_id,inspected_by,result,accepted_qty,rejected_qty,parameters,notes)
             VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)`,[line.id,req.authUser.user_id,x.result,a,rej,JSON.stringify(x.parameters??{}),x.notes??null]);
           await c.query('UPDATE goods_receipt_lines SET accepted_qty=$1,rejected_qty=$2 WHERE id=$3',[a,rej,line.id]);
@@ -171,6 +171,15 @@ export async function operationsRoutes(app, { db }) {
     }catch(e){return failure(reply,e);}
   });
 
+  app.post('/api/v1/production/orders/:id/release', auth(app,'PRODUCTION.MANAGE'), async(req,reply)=>{
+    try {
+      const r=await db.query(`UPDATE production_orders SET status='RELEASED',started_at=NOW()
+        WHERE id=$1 AND status='DRAFT' RETURNING *`,[req.params.id]);
+      if(!r.rowCount)return reply.code(409).send({error:'INVALID_STATUS'});
+      return r.rows[0];
+    }catch(e){return failure(reply,e);}
+  });
+
   app.post('/api/v1/production/orders/:id/complete', auth(app,'PRODUCTION.COMPLETE'), async(req,reply)=>{
     const b=req.body??{};
     if(!positive(b.actualQty)||!text(b.outputLotNo,80))return invalid(reply);
@@ -178,22 +187,33 @@ export async function operationsRoutes(app, { db }) {
       const result=await transaction(db,async c=>{
         const pr=await c.query(`SELECT p.*,fp.item_id output_item_id FROM production_orders p
           JOIN feed_products fp ON fp.id=p.feed_product_id WHERE p.id=$1 FOR UPDATE`,[req.params.id]);
-        if(!pr.rowCount||pr.rows[0].status!=='DRAFT')throw Object.assign(new Error('أمر التشغيل غير متاح للإتمام'),{code:'P0001'});
+        if(!pr.rowCount||pr.rows[0].status!=='RELEASED')throw Object.assign(new Error('يجب تحرير أمر التشغيل قبل الإتمام'),{code:'P0001'});
         const order=pr.rows[0];
         const lines=await c.query('SELECT item_id,percentage FROM formulation_lines WHERE formulation_id=$1 ORDER BY sequence_no',[order.formulation_id]);
         if(!lines.rowCount)throw Object.assign(new Error('التركيبة لا تحتوي على مكونات'),{code:'P0001'});
+        const pctTotal=lines.rows.reduce((sum,line)=>sum+Number(line.percentage),0);
+        if(Math.abs(pctTotal-100)>0.000001)throw Object.assign(new Error('مجموع نسب التركيبة يجب أن يساوي 100%'),{code:'P0001'});
         let totalCost=0;
         for(const l of lines.rows){
-          const required=Number(b.actualQty)*Number(l.percentage)/100;
-          const bal=await c.query(`SELECT quantity,average_unit_cost FROM inventory_balances
-            WHERE warehouse_id=$1 AND item_id=$2 AND lot_no='' FOR UPDATE`,[order.warehouse_id,l.item_id]);
-          if(!bal.rowCount||Number(bal.rows[0].quantity)<required)throw Object.assign(new Error('رصيد المخزون غير كافٍ لأحد مكونات التركيبة'),{code:'P0001'});
-          const qty=Number(bal.rows[0].quantity),avg=Number(bal.rows[0].average_unit_cost),cost=required*avg;
-          await c.query('UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=\'\'',[required,order.warehouse_id,l.item_id]);
-          await c.query('INSERT INTO production_consumptions(production_order_id,item_id,quantity,average_unit_cost,extended_cost) VALUES($1,$2,$3,$4,$5)',[order.id,l.item_id,required,avg,cost]);
-          await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
-            VALUES($1,$2,$3,'PRODUCTION_ISSUE',$4,$5,'PRODUCTION_ORDER',$6,$7)`,[`PI-${order.id}-${l.item_id}`,order.warehouse_id,l.item_id,required,avg,order.id,req.authUser.user_id]);
-          totalCost+=cost;
+          let required=Number(b.actualQty)*Number(l.percentage)/100;
+          const lots=await c.query(`SELECT lot_no,quantity,average_unit_cost FROM inventory_balances
+            WHERE warehouse_id=$1 AND item_id=$2 AND quantity>0
+            ORDER BY expiry_date ASC NULLS LAST,lot_no ASC FOR UPDATE`,[order.warehouse_id,l.item_id]);
+          const available=lots.rows.reduce((sum,lot)=>sum+Number(lot.quantity),0);
+          if(available+0.000001<required)throw Object.assign(new Error('رصيد المخزون غير كافٍ لأحد مكونات التركيبة'),{code:'P0001'});
+          for(const lot of lots.rows){
+            if(required<=0.000001)break;
+            const used=Math.min(required,Number(lot.quantity)),avg=Number(lot.average_unit_cost),cost=used*avg;
+            await c.query(`UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW()
+              WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4`,[used,order.warehouse_id,l.item_id,lot.lot_no]);
+            await c.query(`INSERT INTO production_consumptions(production_order_id,item_id,lot_no,quantity,average_unit_cost,extended_cost)
+              VALUES($1,$2,$3,$4,$5,$6)`,[order.id,l.item_id,lot.lot_no,used,avg,cost]);
+            await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
+              VALUES($1,$2,$3,$4,'PRODUCTION_ISSUE',$5,$6,'PRODUCTION_ORDER',$7,$8)`,
+              [`PI-${order.id}-${l.item_id}-${lot.lot_no||'NOLOT'}`,order.warehouse_id,l.item_id,lot.lot_no,used,avg,order.id,req.authUser.user_id]);
+            totalCost+=cost;
+            required-=used;
+          }
         }
         const unitCost=totalCost/Number(b.actualQty);
         await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost)
