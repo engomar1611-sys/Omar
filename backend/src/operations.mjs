@@ -273,7 +273,7 @@ export async function operationsRoutes(app, { db }) {
     const b=req.body??{};
     if(!text(b.orderNo,40)||!b.feedProductId||!b.formulationId||!b.warehouseId||!positive(b.plannedQty))return invalid(reply);
     try{
-      const r=await db.query('UPDATE production_orders p SET order_no=$1,feed_product_id=$2,formulation_id=$3,warehouse_id=$4,planned_qty=$5 WHERE p.id=$6 AND p.status=''DRAFT'' AND EXISTS(SELECT 1 FROM formulations f WHERE f.id=$3 AND f.feed_product_id=$2 AND f.status=''APPROVED'') RETURNING p.*',
+      const r=await db.query(`UPDATE production_orders p SET order_no=$1,feed_product_id=$2,formulation_id=$3,warehouse_id=$4,planned_qty=$5 WHERE p.id=$6 AND p.status='DRAFT' AND EXISTS(SELECT 1 FROM formulations f WHERE f.id=$3 AND f.feed_product_id=$2 AND f.status='APPROVED') RETURNING p.*`,
         [b.orderNo.trim(),b.feedProductId,b.formulationId,b.warehouseId,b.plannedQty,req.params.id]);
       if(!r.rowCount)return reply.code(409).send({error:'INVALID_STATUS_OR_FORMULATION'});
       return r.rows[0];
@@ -308,7 +308,7 @@ export async function operationsRoutes(app, { db }) {
       const result=await transaction(db,async c=>{
         const h=await c.query('SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no,o.quantity,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
         if(!h.rowCount||h.rows[0].status!=='COMPLETED'||h.rows[0].quality_status!=='PENDING_QC')throw Object.assign(new Error('المنتج غير متاح للفحص أو تم فحصه مسبقاً'),{code:'P0001'});
-        await c.query('INSERT INTO finished_goods_inspections(production_order_id,inspected_by,result,parameters,notes) VALUES($1,$2,$3,$4::jsonb,$5)',
+        await c.query('INSERT INTO finished_goods_inspections(production_order_id,inspected_by,result,parameters,notes) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT(production_order_id) DO UPDATE SET inspected_by=EXCLUDED.inspected_by,inspected_at=NOW(),result=EXCLUDED.result,parameters=EXCLUDED.parameters,notes=EXCLUDED.notes',
           [req.params.id,req.authUser.user_id,b.result,JSON.stringify(b.parameters??{}),b.notes??null]);
         const status=b.result==='PASS'?'RELEASED':b.result==='FAIL'?'QUARANTINED':'PENDING_QC';
         await c.query('UPDATE inventory_balances SET quality_status=$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',
