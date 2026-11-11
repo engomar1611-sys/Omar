@@ -51,6 +51,10 @@ function makeDb({ allowPermission = true } = {}) {
         };
       }
       if (sql.includes('SELECT EXISTS')) return { rows: [{ allowed: allowPermission }], rowCount: 1 };
+      if (sql.includes('FROM item_barcodes b JOIN items i')) return {
+        rows: [{ barcode: '6221234567890', item_id: '33333333-3333-4333-8333-333333333333', item_code: 'CORN-01', item_name: 'ذرة صفراء', is_primary: true }],
+        rowCount: 1
+      };
       if (sql.includes('FROM units_of_measure ORDER BY code')) return {
         rows: [{ id: '22222222-2222-4222-8222-222222222222', code: 'KG', name_ar: 'كيلوجرام', decimal_places: 3 }],
         rowCount: 1
@@ -204,6 +208,26 @@ test('master data endpoints reject invalid unit definitions', async () => {
     });
     assert.equal(response.statusCode, 400);
     assert.equal(response.json().error, 'VALIDATION_ERROR');
+  } finally {
+    await app.close();
+  }
+});
+
+test('barcode lookup resolves a scanned barcode to its active item', async () => {
+  const db = makeDb();
+  db.passwordHash = await bcrypt.hash(PASSWORD, 4);
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db });
+  try {
+    const login = await app.inject({
+      method: 'POST', url: '/api/v1/auth/login',
+      payload: { username: 'admin', password: PASSWORD }
+    });
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/master/barcodes/6221234567890',
+      headers: { authorization: `Bearer ${login.json().accessToken}` }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().item_code, 'CORN-01');
   } finally {
     await app.close();
   }
