@@ -113,3 +113,10 @@
 - إرسال الطلب للاعتماد ثم موافقة مسؤول المشتريات.
 - تحويل الطلب المعتمد إلى أمر شراء مرتبط بالمورد، مع تحديد سعر كل بند.
 - منع التحويل قبل الاعتماد أو تكرار تحويل الطلب نفسه.
+
+
+### Sales delivery and dispatch
+- Create a delivery order from a posted sales invoice and reserve quantities against invoice lines.
+- Prepare, mark ready, dispatch with driver/vehicle details, and confirm full or partial customer receipt.
+- Prevent delivery planning beyond the invoice line quantity; cancelled pre-dispatch deliveries release their reserved quantities.
+- API routes: `/api/v1/sales/deliveries`, `/:id/ready`, `/:id/dispatch`, `/:id/confirm-delivery`, and `/:id/cancel`.

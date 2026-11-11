@@ -385,3 +385,22 @@ test('internal purchase request workflow requires authentication', async () => {
     await app.close();
   }
 });
+
+test('sales delivery preparation, dispatch and confirmation endpoints require authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    const list = await app.inject({ method: 'GET', url: '/api/v1/sales/deliveries' });
+    assert.equal(list.statusCode, 401);
+    const id = '11111111-1111-4111-8111-111111111111';
+    for (const [url, payload] of [
+      ['/api/v1/sales/deliveries', {}],
+      [`/api/v1/sales/deliveries/${id}/ready`, {}],
+      [`/api/v1/sales/deliveries/${id}/dispatch`, {}],
+      [`/api/v1/sales/deliveries/${id}/confirm-delivery`, { lines: [] }],
+      [`/api/v1/sales/deliveries/${id}/cancel`, {}]
+    ]) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally { await app.close(); }
+});

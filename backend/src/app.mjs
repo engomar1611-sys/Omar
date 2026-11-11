@@ -9,6 +9,7 @@ import { commercialRoutes } from './commercial.mjs';
 import { formulationRoutes } from './formulations.mjs';
 import { inventoryRoutes } from './inventory.mjs';
 import { procurementRoutes } from './procurement.mjs';
+import { salesDeliveryRoutes } from './sales-deliveries.mjs';
 
 const SESSION_HOURS = 8;
 const MAX_FAILED_LOGINS = 5;
@@ -205,6 +206,7 @@ export function buildApp({ logger = true, db = pool, jwtSecret = process.env.AUT
   app.register(formulationRoutes, { db });
   app.register(inventoryRoutes, { db });
   app.register(procurementRoutes, { db });
+  app.register(salesDeliveryRoutes, { db });
 
   return app;
 }
