@@ -69,7 +69,7 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(Number(costJournal.rows[0].total_debit),20);
     assert.equal(Number(costJournal.rows[0].total_credit),20);
     const costJournalLines = await pool.query('SELECT a.code,SUM(l.debit) debit,SUM(l.credit) credit FROM journal_lines l JOIN gl_accounts a ON a.id=l.account_id WHERE l.journal_entry_id=$1 GROUP BY a.code ORDER BY a.code',[costJournal.rows[0].id]);
-    assert.deepEqual(costJournalLines.rows.map(x=>[x.code,Number(x.debit),Number(x.credit)]),[['1200',20,0],['5100',0,10],['5200',0,2],['5300',0,4],['5400',0,4]]);
+    assert.deepEqual(costJournalLines.rows.map(x=>[x.code,Number(x.debit),Number(x.credit)]),[['1200',20,0],['5100',0,10],['5200',0,2],['5300',0,4],['5410',0,4]]);
     const duplicateCosts = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/costs',headers,payload:{
       components:[{componentCode:'LABOR',description:'أجور اختبار',amount:10}]
     }});
