@@ -404,3 +404,20 @@ test('sales delivery preparation, dispatch and confirmation endpoints require au
     }
   } finally { await app.close(); }
 });
+
+
+test('Arabic operations interface is served at root and app routes', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    for (const url of ['/', '/app']) {
+      const response = await app.inject({ method: 'GET', url });
+      assert.equal(response.statusCode, 200);
+      assert.match(response.headers['content-type'], /text\/html/);
+      assert.match(response.body, /NEW FEED ERP/);
+      assert.match(response.body, /تسجيل الدخول/);
+      assert.match(response.body, /api\/v1\/auth\/me/);
+    }
+  } finally {
+    await app.close();
+  }
+});
