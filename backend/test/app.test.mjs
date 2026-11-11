@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import bcrypt from 'bcryptjs';
 import { buildApp } from '../src/app.mjs';
 
@@ -420,4 +421,32 @@ test('Arabic operations interface is served at root and app routes', async () =>
   } finally {
     await app.close();
   }
+});
+
+
+test('production editing, costing and finished-goods quality routes require authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    const id = '11111111-1111-4111-8111-111111111111';
+    const cases = [
+      ['PUT', '/api/v1/production/orders/' + id, {}],
+      ['POST', '/api/v1/production/orders/' + id + '/costs', { components: [] }],
+      ['POST', '/api/v1/production/orders/' + id + '/quality', { result: 'PASS' }],
+      ['POST', '/api/v1/production/orders/' + id + '/complete', { actualQty: 1, outputLotNo: 'LOT-1' }]
+    ];
+    for (const [method, url, payload] of cases) {
+      const response = await app.inject({ method, url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+
+test('operations web interface script parses successfully', () => {
+  const html = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gi)];
+  assert.ok(scripts.length > 0, 'expected an inline application script');
+  for (const script of scripts) assert.doesNotThrow(() => new Function(script[1]));
 });

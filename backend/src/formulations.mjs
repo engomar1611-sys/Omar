@@ -27,6 +27,7 @@ export async function formulationRoutes(app,{db}){
   try{await tx(db,async c=>{
    const h=await c.query('SELECT status FROM formulations WHERE id=$1 FOR UPDATE',[req.params.id]);
    if(!h.rowCount||h.rows[0].status!=='DRAFT')throw Object.assign(new Error('لا يمكن تعديل إلا تركيبة مسودة'),{code:'P0001'});
+   await c.query('UPDATE formulations SET effective_from=$1,effective_to=$2,notes=$3 WHERE id=$4',[req.body?.effectiveFrom??null,req.body?.effectiveTo??null,req.body?.notes??null,req.params.id]);
    await c.query('DELETE FROM formulation_lines WHERE formulation_id=$1',[req.params.id]);
    for(let i=0;i<lines.length;i++)await c.query('INSERT INTO formulation_lines(formulation_id,item_id,percentage,sequence_no) VALUES($1,$2,$3,$4)',[req.params.id,lines[i].itemId,lines[i].percentage,i+1]);
   });return {id:req.params.id,updated:true};}catch(e){return fail(rep,e);}
