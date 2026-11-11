@@ -267,6 +267,34 @@ export async function commercialRoutes(app,{db}){
    });return rep.code(201).send(out);
   }catch(e){return fail(rep,e);}
  });
+ app.get('/api/v1/reports/trial-balance',auth(app,'REPORTS.READ'),async(req,rep)=>{
+  try{return (await db.query(`SELECT a.code,a.name_ar,a.account_type,
+    COALESCE(SUM(l.debit),0) total_debit,COALESCE(SUM(l.credit),0) total_credit,
+    COALESCE(SUM(l.debit-l.credit),0) balance
+    FROM gl_accounts a LEFT JOIN journal_lines l ON l.account_id=a.id
+    LEFT JOIN journal_entries j ON j.id=l.journal_entry_id AND j.status='POSTED'
+      AND ($1::date IS NULL OR j.entry_date >= $1) AND ($2::date IS NULL OR j.entry_date <= $2)
+    GROUP BY a.id ORDER BY a.code`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/reports/inventory-valuation',auth(app,'REPORTS.READ'),async(_q,rep)=>{
+  try{return (await db.query(`SELECT w.code warehouse_code,i.code item_code,i.name_ar item_name,b.lot_no,b.expiry_date,b.quality_status,b.quantity,b.average_unit_cost,b.quantity*b.average_unit_cost stock_value
+    FROM inventory_balances b JOIN warehouses w ON w.id=b.warehouse_id JOIN items i ON i.id=b.item_id
+    ORDER BY w.code,i.code,b.lot_no`)).rows;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/reports/production-costs',auth(app,'REPORTS.READ'),async(_q,rep)=>{
+  try{return (await db.query(`SELECT p.order_no,fp.code product_code,fp.name_ar product_name,p.planned_qty,p.actual_qty,
+    p.total_material_cost,p.unit_production_cost,
+    COALESCE((SELECT SUM(c.amount) FROM production_cost_components c WHERE c.production_order_id=p.id),0) additional_costs,
+    COALESCE((SELECT SUM(l.quantity) FROM production_losses l WHERE l.production_order_id=p.id),0) recorded_loss_qty
+    FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id ORDER BY p.created_at DESC`)).rows;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/reports/sales-summary',auth(app,'REPORTS.READ'),async(req,rep)=>{
+  try{return (await db.query(`SELECT invoice_date,COUNT(*)::int invoice_count,SUM(subtotal) subtotal,SUM(discount_amount) discounts,
+    SUM(total_amount) net_sales,SUM(cost_amount) cost_of_sales,SUM(total_amount-cost_amount) gross_margin
+    FROM sales_invoices WHERE status IN ('POSTED','PARTIALLY_PAID','PAID')
+    AND ($1::date IS NULL OR invoice_date >= $1) AND ($2::date IS NULL OR invoice_date <= $2)
+    GROUP BY invoice_date ORDER BY invoice_date DESC`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
+ });
  app.get('/api/v1/accounting/journals',auth(app,'ACCOUNTING.READ'),async(_q,rep)=>{
   try{return (await db.query(`SELECT j.*,COALESCE(json_agg(json_build_object('accountCode',a.code,'accountName',a.name_ar,'debit',l.debit,'credit',l.credit)) FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
    FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_entry_id=j.id LEFT JOIN gl_accounts a ON a.id=l.account_id GROUP BY j.id ORDER BY j.entry_date DESC,j.entry_no DESC`)).rows;}catch(e){return fail(rep,e);}
