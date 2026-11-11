@@ -12,7 +12,7 @@ const txt=(v,n)=>typeof v==='string'&&v.trim().length>0&&v.trim().length<=n;
 const pos=v=>Number.isFinite(Number(v))&&Number(v)>0;
 async function account(c,code){const r=await c.query('SELECT id FROM gl_accounts WHERE code=$1 AND is_active=TRUE',[code]);if(!r.rowCount)throw Object.assign(new Error('الحساب المالي غير معرف: '+code),{code:'P0001'});return r.rows[0].id;}
 async function journal(c,{no,date,sourceType,sourceId,description,actor,lines}){
- const period=await c.query(\`SELECT status FROM accounting_periods WHERE $1::date BETWEEN start_date AND end_date FOR UPDATE\`,[date??new Date().toISOString().slice(0,10)]);
+ const period=await c.query(`SELECT status FROM accounting_periods WHERE $1::date BETWEEN start_date AND end_date FOR UPDATE`,[date??new Date().toISOString().slice(0,10)]);
  if(period.rowCount&&period.rows[0].status!=='OPEN')throw Object.assign(new Error('الفترة المحاسبية مغلقة أو مقفلة'),{code:'P0001'});
  const debit=lines.reduce((s,x)=>s+Number(x.debit||0),0),credit=lines.reduce((s,x)=>s+Number(x.credit||0),0);
  if(Math.abs(debit-credit)>0.00001)throw Object.assign(new Error('القيد المحاسبي غير متوازن'),{code:'P0001'});
