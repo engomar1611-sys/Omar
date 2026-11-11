@@ -51,6 +51,10 @@ function makeDb({ allowPermission = true } = {}) {
         };
       }
       if (sql.includes('SELECT EXISTS')) return { rows: [{ allowed: allowPermission }], rowCount: 1 };
+      if (sql.includes('FROM units_of_measure ORDER BY code')) return {
+        rows: [{ id: '22222222-2222-4222-8222-222222222222', code: 'KG', name_ar: 'كيلوجرام', decimal_places: 3 }],
+        rowCount: 1
+      };
       if (sql.includes('UPDATE auth_sessions')) {
         revoked = true;
         return { rows: [], rowCount: 1 };
@@ -157,6 +161,49 @@ test('permission guard rejects a user without the required permission', async ()
       headers: { authorization: `Bearer ${login.json().accessToken}` }
     });
     assert.equal(response.statusCode, 403);
+  } finally {
+    await app.close();
+  }
+});
+
+test('master data units endpoint requires authentication and returns unit records', async () => {
+  const db = makeDb();
+  db.passwordHash = await bcrypt.hash(PASSWORD, 4);
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db });
+  try {
+    const denied = await app.inject({ method: 'GET', url: '/api/v1/master/units' });
+    assert.equal(denied.statusCode, 401);
+    const login = await app.inject({
+      method: 'POST', url: '/api/v1/auth/login',
+      payload: { username: 'admin', password: PASSWORD }
+    });
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/master/units',
+      headers: { authorization: `Bearer ${login.json().accessToken}` }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json()[0].code, 'KG');
+  } finally {
+    await app.close();
+  }
+});
+
+test('master data endpoints reject invalid unit definitions', async () => {
+  const db = makeDb();
+  db.passwordHash = await bcrypt.hash(PASSWORD, 4);
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db });
+  try {
+    const login = await app.inject({
+      method: 'POST', url: '/api/v1/auth/login',
+      payload: { username: 'admin', password: PASSWORD }
+    });
+    const response = await app.inject({
+      method: 'POST', url: '/api/v1/master/units',
+      headers: { authorization: `Bearer ${login.json().accessToken}` },
+      payload: { code: '', nameAr: 'كيلوجرام', decimalPlaces: 9 }
+    });
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, 'VALIDATION_ERROR');
   } finally {
     await app.close();
   }
