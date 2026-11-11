@@ -292,3 +292,96 @@ test('purchasing, quality, inventory and production endpoints require authentica
     await app.close();
   }
 });
+
+
+test('commercial and accounting endpoints require authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    const paths = [
+      '/api/v1/customers',
+      '/api/v1/sales/invoices',
+      '/api/v1/accounting/journals'
+    ];
+    for (const url of paths) {
+      const response = await app.inject({ method: 'GET', url });
+      assert.equal(response.statusCode, 401, url);
+    }
+    for (const [url, payload] of [
+      ['/api/v1/accounting/receipts', {}],
+      ['/api/v1/sales/returns', {}],
+      ['/api/v1/accounting/expenses', {}],
+      ['/api/v1/quality/finished-goods/11111111-1111-4111-8111-111111111111/inspect', { result: 'PASS' }]
+    ]) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test('payables, supplier returns, period close and returned-goods quality endpoints require authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    const cases = [
+      ['/api/v1/accounting/supplier-payments', {}],
+      ['/api/v1/purchases/returns', {}],
+      ['/api/v1/accounting/periods/close', {}],
+      ['/api/v1/quality/sales-returns/11111111-1111-4111-8111-111111111111/inspect', { result: 'PASS' }]
+    ];
+    for (const [url, payload] of cases) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+
+test('formulation lifecycle and inventory adjustment endpoints require authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    for (const url of ['/api/v1/formulations', '/api/v1/inventory/movements', '/api/v1/reports/trial-balance', '/api/v1/reports/inventory-valuation', '/api/v1/reports/production-costs', '/api/v1/reports/sales-summary']) {
+      const response = await app.inject({ method: 'GET', url });
+      assert.equal(response.statusCode, 401, url);
+    }
+    for (const [url, payload] of [
+      ['/api/v1/formulations', {}],
+      ['/api/v1/inventory/adjustments', {}],
+      ['/api/v1/formulations/11111111-1111-4111-8111-111111111111/approve', {}],
+      ['/api/v1/inventory/adjustments/11111111-1111-4111-8111-111111111111/approve', {}],
+      ['/api/v1/production/orders/11111111-1111-4111-8111-111111111111/losses', {}],
+      ['/api/v1/sales/invoices/11111111-1111-4111-8111-111111111111/reverse', { reason: 'test' }],
+      ['/api/v1/accounting/receipts/11111111-1111-4111-8111-111111111111/reverse', { reason: 'test' }],
+      ['/api/v1/accounting/supplier-payments/11111111-1111-4111-8111-111111111111/reverse', { reason: 'test' }],
+      ['/api/v1/purchases/returns/11111111-1111-4111-8111-111111111111/reverse', { reason: 'test' }],
+      ['/api/v1/accounting/expenses/11111111-1111-4111-8111-111111111111/reverse', { reason: 'test' }]
+    ]) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+
+test('internal purchase request workflow requires authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    const get = await app.inject({ method: 'GET', url: '/api/v1/purchase-requests' });
+    assert.equal(get.statusCode, 401);
+    for (const [url, payload] of [
+      ['/api/v1/purchase-requests', {}],
+      ['/api/v1/purchase-requests/11111111-1111-4111-8111-111111111111/submit', {}],
+      ['/api/v1/purchase-requests/11111111-1111-4111-8111-111111111111/approve', {}],
+      ['/api/v1/purchase-requests/11111111-1111-4111-8111-111111111111/convert', {}]
+    ]) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally {
+    await app.close();
+  }
+});

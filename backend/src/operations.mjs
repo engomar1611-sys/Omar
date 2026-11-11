@@ -123,7 +123,7 @@ export async function operationsRoutes(app, { db }) {
       const result=await transaction(db,async c=>{
         const rh=await c.query(`SELECT id,purchase_order_id,status FROM goods_receipts WHERE id=$1 FOR UPDATE`,[req.params.id]);
         if(!rh.rowCount||rh.rows[0].status!=='PENDING_QC') throw Object.assign(new Error('إذن الاستلام غير متاح للفحص'),{code:'P0001'});
-        let acceptedTotal=0,rejectedTotal=0;
+        let acceptedTotal=0,rejectedTotal=0,acceptedCost=0;
         for(const x of b.inspections){
           const lr=await c.query(`SELECT l.*,p.warehouse_id,p.order_no
             FROM goods_receipt_lines l JOIN goods_receipts g ON g.id=l.goods_receipt_id
@@ -147,6 +147,7 @@ export async function operationsRoutes(app, { db }) {
             await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
               VALUES($1,$2,$3,$4,'PURCHASE_RECEIPT',$5,$6,'GOODS_RECEIPT',$7,$8)`,
               [`GR-${line.id}`,line.warehouse_id,line.item_id,line.lot_no??'',a,cost,req.params.id,req.authUser.user_id]);
+            acceptedCost+=a*cost;
           }
           await c.query('UPDATE purchase_order_lines SET received_qty=received_qty+$1 WHERE id=$2',[a+rej,line.purchase_order_line_id]);
           acceptedTotal+=a; rejectedTotal+=rej;
@@ -155,6 +156,19 @@ export async function operationsRoutes(app, { db }) {
         if(all.rows[0].total!==all.rows[0].inspected) throw Object.assign(new Error('يجب فحص جميع بنود إذن الاستلام قبل الاعتماد'),{code:'P0001'});
         const status=acceptedTotal===0?'REJECTED':rejectedTotal>0?'PARTIAL':'ACCEPTED';
         await c.query(`UPDATE goods_receipts SET status=$1,quality_approved_by=$2,quality_approved_at=NOW() WHERE id=$3`,[status,req.authUser.user_id,req.params.id]);
+        if(acceptedCost>0){
+          const accounts=await c.query("SELECT code,id FROM gl_accounts WHERE code IN ('1200','2000')");
+          const inv=accounts.rows.find(x=>x.code==='1200')?.id,ap=accounts.rows.find(x=>x.code==='2000')?.id;
+          if(!inv||!ap)throw Object.assign(new Error('حساب المخزون أو الموردين غير معرف'),{code:'P0001'});
+          const lock=await c.query(`SELECT status FROM accounting_periods WHERE CURRENT_DATE BETWEEN start_date AND end_date FOR UPDATE`);
+          if(lock.rowCount&&lock.rows[0].status!=='OPEN')throw Object.assign(new Error('الفترة المحاسبية مغلقة أو مقفلة'),{code:'P0001'});
+          const entryNo='J-GR-'+String(req.params.id).slice(0,12);
+          const je=await c.query(`INSERT INTO journal_entries(entry_no,source_type,source_id,description,total_debit,total_credit,created_by)
+            VALUES($1,'GOODS_RECEIPT',$2,'إثبات استلام مشتريات بعد اعتماد الجودة',$3,$3,$4) RETURNING id`,
+            [entryNo,req.params.id,acceptedCost,req.authUser.user_id]);
+          await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0),($1,$4,0,$3)',
+            [je.rows[0].id,inv,acceptedCost,ap]);
+        }
         const poLines=await c.query('SELECT COUNT(*)::int total,COUNT(*) FILTER(WHERE received_qty>=ordered_qty)::int done FROM purchase_order_lines WHERE purchase_order_id=$1',[rh.rows[0].purchase_order_id]);
         await c.query(`UPDATE purchase_orders SET status=CASE WHEN $1=$2 THEN 'RECEIVED' ELSE 'PARTIALLY_RECEIVED' END WHERE id=$3`,[poLines.rows[0].done,poLines.rows[0].total,rh.rows[0].purchase_order_id]);
         return {receiptId:req.params.id,status,acceptedQty:acceptedTotal,rejectedQty:rejectedTotal};
@@ -217,7 +231,7 @@ export async function operationsRoutes(app, { db }) {
         for(const l of lines.rows){
           let required=Number(b.actualQty)*Number(l.percentage)/100;
           const lots=await c.query(`SELECT lot_no,quantity,average_unit_cost FROM inventory_balances
-            WHERE warehouse_id=$1 AND item_id=$2 AND quantity>0
+            WHERE warehouse_id=$1 AND item_id=$2 AND quantity>0 AND quality_status='RELEASED'
             ORDER BY expiry_date ASC NULLS LAST,lot_no ASC FOR UPDATE`,[order.warehouse_id,l.item_id]);
           const available=lots.rows.reduce((sum,lot)=>sum+Number(lot.quantity),0);
           if(available+0.000001<required)throw Object.assign(new Error('رصيد المخزون غير كافٍ لأحد مكونات التركيبة'),{code:'P0001'});
@@ -236,10 +250,10 @@ export async function operationsRoutes(app, { db }) {
           }
         }
         const unitCost=totalCost/Number(b.actualQty);
-        await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost)
-          VALUES($1,$2,$3,$4,$5) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET
+        await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
+          VALUES($1,$2,$3,$4,$5,'PENDING_QC') ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET
           average_unit_cost=((inventory_balances.quantity*inventory_balances.average_unit_cost)+($4*$5))/(inventory_balances.quantity+$4),
-          quantity=inventory_balances.quantity+$4,updated_at=NOW()`,
+          quantity=inventory_balances.quantity+$4,quality_status='PENDING_QC',updated_at=NOW()`,
           [order.warehouse_id,order.output_item_id,b.outputLotNo,Number(b.actualQty),unitCost]);
         await c.query(`INSERT INTO production_outputs(production_order_id,item_id,lot_no,quantity,unit_cost,total_cost)
           VALUES($1,$2,$3,$4,$5,$6)`,[order.id,order.output_item_id,b.outputLotNo,b.actualQty,unitCost,totalCost]);

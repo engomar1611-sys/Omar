@@ -5,6 +5,10 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { pool } from './db/pool.mjs';
 import { masterDataRoutes } from './master-data.mjs';
 import { operationsRoutes } from './operations.mjs';
+import { commercialRoutes } from './commercial.mjs';
+import { formulationRoutes } from './formulations.mjs';
+import { inventoryRoutes } from './inventory.mjs';
+import { procurementRoutes } from './procurement.mjs';
 
 const SESSION_HOURS = 8;
 const MAX_FAILED_LOGINS = 5;
@@ -197,6 +201,10 @@ export function buildApp({ logger = true, db = pool, jwtSecret = process.env.AUT
 
   app.register(masterDataRoutes, { db });
   app.register(operationsRoutes, { db });
+  app.register(commercialRoutes, { db });
+  app.register(formulationRoutes, { db });
+  app.register(inventoryRoutes, { db });
+  app.register(procurementRoutes, { db });
 
   return app;
 }
