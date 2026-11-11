@@ -267,10 +267,31 @@ export async function commercialRoutes(app,{db}){
    });return rep.code(201).send(out);
   }catch(e){return fail(rep,e);}
  });
+ app.post('/api/v1/production/orders/:id/losses',auth(app,'PRODUCTION.LOSSES.MANAGE'),async(req,rep)=>{
+  const b=req.body??{};if(!['PROCESS','MOISTURE','DAMAGE','OTHER'].includes(b.lossType)||!pos(b.quantity)||!txt(b.reason,500)||!Number.isFinite(Number(b.lossCost??0))||Number(b.lossCost??0)<0)return bad(rep);
+  try{
+   const out=await tx(db,async c=>{
+    const p=await c.query("SELECT * FROM production_orders WHERE id=$1 AND status='COMPLETED' FOR UPDATE",[req.params.id]);
+    if(!p.rowCount)throw Object.assign(new Error('أمر التشغيل غير مكتمل'),{code:'P0001'});
+    const loss=await c.query(`INSERT INTO production_losses(production_order_id,loss_type,quantity,reason,approved_by,approved_at,created_by)
+      VALUES($1,$2,$3,$4,$5,NOW(),$5) RETURNING *`,[req.params.id,b.lossType,b.quantity,b.reason,req.authUser.user_id]);
+    if(Number(b.lossCost??0)>0){
+     const output=await c.query('SELECT quantity FROM production_outputs WHERE production_order_id=$1',[req.params.id]);
+     const qty=Number(output.rows[0].quantity),amount=Number(b.lossCost),newTotal=Number(p.rows[0].total_material_cost)+amount;
+     await c.query('INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by) VALUES($1,\'WASTE\',$2,$3,$4)',[req.params.id,b.reason,amount,req.authUser.user_id]);
+     await c.query('UPDATE production_orders SET total_material_cost=$1,unit_production_cost=$2 WHERE id=$3',[newTotal,newTotal/qty,req.params.id]);
+     await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,newTotal/qty,req.params.id]);
+     await c.query('UPDATE inventory_balances SET average_unit_cost=average_unit_cost+$1 WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[amount/qty,p.rows[0].warehouse_id,output.rows[0].item_id,(await c.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[req.params.id])).rows[0].lot_no]);
+    }
+    return loss.rows[0];
+   });return rep.code(201).send(out);
+  }catch(e){return fail(rep,e);}
+ });
  app.get('/api/v1/reports/trial-balance',auth(app,'REPORTS.READ'),async(req,rep)=>{
   try{return (await db.query(`SELECT a.code,a.name_ar,a.account_type,
-    COALESCE(SUM(l.debit),0) total_debit,COALESCE(SUM(l.credit),0) total_credit,
-    COALESCE(SUM(l.debit-l.credit),0) balance
+    COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit ELSE 0 END),0) total_debit,
+    COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.credit ELSE 0 END),0) total_credit,
+    COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit-l.credit ELSE 0 END),0) balance
     FROM gl_accounts a LEFT JOIN journal_lines l ON l.account_id=a.id
     LEFT JOIN journal_entries j ON j.id=l.journal_entry_id AND j.status='POSTED'
       AND ($1::date IS NULL OR j.entry_date >= $1) AND ($2::date IS NULL OR j.entry_date <= $2)
