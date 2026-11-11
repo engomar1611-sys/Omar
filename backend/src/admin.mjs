@@ -39,6 +39,7 @@ export async function adminRoutes(app,{db}){
       const result=await tx(db,async c=>{
         const roles=await c.query('SELECT id FROM roles WHERE id=ANY($1::uuid[]) AND is_active=TRUE',[b.roleIds]);
         if(roles.rowCount!==new Set(b.roleIds).size)throw Object.assign(new Error('يوجد دور غير موجود أو غير نشط'),{code:'P0001'});
+        if(roles.rows.some(x=>x.code==='SYSTEM_ADMIN')){const grant=await c.query('SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id JOIN permissions p ON p.id=rp.permission_id WHERE ur.user_id=$1 AND p.code=\'SYSTEM.ADMIN\') allowed',[req.authUser.user_id]);if(!grant.rows[0].allowed)throw Object.assign(new Error('لا تملك صلاحية إنشاء مدير نظام'),{code:'P0001'});}
         const user=await c.query('INSERT INTO users(username,password_hash,display_name,is_active) VALUES($1,$2,$3,TRUE) RETURNING id,username,display_name,is_active,created_at',
           [b.username.trim().toLowerCase(),hash,b.displayName.trim()]);
         for(const roleId of b.roleIds)await c.query('INSERT INTO user_roles(user_id,role_id) VALUES($1,$2)',[user.rows[0].id,roleId]);
@@ -81,6 +82,7 @@ export async function adminRoutes(app,{db}){
         if(!target.rowCount)throw Object.assign(new Error('المستخدم غير موجود'),{code:'P0001'});
         const roles=await c.query('SELECT id,code FROM roles WHERE id=ANY($1::uuid[]) AND is_active=TRUE',[roleIds]);
         if(roles.rowCount!==new Set(roleIds).size)throw Object.assign(new Error('يوجد دور غير موجود أو غير نشط'),{code:'P0001'});
+        if(roles.rows.some(x=>x.code==='SYSTEM_ADMIN')){const grant=await c.query('SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id JOIN permissions p ON p.id=rp.permission_id WHERE ur.user_id=$1 AND p.code=\'SYSTEM.ADMIN\') allowed',[req.authUser.user_id]);if(!grant.rows[0].allowed)throw Object.assign(new Error('لا تملك صلاحية منح دور مدير النظام'),{code:'P0001'});}
         const currentAdmin=await c.query(`SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=$1 AND r.code='SYSTEM_ADMIN') is_admin`,[req.params.id]);
         const keepsAdmin=roles.rows.some(x=>x.code==='SYSTEM_ADMIN');
         if(currentAdmin.rows[0].is_admin&&!keepsAdmin){
@@ -116,6 +118,7 @@ export async function adminRoutes(app,{db}){
     const b=req.body??{};
     if(!validCode(b.code)||!validName(b.nameAr)||!Array.isArray(b.permissionCodes)||b.permissionCodes.length>300||b.permissionCodes.some(x=>typeof x!=='string'))return bad(reply);
     if(b.code.trim()==='SYSTEM_ADMIN')return bad(reply,'دور مدير النظام محمي');
+    if(b.permissionCodes.includes('SYSTEM.ADMIN'))return bad(reply,'صلاحية مدير النظام محمية ولا يمكن منحها لدور آخر');
     try{
       const result=await tx(db,async c=>{
         const perms=await c.query('SELECT id,code FROM permissions WHERE code=ANY($1::text[]) AND is_active=TRUE',[b.permissionCodes]);
@@ -137,6 +140,7 @@ export async function adminRoutes(app,{db}){
         const role=await c.query('SELECT id,code FROM roles WHERE id=$1 FOR UPDATE',[req.params.id]);
         if(!role.rowCount)throw Object.assign(new Error('الدور غير موجود'),{code:'P0001'});
         if(role.rows[0].code==='SYSTEM_ADMIN')throw Object.assign(new Error('لا يمكن تعديل صلاحيات مدير النظام الرئيسي'),{code:'P0001'});
+        if(codes.includes('SYSTEM.ADMIN'))throw Object.assign(new Error('صلاحية مدير النظام محمية ولا يمكن منحها لدور آخر'),{code:'P0001'});
         const perms=await c.query('SELECT id,code FROM permissions WHERE code=ANY($1::text[]) AND is_active=TRUE',[codes]);
         if(perms.rowCount!==new Set(codes).size)throw Object.assign(new Error('يوجد كود صلاحية غير معروف'),{code:'P0001'});
         await c.query('DELETE FROM role_permissions WHERE role_id=$1',[req.params.id]);
