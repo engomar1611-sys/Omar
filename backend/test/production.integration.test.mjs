@@ -99,6 +99,30 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(invoiceRow.lines.length,1);
     assert.equal(Number(invoiceRow.lines[0].quantity),2);
 
+    const delivery = await app.inject({method:'POST',url:'/api/v1/sales/deliveries',headers,payload:{
+      deliveryNo:code('DEL'),invoiceId:invoice.json().id,driverName:'سائق اختبار',vehicleNo:'TEST-01',
+      lines:[{invoiceLineId:invoiceRow.lines[0].id,quantity:2}]
+    }});
+    assert.equal(delivery.statusCode,201,delivery.body);
+    const deliveryReady = await app.inject({method:'POST',url:'/api/v1/sales/deliveries/'+delivery.json().id+'/ready',headers,payload:{}});
+    assert.equal(deliveryReady.statusCode,200,deliveryReady.body);
+    const deliveryDispatched = await app.inject({method:'POST',url:'/api/v1/sales/deliveries/'+delivery.json().id+'/dispatch',headers,payload:{}});
+    assert.equal(deliveryDispatched.statusCode,200,deliveryDispatched.body);
+    const deliveryList = await app.inject({method:'GET',url:'/api/v1/sales/deliveries',headers});
+    const deliveryRow = deliveryList.json().find(x=>x.id===delivery.json().id);
+    const partialDelivery = await app.inject({method:'POST',url:'/api/v1/sales/deliveries/'+delivery.json().id+'/confirm-delivery',headers,payload:{
+      lines:[{lineId:deliveryRow.lines[0].id,deliveredQty:1}]
+    }});
+    assert.equal(partialDelivery.statusCode,200,partialDelivery.body);
+    assert.equal(partialDelivery.json().status,'PARTIALLY_DELIVERED');
+    const finalDeliveryList = await app.inject({method:'GET',url:'/api/v1/sales/deliveries',headers});
+    const finalDeliveryLine = finalDeliveryList.json().find(x=>x.id===delivery.json().id).lines[0];
+    const finalDelivery = await app.inject({method:'POST',url:'/api/v1/sales/deliveries/'+delivery.json().id+'/confirm-delivery',headers,payload:{
+      lines:[{lineId:finalDeliveryLine.id,deliveredQty:1}]
+    }});
+    assert.equal(finalDelivery.statusCode,200,finalDelivery.body);
+    assert.equal(finalDelivery.json().status,'DELIVERED');
+
     const receipt = await app.inject({method:'POST',url:'/api/v1/accounting/receipts',headers,payload:{
       receiptNo:code('RC'),customerId:customer.json().id,amount:10,paymentMethod:'CASH',allocations:[{invoiceId:invoice.json().id,amount:10}]
     }});
@@ -135,6 +159,11 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     const expenseList = await app.inject({method:'GET',url:'/api/v1/accounting/expenses',headers});
     assert.equal(expenseList.statusCode,200,expenseList.body);
     assert.ok(expenseList.json().some(x=>x.id===expense.json().id));
+    for(const reportPath of ['/api/v1/reports/trial-balance','/api/v1/reports/inventory-valuation','/api/v1/reports/production-costs','/api/v1/reports/sales-summary']){
+      const report = await app.inject({method:'GET',url:reportPath,headers});
+      assert.equal(report.statusCode,200,reportPath+' '+report.body);
+      assert.ok(Array.isArray(report.json()),reportPath);
+    }
 
     const supplier = await app.inject({method:'POST',url:'/api/v1/suppliers',headers,payload:{code:code('SUP'),nameAr:'مورد اختبار تكامل'}});
     assert.equal(supplier.statusCode,201,supplier.body);
