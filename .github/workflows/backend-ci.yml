@@ -41,8 +41,9 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package.json
       - run: npm install --no-audit --no-fund
-      - run: npm test
       - name: Apply all database migrations on PostgreSQL 16
         run: npm run migrate
       - name: Verify first-admin bootstrap against PostgreSQL
         run: npm run bootstrap:admin
+      - name: Run unit and PostgreSQL integration tests
+        run: npm test
