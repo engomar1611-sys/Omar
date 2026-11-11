@@ -84,6 +84,18 @@ export async function masterDataRoutes(app, { db }) {
       return reply.code(201).send(result.rows[0]);
     } catch (error) { return dbFailure(reply,error); }
   });
+  app.get('/api/v1/master/barcodes/:barcode', routeOptions(app, 'ITEMS.READ'), async (req, reply) => {
+    const rows = await get(reply,
+      `SELECT b.barcode,b.unit_id AS unit_id,b.is_primary,
+              i.id AS item_id,i.code AS item_code,i.name_ar AS item_name,
+              i.category_id,i.base_unit_id,i.tracks_lot,i.tracks_expiry
+         FROM item_barcodes b JOIN items i ON i.id=b.item_id
+        WHERE b.barcode=$1 AND i.is_active=TRUE`,
+      [req.params.barcode]);
+    if (!rows || rows.length === 0) return reply.code(404).send({ error:'BARCODE_NOT_FOUND' });
+    return rows[0];
+  });
+
   app.post('/api/v1/master/items/:itemId/barcodes', routeOptions(app, 'ITEM_BARCODES.MANAGE'), async (req, reply) => {
     const { barcode, unitId = null, isPrimary = false } = req.body ?? {};
     if (!validText(barcode,100)) return reply.code(400).send({ error: 'VALIDATION_ERROR' });
