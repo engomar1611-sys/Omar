@@ -225,6 +225,20 @@ export async function commercialRoutes(app,{db}){
    return rep.code(201).send(r.rows[0]);
   }catch(e){return fail(rep,e);}
  });
+ app.post('/api/v1/quality/sales-returns/:returnId/inspect',auth(app,'QUALITY.APPROVE'),async(req,rep)=>{
+  const b=req.body??{};if(!['PASS','FAIL','CONDITIONAL'].includes(b.result))return bad(rep);
+  try{
+   const out=await tx(db,async c=>{
+    const h=await c.query("SELECT id,status FROM sales_returns WHERE id=$1 FOR UPDATE",[req.params.returnId]);
+    if(!h.rowCount||h.rows[0].status!=='APPROVED')throw Object.assign(new Error('يجب اعتماد المرتجع مالياً قبل فحصه'),{code:'P0001'});
+    const lines=await c.query('SELECT item_id,lot_no FROM sales_return_lines WHERE sales_return_id=$1',[req.params.returnId]);
+    const status=b.result==='PASS'?'RELEASED':'QUARANTINED';
+    for(const l of lines.rows)await c.query('UPDATE inventory_balances SET quality_status=$1 WHERE item_id=$2 AND lot_no=$3 AND warehouse_id=(SELECT warehouse_id FROM sales_returns WHERE id=$4)',
+      [status,l.item_id,l.lot_no,req.params.returnId]);
+    return {returnId:req.params.returnId,qualityStatus:status,inspectedLines:lines.rowCount};
+   });return out;
+  }catch(e){return fail(rep,e);}
+ });
  app.post('/api/v1/accounting/expenses',auth(app,'EXPENSES.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.expenseNo,40)||!b.accountId||!pos(b.amount)||!['CASH','BANK'].includes(b.paymentMethod)||!txt(b.description,500))return bad(rep);
   try{
