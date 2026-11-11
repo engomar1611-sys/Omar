@@ -337,3 +337,25 @@ test('payables, supplier returns, period close and returned-goods quality endpoi
     await app.close();
   }
 });
+
+
+test('formulation lifecycle and inventory adjustment endpoints require authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    for (const url of ['/api/v1/formulations', '/api/v1/inventory/movements']) {
+      const response = await app.inject({ method: 'GET', url });
+      assert.equal(response.statusCode, 401, url);
+    }
+    for (const [url, payload] of [
+      ['/api/v1/formulations', {}],
+      ['/api/v1/inventory/adjustments', {}],
+      ['/api/v1/formulations/11111111-1111-4111-8111-111111111111/approve', {}],
+      ['/api/v1/inventory/adjustments/11111111-1111-4111-8111-111111111111/approve', {}]
+    ]) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally {
+    await app.close();
+  }
+});
