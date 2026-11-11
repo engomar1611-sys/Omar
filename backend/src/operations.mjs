@@ -160,6 +160,8 @@ export async function operationsRoutes(app, { db }) {
           const accounts=await c.query("SELECT code,id FROM gl_accounts WHERE code IN ('1200','2000')");
           const inv=accounts.rows.find(x=>x.code==='1200')?.id,ap=accounts.rows.find(x=>x.code==='2000')?.id;
           if(!inv||!ap)throw Object.assign(new Error('حساب المخزون أو الموردين غير معرف'),{code:'P0001'});
+          const lock=await c.query(\`SELECT status FROM accounting_periods WHERE CURRENT_DATE BETWEEN start_date AND end_date FOR UPDATE\`);
+          if(lock.rowCount&&lock.rows[0].status!=='OPEN')throw Object.assign(new Error('الفترة المحاسبية مغلقة أو مقفلة'),{code:'P0001'});
           const entryNo='J-GR-'+String(req.params.id).slice(0,12);
           const je=await c.query(`INSERT INTO journal_entries(entry_no,source_type,source_id,description,total_debit,total_credit,created_by)
             VALUES($1,'GOODS_RECEIPT',$2,'إثبات استلام مشتريات بعد اعتماد الجودة',$3,$3,$4) RETURNING id`,
@@ -251,7 +253,7 @@ export async function operationsRoutes(app, { db }) {
         await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
           VALUES($1,$2,$3,$4,$5,'PENDING_QC') ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET
           average_unit_cost=((inventory_balances.quantity*inventory_balances.average_unit_cost)+($4*$5))/(inventory_balances.quantity+$4),
-          quantity=inventory_balances.quantity+$4,updated_at=NOW()`,
+          quantity=inventory_balances.quantity+$4,quality_status='PENDING_QC',updated_at=NOW()`,
           [order.warehouse_id,order.output_item_id,b.outputLotNo,Number(b.actualQty),unitCost]);
         await c.query(`INSERT INTO production_outputs(production_order_id,item_id,lot_no,quantity,unit_cost,total_cost)
           VALUES($1,$2,$3,$4,$5,$6)`,[order.id,order.output_item_id,b.outputLotNo,b.actualQty,unitCost,totalCost]);
