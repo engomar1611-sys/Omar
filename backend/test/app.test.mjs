@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import bcrypt from 'bcryptjs';
 import { buildApp } from '../src/app.mjs';
 
@@ -440,4 +441,12 @@ test('production editing, costing and finished-goods quality routes require auth
   } finally {
     await app.close();
   }
+});
+
+
+test('operations web interface script parses successfully', () => {
+  const html = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8');
+  const scripts = [...html.matchAll(/<script>([\\s\\S]*?)<\\/script>/gi)];
+  assert.ok(scripts.length > 0, 'expected an inline application script');
+  for (const script of scripts) assert.doesNotThrow(() => new Function(script[1]));
 });
