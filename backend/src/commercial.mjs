@@ -326,7 +326,7 @@ export async function commercialRoutes(app,{db}){
      SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
      [h.rows[0].warehouse_id,l.item_id,l.lot_no,newQty,avg]);
     await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
-     VALUES($1,$2,$3,$4,'SALES_REVERSAL',$5,$6,'SALES_INVOICE_REVERSAL',$7,$8)`,
+     VALUES($1,$2,$3,$4,'ADJUSTMENT_IN',$5,$6,'SALES_INVOICE_REVERSAL',$7,$8)`,
      [`SIR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,q,cost,req.params.id,req.authUser.user_id]);
    }
    await reverseJournal(c,{sourceType:'SALES_INVOICE',sourceId:req.params.id,reversalType:'SALES_INVOICE_REVERSAL',reversalNo:'J-RSI-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
@@ -376,7 +376,7 @@ export async function commercialRoutes(app,{db}){
      SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
      [h.rows[0].warehouse_id,l.item_id,l.lot_no,newQty,avg]);
     await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
-     VALUES($1,$2,$3,$4,'PURCHASE_RETURN_REVERSAL',$5,$6,'PURCHASE_RETURN_REVERSAL',$7,$8)`,
+     VALUES($1,$2,$3,$4,'ADJUSTMENT_IN',$5,$6,'PURCHASE_RETURN_REVERSAL',$7,$8)`,
      [`PRR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,q,cost,req.params.id,req.authUser.user_id]);
    }
    await reverseJournal(c,{sourceType:'PURCHASE_RETURN',sourceId:req.params.id,reversalType:'PURCHASE_RETURN_REVERSAL',reversalNo:'J-RPR-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
