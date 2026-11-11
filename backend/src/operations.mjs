@@ -294,7 +294,7 @@ export async function operationsRoutes(app, { db }) {
         await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,unit,req.params.id]);
         await c.query('UPDATE inventory_balances SET average_unit_cost=average_unit_cost+(($1-$2)/$3),updated_at=NOW() WHERE warehouse_id=$4 AND item_id=$5 AND lot_no=$6',
           [newTotal,oldTotal,balanceQty,h.rows[0].warehouse_id,h.rows[0].item_id,h.rows[0].lot_no]);
-        await c.query('UPDATE stock_movements SET unit_cost=$1 WHERE reference_type=''PRODUCTION_ORDER'' AND reference_id=$2 AND movement_type=''PRODUCTION_OUTPUT''',[unit,req.params.id]);
+        await c.query('UPDATE stock_movements SET unit_cost=$1 WHERE reference_type=$2 AND reference_id=$3 AND movement_type=$4',[unit,'PRODUCTION_ORDER',req.params.id,'PRODUCTION_OUTPUT']);
         const updated=await c.query('UPDATE production_orders SET unit_production_cost=$1 WHERE id=$2 RETURNING id,actual_qty,total_material_cost,unit_production_cost',[unit,req.params.id]);
         return {...updated.rows[0],totalProductionCost:newTotal,additionalCost:Number(sums.rows[0].extras)};
       });
