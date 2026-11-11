@@ -29,8 +29,8 @@ export async function inventoryRoutes(app,{db}){
     if(delta<0&&old+delta< -0.000001)throw Object.assign(new Error('التسوية ستؤدي إلى رصيد سالب'),{code:'P0001'});
     const qty=old+delta,avg=delta>0&&qty>0?((old*cost)+(delta*Number(l.unit_cost)))/qty:cost;
     await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
-     VALUES($1,$2,$3,$4,$5,'RELEASED') ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
-     [h.rows[0].warehouse_id,l.item_id,l.lot_no,qty,avg]);
+     VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
+     [h.rows[0].warehouse_id,l.item_id,l.lot_no,qty,avg,bal.rowCount?bal.rows[0].quality_status:'PENDING_QC']);
     const movement=delta>0?'ADJUSTMENT_IN':'ADJUSTMENT_OUT';
     await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,quantity_out,unit_cost,reference_type,reference_id,created_by)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'INVENTORY_ADJUSTMENT',$9,$10)`,
