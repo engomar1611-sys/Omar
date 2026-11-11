@@ -6,12 +6,14 @@ function fail(reply,error) {
   if(error.code==='23505')return reply.code(409).send({error:'DUPLICATE'});
   if(error.code==='23503')return reply.code(409).send({error:'REFERENCED'});
   if(error.code==='P0001')return reply.code(409).send({error:'BUSINESS_RULE',message:error.message});
+  if(error.code==='22P02'||error.code==='23514')return reply.code(400).send({error:'INVALID_DATA'});
   throw error;
 }
 async function tx(db,work){const c=await db.connect();try{await c.query('BEGIN');const v=await work(c);await c.query('COMMIT');return v;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}}
 const validUser=v=>typeof v==='string'&&/^[a-z0-9._-]{3,80}$/.test(v.trim().toLowerCase());
 const validCode=v=>typeof v==='string'&&/^[A-Z][A-Z0-9_.-]{1,39}$/.test(v.trim());
 const validName=v=>typeof v==='string'&&v.trim().length>0&&v.trim().length<=160;
+const validUuid=v=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 
 export async function adminRoutes(app,{db}){
   app.get('/api/v1/admin/users',auth(app,'USERS.READ'),async(_req,reply)=>{
@@ -31,7 +33,7 @@ export async function adminRoutes(app,{db}){
   });
   app.post('/api/v1/admin/users',auth(app,'USERS.MANAGE'),async(req,reply)=>{
     const b=req.body??{};
-    if(!validUser(b.username)||!validName(b.displayName)||typeof b.password!=='string'||b.password.length<14||b.password.length>200||!Array.isArray(b.roleIds)||!b.roleIds.length||b.roleIds.length>50)return bad(reply,'اسم المستخدم أو الاسم أو كلمة المرور أو الأدوار غير صحيحة؛ كلمة المرور 14 حرفاً على الأقل');
+    if(!validUser(b.username)||!validName(b.displayName)||typeof b.password!=='string'||b.password.length<14||b.password.length>200||!Array.isArray(b.roleIds)||!b.roleIds.length||b.roleIds.length>50||b.roleIds.some(x=>!validUuid(x))||new Set(b.roleIds).size!==b.roleIds.length)return bad(reply,'اسم المستخدم أو الاسم أو كلمة المرور أو الأدوار غير صحيحة؛ كلمة المرور 14 حرفاً على الأقل');
     try{
       const hash=await bcrypt.hash(b.password,12);
       const result=await tx(db,async c=>{
@@ -72,7 +74,7 @@ export async function adminRoutes(app,{db}){
   });
   app.post('/api/v1/admin/users/:id/roles',auth(app,'USERS.MANAGE'),async(req,reply)=>{
     const roleIds=req.body?.roleIds;
-    if(!Array.isArray(roleIds)||!roleIds.length||roleIds.length>50)return bad(reply,'يجب اختيار دور واحد على الأقل');
+    if(!Array.isArray(roleIds)||!roleIds.length||roleIds.length>50||roleIds.some(x=>!validUuid(x))||new Set(roleIds).size!==roleIds.length)return bad(reply,'يجب اختيار دور واحد على الأقل');
     try{
       const result=await tx(db,async c=>{
         const target=await c.query('SELECT id FROM users WHERE id=$1 FOR UPDATE',[req.params.id]);
@@ -112,7 +114,7 @@ export async function adminRoutes(app,{db}){
   });
   app.post('/api/v1/admin/roles',auth(app,'ROLES.MANAGE'),async(req,reply)=>{
     const b=req.body??{};
-    if(!validCode(b.code)||!validName(b.nameAr)||!Array.isArray(b.permissionCodes)||b.permissionCodes.length>300)return bad(reply);
+    if(!validCode(b.code)||!validName(b.nameAr)||!Array.isArray(b.permissionCodes)||b.permissionCodes.length>300||b.permissionCodes.some(x=>typeof x!=='string'))return bad(reply);
     if(b.code.trim()==='SYSTEM_ADMIN')return bad(reply,'دور مدير النظام محمي');
     try{
       const result=await tx(db,async c=>{
@@ -129,7 +131,7 @@ export async function adminRoutes(app,{db}){
   });
   app.put('/api/v1/admin/roles/:id/permissions',auth(app,'ROLES.MANAGE'),async(req,reply)=>{
     const codes=req.body?.permissionCodes;
-    if(!Array.isArray(codes)||codes.length>300)return bad(reply);
+    if(!Array.isArray(codes)||codes.length>300||codes.some(x=>typeof x!=='string'))return bad(reply);
     try{
       const result=await tx(db,async c=>{
         const role=await c.query('SELECT id,code FROM roles WHERE id=$1 FOR UPDATE',[req.params.id]);
