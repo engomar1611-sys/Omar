@@ -270,3 +270,25 @@ test('unit conversions listing is protected and returns readable conversion deta
     await app.close();
   }
 });
+
+
+test('purchasing, quality, inventory and production endpoints require authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    const paths = [
+      '/api/v1/suppliers',
+      '/api/v1/purchases',
+      '/api/v1/goods-receipts',
+      '/api/v1/inventory/balances',
+      '/api/v1/production/orders'
+    ];
+    for (const url of paths) {
+      const response = await app.inject({ method: 'GET', url });
+      assert.equal(response.statusCode, 401, url);
+    }
+    const response = await app.inject({ method: 'POST', url: '/api/v1/goods-receipts/11111111-1111-4111-8111-111111111111/quality', payload: { inspections: [] } });
+    assert.equal(response.statusCode, 401);
+  } finally {
+    await app.close();
+  }
+});
