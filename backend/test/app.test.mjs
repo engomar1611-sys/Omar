@@ -365,3 +365,23 @@ test('formulation lifecycle and inventory adjustment endpoints require authentic
     await app.close();
   }
 });
+
+
+test('internal purchase request workflow requires authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    const get = await app.inject({ method: 'GET', url: '/api/v1/purchase-requests' });
+    assert.equal(get.statusCode, 401);
+    for (const [url, payload] of [
+      ['/api/v1/purchase-requests', {}],
+      ['/api/v1/purchase-requests/11111111-1111-4111-8111-111111111111/submit', {}],
+      ['/api/v1/purchase-requests/11111111-1111-4111-8111-111111111111/approve', {}],
+      ['/api/v1/purchase-requests/11111111-1111-4111-8111-111111111111/convert', {}]
+    ]) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally {
+    await app.close();
+  }
+});
