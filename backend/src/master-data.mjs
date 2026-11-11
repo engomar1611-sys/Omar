@@ -88,7 +88,6 @@ export async function masterDataRoutes(app, { db }) {
     const { barcode, unitId = null, isPrimary = false } = req.body ?? {};
     if (!validText(barcode,100)) return reply.code(400).send({ error: 'VALIDATION_ERROR' });
     try {
-      if (isPrimary) await db.query('UPDATE item_barcodes SET is_primary=FALSE WHERE item_id=$1',[req.params.itemId]);
       const result = await db.query(
         'INSERT INTO item_barcodes(item_id,barcode,unit_id,is_primary) VALUES($1,$2,$3,$4) RETURNING *',
         [req.params.itemId,barcode.trim(),unitId,isPrimary === true]);
