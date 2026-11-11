@@ -351,7 +351,9 @@ test('formulation lifecycle and inventory adjustment endpoints require authentic
       ['/api/v1/inventory/adjustments', {}],
       ['/api/v1/formulations/11111111-1111-4111-8111-111111111111/approve', {}],
       ['/api/v1/inventory/adjustments/11111111-1111-4111-8111-111111111111/approve', {}],
-      ['/api/v1/production/orders/11111111-1111-4111-8111-111111111111/losses', {}]
+      ['/api/v1/production/orders/11111111-1111-4111-8111-111111111111/losses', {}],
+      ['/api/v1/sales/invoices/11111111-1111-4111-8111-111111111111/reverse', { reason: 'test' }],
+      ['/api/v1/accounting/receipts/11111111-1111-4111-8111-111111111111/reverse', { reason: 'test' }]
     ]) {
       const response = await app.inject({ method: 'POST', url, payload });
       assert.equal(response.statusCode, 401, url);
