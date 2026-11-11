@@ -40,7 +40,8 @@ async function reverseJournal(c,{sourceType,sourceId,reversalType,reversalNo,act
   [sourceType,sourceId,reversal.rows[0].id,reason,actor]);
  return reversal.rows[0].id;
 }
-\nexport async function commercialRoutes(app,{db}){
+
+export async function commercialRoutes(app,{db}){
  app.get('/api/v1/customers',auth(app,'CUSTOMERS.READ'),async(_q,rep)=>{try{return (await db.query('SELECT * FROM customers ORDER BY code')).rows;}catch(e){return fail(rep,e);}});
  app.post('/api/v1/customers',auth(app,'CUSTOMERS.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.code,40)||!txt(b.nameAr,200)|| (b.creditLimit!==undefined&&(!Number.isFinite(Number(b.creditLimit))||Number(b.creditLimit)<0)))return bad(rep);
