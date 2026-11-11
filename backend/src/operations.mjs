@@ -217,7 +217,7 @@ export async function operationsRoutes(app, { db }) {
         for(const l of lines.rows){
           let required=Number(b.actualQty)*Number(l.percentage)/100;
           const lots=await c.query(`SELECT lot_no,quantity,average_unit_cost FROM inventory_balances
-            WHERE warehouse_id=$1 AND item_id=$2 AND quantity>0
+            WHERE warehouse_id=$1 AND item_id=$2 AND quantity>0 AND quality_status='RELEASED'
             ORDER BY expiry_date ASC NULLS LAST,lot_no ASC FOR UPDATE`,[order.warehouse_id,l.item_id]);
           const available=lots.rows.reduce((sum,lot)=>sum+Number(lot.quantity),0);
           if(available+0.000001<required)throw Object.assign(new Error('رصيد المخزون غير كافٍ لأحد مكونات التركيبة'),{code:'P0001'});
@@ -236,8 +236,8 @@ export async function operationsRoutes(app, { db }) {
           }
         }
         const unitCost=totalCost/Number(b.actualQty);
-        await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost)
-          VALUES($1,$2,$3,$4,$5) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET
+        await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
+          VALUES($1,$2,$3,$4,$5,'PENDING_QC') ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET
           average_unit_cost=((inventory_balances.quantity*inventory_balances.average_unit_cost)+($4*$5))/(inventory_balances.quantity+$4),
           quantity=inventory_balances.quantity+$4,updated_at=NOW()`,
           [order.warehouse_id,order.output_item_id,b.outputLotNo,Number(b.actualQty),unitCost]);
