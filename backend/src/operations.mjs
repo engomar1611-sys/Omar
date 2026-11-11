@@ -43,10 +43,11 @@ export async function operationsRoutes(app, { db }) {
 
   app.get('/api/v1/purchases', auth(app,'PURCHASES.READ'), async (_req,reply) => {
     try { return (await db.query(`SELECT p.*,s.name_ar supplier_name,
-      COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'orderedQty',l.ordered_qty,'receivedQty',l.received_qty,'unitCost',l.unit_cost))
+      COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'itemCode',i.code,'itemName',i.name_ar,'orderedQty',l.ordered_qty,'receivedQty',l.received_qty,'unitCost',l.unit_cost))
       FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
       FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id
       LEFT JOIN purchase_order_lines l ON l.purchase_order_id=p.id
+      LEFT JOIN items i ON i.id=l.item_id
       GROUP BY p.id,s.name_ar ORDER BY p.created_at DESC`)).rows; }
     catch(e){ return failure(reply,e); }
   });
@@ -81,11 +82,12 @@ export async function operationsRoutes(app, { db }) {
 
   app.get('/api/v1/goods-receipts', auth(app,'PURCHASES.READ'), async(_req,reply)=>{
     try{return (await db.query(`SELECT g.*,p.order_no,s.name_ar supplier_name,
-      COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'lotNo',l.lot_no,
+      COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'itemCode',i.code,'itemName',i.name_ar,'lotNo',l.lot_no,
         'receivedQty',l.received_qty,'acceptedQty',l.accepted_qty,'rejectedQty',l.rejected_qty))
         FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
       FROM goods_receipts g JOIN purchase_orders p ON p.id=g.purchase_order_id
       JOIN suppliers s ON s.id=p.supplier_id LEFT JOIN goods_receipt_lines l ON l.goods_receipt_id=g.id
+      LEFT JOIN items i ON i.id=l.item_id
       GROUP BY g.id,p.order_no,s.name_ar ORDER BY g.received_at DESC`)).rows;}
     catch(e){return failure(reply,e);}
   });
