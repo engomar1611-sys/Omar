@@ -292,3 +292,29 @@ test('purchasing, quality, inventory and production endpoints require authentica
     await app.close();
   }
 });
+
+
+test('commercial and accounting endpoints require authentication', async () => {
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db: makeDb() });
+  try {
+    const paths = [
+      '/api/v1/customers',
+      '/api/v1/sales/invoices',
+      '/api/v1/accounting/journals'
+    ];
+    for (const url of paths) {
+      const response = await app.inject({ method: 'GET', url });
+      assert.equal(response.statusCode, 401, url);
+    }
+    for (const [url, payload] of [
+      ['/api/v1/accounting/receipts', {}],
+      ['/api/v1/sales/returns', {}],
+      ['/api/v1/accounting/expenses', {}]
+    ]) {
+      const response = await app.inject({ method: 'POST', url, payload });
+      assert.equal(response.statusCode, 401, url);
+    }
+  } finally {
+    await app.close();
+  }
+});
