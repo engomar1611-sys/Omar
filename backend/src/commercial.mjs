@@ -280,7 +280,7 @@ export async function commercialRoutes(app,{db}){
     await c.query('INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by) VALUES($1,$2,$3,$4,$5)',[req.params.id,b.componentCode,b.description,add,req.authUser.user_id]);
     await c.query('UPDATE production_orders SET total_material_cost=$1,unit_production_cost=$2 WHERE id=$3',[newTotal,newTotal/qty,req.params.id]);
     await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,newTotal/qty,req.params.id]);
-    await c.query('UPDATE inventory_balances SET average_unit_cost=average_unit_cost+$1 WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[delta,p.rows[0].warehouse_id,output.rows[0].item_id,output.rows[0].lot_no]);
+    await c.query('UPDATE inventory_balances SET average_unit_cost=average_unit_cost+($1/NULLIF(quantity,0)) WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4 AND quantity>0',[delta,p.rows[0].warehouse_id,output.rows[0].item_id,output.rows[0].lot_no]);
     return {productionOrderId:req.params.id,additionalCost:add,totalCost:newTotal,unitCost:newTotal/qty};
    });return rep.code(201).send(out);
   }catch(e){return fail(rep,e);}
