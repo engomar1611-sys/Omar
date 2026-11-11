@@ -8,6 +8,29 @@ const SESSION_HOURS = 8;
 const MAX_FAILED_LOGINS = 5;
 const LOCK_MINUTES = 15;
 
+export function requirePermission(db, permissionCode) {
+  if (!/^[A-Z][A-Z0-9_.:-]{1,79}$/.test(permissionCode)) {
+    throw new Error('Invalid permission code');
+  }
+  return async (request, reply) => {
+    const result = await db.query(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM user_roles ur
+           JOIN role_permissions rp ON rp.role_id = ur.role_id
+           JOIN permissions p ON p.id = rp.permission_id
+           JOIN roles r ON r.id = ur.role_id
+          WHERE ur.user_id = $1 AND p.code = $2
+            AND p.is_active = TRUE AND r.is_active = TRUE
+       ) AS allowed`,
+      [request.authUser.user_id, permissionCode]
+    );
+    if (!result.rows[0]?.allowed) {
+      return reply.code(403).send({ error: 'FORBIDDEN', message: 'ليست لديك صلاحية لتنفيذ هذا الإجراء' });
+    }
+  };
+}
+
 export function buildApp({ logger = true, db = pool, jwtSecret = process.env.AUTH_JWT_SECRET } = {}) {
   if (!jwtSecret && process.env.NODE_ENV === 'production') {
     throw new Error('AUTH_JWT_SECRET is required in production');
@@ -17,29 +40,31 @@ export function buildApp({ logger = true, db = pool, jwtSecret = process.env.AUT
   const signingSecret = jwtSecret || randomBytes(48).toString('hex');
 
   app.register(jwt, { secret: signingSecret, sign: { expiresIn: `${SESSION_HOURS}h` } });
+  app.decorateRequest('authUser', null);
 
   app.decorate('authenticate', async (request, reply) => {
     try {
       await request.jwtVerify();
-      const session = await db.query(
-        `SELECT s.id, u.id AS user_id, u.username, u.display_name
-           FROM auth_sessions s
-           JOIN users u ON u.id = s.user_id
-          WHERE s.id = $1 AND s.user_id = $2
-            AND s.revoked_at IS NULL AND s.expires_at > NOW()
-            AND u.is_active = TRUE`,
-        [request.user.jti, request.user.sub]
-      );
-      if (session.rowCount !== 1) {
-        return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'جلسة الدخول غير صالحة أو انتهت' });
-      }
-      request.authUser = session.rows[0];
     } catch {
       return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'يرجى تسجيل الدخول' });
     }
+
+    const session = await db.query(
+      `SELECT s.id, u.id AS user_id, u.username, u.display_name
+         FROM auth_sessions s
+         JOIN users u ON u.id = s.user_id
+        WHERE s.id = $1 AND s.user_id = $2
+          AND s.revoked_at IS NULL AND s.expires_at > NOW()
+          AND u.is_active = TRUE`,
+      [request.user.jti, request.user.sub]
+    );
+    if (session.rowCount !== 1) {
+      return reply.code(401).send({ error: 'UNAUTHORIZED', message: 'جلسة الدخول غير صالحة أو انتهت' });
+    }
+    request.authUser = session.rows[0];
   });
 
-  app.decorateRequest('authUser', null);
+  app.decorate('requirePermission', (permissionCode) => requirePermission(db, permissionCode));
 
   app.get('/health', async () => ({
     status: 'ok',
