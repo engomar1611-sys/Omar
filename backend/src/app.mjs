@@ -3,6 +3,7 @@ import jwt from '@fastify/jwt';
 import bcrypt from 'bcryptjs';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { pool } from './db/pool.mjs';
+import { masterDataRoutes } from './master-data.mjs';
 
 const SESSION_HOURS = 8;
 const MAX_FAILED_LOGINS = 5;
@@ -192,6 +193,8 @@ export function buildApp({ logger = true, db = pool, jwtSecret = process.env.AUT
     );
     return reply.code(204).send();
   });
+
+  app.register(masterDataRoutes, { db });
 
   return app;
 }
