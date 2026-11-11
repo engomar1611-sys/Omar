@@ -252,10 +252,10 @@ export async function operationsRoutes(app, { db }) {
           }
         }
         const unitCost=totalCost/Number(b.actualQty);
+        const existingLot=await c.query('SELECT 1 FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[order.warehouse_id,order.output_item_id,b.outputLotNo]);
+        if(existingLot.rowCount)throw Object.assign(new Error('رقم تشغيلة المنتج النهائي مستخدم مسبقاً؛ أدخل رقم تشغيلة جديداً'),{code:'P0001'});
         await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
-          VALUES($1,$2,$3,$4,$5,'PENDING_QC') ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET
-          average_unit_cost=((inventory_balances.quantity*inventory_balances.average_unit_cost)+($4*$5))/(inventory_balances.quantity+$4),
-          quantity=inventory_balances.quantity+$4,quality_status='PENDING_QC',updated_at=NOW()`,
+          VALUES($1,$2,$3,$4,$5,'PENDING_QC')`,
           [order.warehouse_id,order.output_item_id,b.outputLotNo,Number(b.actualQty),unitCost]);
         await c.query(`INSERT INTO production_outputs(production_order_id,item_id,lot_no,quantity,unit_cost,total_cost)
           VALUES($1,$2,$3,$4,$5,$6)`,[order.id,order.output_item_id,b.outputLotNo,b.actualQty,unitCost,totalCost]);
@@ -310,7 +310,7 @@ export async function operationsRoutes(app, { db }) {
     try{
       const result=await transaction(db,async c=>{
         const h=await c.query('SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no,o.quantity,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
-        if(!h.rowCount||h.rows[0].status!=='COMPLETED'||h.rows[0].quality_status!=='PENDING_QC')throw Object.assign(new Error('المنتج غير متاح للفحص أو تم فحصه مسبقاً'),{code:'P0001'});
+        if(!h.rowCount||h.rows[0].status!=='COMPLETED'||!['PENDING_QC','QUARANTINED'].includes(h.rows[0].quality_status))throw Object.assign(new Error('المنتج غير متاح للفحص أو تم فحصه مسبقاً'),{code:'P0001'});
         await c.query('INSERT INTO finished_goods_inspections(production_order_id,inspected_by,result,parameters,notes) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT(production_order_id) DO UPDATE SET inspected_by=EXCLUDED.inspected_by,inspected_at=NOW(),result=EXCLUDED.result,parameters=EXCLUDED.parameters,notes=EXCLUDED.notes',
           [req.params.id,req.authUser.user_id,b.result,JSON.stringify(b.parameters??{}),b.notes??null]);
         const status=b.result==='PASS'?'RELEASED':b.result==='FAIL'?'QUARANTINED':'PENDING_QC';
