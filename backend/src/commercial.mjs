@@ -12,6 +12,8 @@ const txt=(v,n)=>typeof v==='string'&&v.trim().length>0&&v.trim().length<=n;
 const pos=v=>Number.isFinite(Number(v))&&Number(v)>0;
 async function account(c,code){const r=await c.query('SELECT id FROM gl_accounts WHERE code=$1 AND is_active=TRUE',[code]);if(!r.rowCount)throw Object.assign(new Error('الحساب المالي غير معرف: '+code),{code:'P0001'});return r.rows[0].id;}
 async function journal(c,{no,date,sourceType,sourceId,description,actor,lines}){
+ const period=await c.query(\`SELECT status FROM accounting_periods WHERE $1::date BETWEEN start_date AND end_date FOR UPDATE\`,[date??new Date().toISOString().slice(0,10)]);
+ if(period.rowCount&&period.rows[0].status!=='OPEN')throw Object.assign(new Error('الفترة المحاسبية مغلقة أو مقفلة'),{code:'P0001'});
  const debit=lines.reduce((s,x)=>s+Number(x.debit||0),0),credit=lines.reduce((s,x)=>s+Number(x.credit||0),0);
  if(Math.abs(debit-credit)>0.00001)throw Object.assign(new Error('القيد المحاسبي غير متوازن'),{code:'P0001'});
  const h=await c.query(`INSERT INTO journal_entries(entry_no,entry_date,source_type,source_id,description,total_debit,total_credit,created_by)
@@ -44,7 +46,7 @@ export async function commercialRoutes(app,{db}){
     for(let i=0;i<b.lines.length;i++){
      const l=b.lines[i];let remaining=Number(l.quantity),lineCost=0,weightedQty=0,chosenLot=l.lotNo??'';
      const lots=await c.query(`SELECT lot_no,quantity,average_unit_cost FROM inventory_balances
-       WHERE warehouse_id=$1 AND item_id=$2 AND quantity>0 AND ($3='' OR lot_no=$3)
+       WHERE warehouse_id=$1 AND item_id=$2 AND quantity>0 AND quality_status='RELEASED' AND ($3='' OR lot_no=$3)
        ORDER BY expiry_date ASC NULLS LAST,lot_no FOR UPDATE`,[b.warehouseId,l.itemId,chosenLot]);
      const avail=lots.rows.reduce((s,x)=>s+Number(x.quantity),0);
      if(avail+0.000001<remaining)throw Object.assign(new Error('رصيد غير كافٍ للصنف '+l.itemId),{code:'P0001'});
@@ -140,8 +142,8 @@ export async function commercialRoutes(app,{db}){
      amount+=Number(l.quantity)*Number(l.unit_price);cost+=Number(l.quantity)*Number(l.unit_cost);
      const bal=await c.query('SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
      const old=bal.rowCount?Number(bal.rows[0].quantity):0,avg=bal.rowCount?Number(bal.rows[0].average_unit_cost):0,newQty=old+Number(l.quantity),newAvg=newQty?(old*avg+Number(l.quantity)*Number(l.unit_cost))/newQty:0;
-     await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost)
-      VALUES($1,$2,$3,$4,$5) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,[h.rows[0].warehouse_id,l.item_id,l.lot_no,newQty,newAvg]);
+     await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
+      VALUES($1,$2,$3,$4,$5,'PENDING_QC') ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,quality_status='PENDING_QC',updated_at=NOW()`,[h.rows[0].warehouse_id,l.item_id,l.lot_no,newQty,newAvg]);
      await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
       VALUES($1,$2,$3,$4,'ADJUSTMENT_IN',$5,$6,'SALES_RETURN',$7,$8)`,[`SR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,l.quantity,l.unit_cost,req.params.id,req.authUser.user_id]);
     }
@@ -151,6 +153,76 @@ export async function commercialRoutes(app,{db}){
     await c.query(`UPDATE sales_returns SET status='APPROVED',accounting_approved_by=$1,accounting_approved_at=NOW() WHERE id=$2`,[req.authUser.user_id,req.params.id]);
     return {returnId:req.params.id,amount,cost,status:'APPROVED'};
    });return out;
+  }catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/quality/finished-goods/:productionOrderId/inspect',auth(app,'QUALITY.FINISHED_APPROVE'),async(req,rep)=>{
+  const b=req.body??{};if(!['PASS','FAIL','CONDITIONAL'].includes(b.result))return bad(rep);
+  try{
+   const out=await tx(db,async c=>{
+    const p=await c.query(`SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no FROM production_orders p
+      JOIN production_outputs o ON o.production_order_id=p.id WHERE p.id=$1 FOR UPDATE`,[req.params.productionOrderId]);
+    if(!p.rowCount||p.rows[0].status!=='COMPLETED')throw Object.assign(new Error('أمر الإنتاج غير مكتمل أو غير موجود'),{code:'P0001'});
+    const q=await c.query(`INSERT INTO finished_goods_inspections(production_order_id,inspected_by,result,parameters,notes)
+      VALUES($1,$2,$3,$4::jsonb,$5) RETURNING *`,[p.rows[0].id,req.authUser.user_id,b.result,JSON.stringify(b.parameters??{}),b.notes??null]);
+    const status=b.result==='PASS'?'RELEASED':'QUARANTINED';
+    await c.query('UPDATE inventory_balances SET quality_status=$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',
+      [status,p.rows[0].warehouse_id,p.rows[0].item_id,p.rows[0].lot_no]);
+    return {inspection:q.rows[0],inventoryStatus:status};
+   });return rep.code(201).send(out);
+  }catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/accounting/supplier-payments',auth(app,'SUPPLIER_PAYMENTS.MANAGE'),async(req,rep)=>{
+  const b=req.body??{};if(!txt(b.paymentNo,40)||!b.supplierId||!pos(b.amount)||!['CASH','BANK','TRANSFER','CHEQUE'].includes(b.paymentMethod)||!Array.isArray(b.allocations))return bad(rep);
+  try{
+   const out=await tx(db,async c=>{
+    const h=await c.query(`INSERT INTO supplier_payments(payment_no,supplier_id,payment_date,amount,payment_method,reference_no,created_by)
+      VALUES($1,$2,COALESCE($3::date,CURRENT_DATE),$4,$5,$6,$7) RETURNING *`,[b.paymentNo,b.supplierId,b.paymentDate??null,b.amount,b.paymentMethod,b.referenceNo??null,req.authUser.user_id]);
+    let allocated=0;
+    for(const a of b.allocations){
+     if(!a.purchaseOrderId||!pos(a.amount))throw Object.assign(new Error('توزيع السداد غير صحيح'),{code:'P0001'});
+     const po=await c.query('SELECT id,supplier_id FROM purchase_orders WHERE id=$1 AND supplier_id=$2 FOR UPDATE',[a.purchaseOrderId,b.supplierId]);
+     if(!po.rowCount)throw Object.assign(new Error('أمر الشراء غير تابع للمورد'),{code:'P0001'});
+     const received=await c.query(`SELECT COALESCE(SUM(l.accepted_qty*l.unit_cost),0) amount FROM goods_receipts g
+       JOIN goods_receipt_lines l ON l.goods_receipt_id=g.id WHERE g.purchase_order_id=$1 AND g.status IN ('ACCEPTED','PARTIAL')`,[a.purchaseOrderId]);
+     const paid=await c.query('SELECT COALESCE(SUM(a.amount),0) amount FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.supplier_payment_id WHERE a.purchase_order_id=$1 AND p.status=\'POSTED\'',[a.purchaseOrderId]);
+     if(Number(paid.rows[0].amount)+Number(a.amount)>Number(received.rows[0].amount)+0.000001)throw Object.assign(new Error('السداد يتجاوز قيمة الكميات المقبولة المستلمة'),{code:'P0001'});
+     await c.query('INSERT INTO supplier_payment_allocations(supplier_payment_id,purchase_order_id,amount) VALUES($1,$2,$3)',[h.rows[0].id,a.purchaseOrderId,a.amount]);allocated+=Number(a.amount);
+    }
+    if(Math.abs(allocated-Number(b.amount))>0.000001)throw Object.assign(new Error('يجب توزيع كامل مبلغ سند الصرف على أوامر الشراء'),{code:'P0001'});
+    const ap=await account(c,'2000'),cash=await account(c,b.paymentMethod==='CASH'?'1000':'1010');
+    await journal(c,{no:'J-SP-'+b.paymentNo,date:b.paymentDate,sourceType:'SUPPLIER_PAYMENT',sourceId:h.rows[0].id,description:'سداد مورد '+b.paymentNo,actor:req.authUser.user_id,lines:[{account:ap,debit:Number(b.amount)},{account:cash,credit:Number(b.amount)}]});
+    return h.rows[0];
+   });return rep.code(201).send(out);
+  }catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/purchases/returns',auth(app,'PURCHASE_RETURNS.MANAGE'),async(req,rep)=>{
+  const b=req.body??{};if(!txt(b.returnNo,40)||!b.supplierId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||b.lines.some(x=>!x.itemId||!txt(x.lotNo??'',80)||!pos(x.quantity)))return bad(rep);
+  try{
+   const out=await tx(db,async c=>{
+    const h=await c.query(`INSERT INTO purchase_returns(return_no,supplier_id,warehouse_id,reason,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *`,[b.returnNo,b.supplierId,b.warehouseId,b.reason??null,req.authUser.user_id]);
+    for(const l of b.lines){
+     const bal=await c.query('SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND quality_status=\'RELEASED\' FOR UPDATE',[b.warehouseId,l.itemId,l.lotNo??'']);
+     if(!bal.rowCount||Number(bal.rows[0].quantity)<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لمرتجع المشتريات'),{code:'P0001'});
+     const cost=Number(bal.rows[0].average_unit_cost);
+     await c.query('INSERT INTO purchase_return_lines(purchase_return_id,item_id,lot_no,quantity,unit_cost) VALUES($1,$2,$3,$4,$5)',[h.rows[0].id,l.itemId,l.lotNo??'',l.quantity,cost]);
+     await c.query('UPDATE inventory_balances SET quantity=quantity-$1 WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[l.quantity,b.warehouseId,l.itemId,l.lotNo??'']);
+     await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
+      VALUES($1,$2,$3,$4,'ADJUSTMENT_OUT',$5,$6,'PURCHASE_RETURN',$7,$8)`,[`PR-${h.rows[0].id.slice(0,12)}-${l.itemId.slice(0,8)}`,b.warehouseId,l.itemId,l.lotNo??'',l.quantity,cost,h.rows[0].id,req.authUser.user_id]);
+    }
+    const total=(await c.query('SELECT COALESCE(SUM(quantity*unit_cost),0) amount FROM purchase_return_lines WHERE purchase_return_id=$1',[h.rows[0].id])).rows[0].amount;
+    const ap=await account(c,'2000'),inv=await account(c,'1200');
+    await journal(c,{no:'J-PR-'+b.returnNo,sourceType:'PURCHASE_RETURN',sourceId:h.rows[0].id,description:'مرتجع مشتريات '+b.returnNo,actor:req.authUser.user_id,lines:[{account:ap,debit:Number(total)},{account:inv,credit:Number(total)}]});
+    await c.query(`UPDATE purchase_returns SET status='POSTED',posted_at=NOW() WHERE id=$1`,[h.rows[0].id]);
+    return {returnId:h.rows[0].id,total,status:'POSTED'};
+   });return rep.code(201).send(out);
+  }catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/accounting/periods/close',auth(app,'ACCOUNTING.PERIODS.MANAGE'),async(req,rep)=>{
+  const b=req.body??{};if(!txt(b.periodCode,20)||!b.startDate||!b.endDate||String(b.endDate)<String(b.startDate))return bad(rep);
+  try{
+   const r=await db.query(`INSERT INTO accounting_periods(period_code,start_date,end_date,status,closed_by,closed_at)
+    VALUES($1,$2,$3,'CLOSED',$4,NOW()) RETURNING *`,[b.periodCode,b.startDate,b.endDate,req.authUser.user_id]);
+   return rep.code(201).send(r.rows[0]);
   }catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/accounting/expenses',auth(app,'EXPENSES.MANAGE'),async(req,rep)=>{
