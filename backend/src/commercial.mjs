@@ -48,19 +48,22 @@ export async function commercialRoutes(app,{db}){
        ORDER BY expiry_date ASC NULLS LAST,lot_no FOR UPDATE`,[b.warehouseId,l.itemId,chosenLot]);
      const avail=lots.rows.reduce((s,x)=>s+Number(x.quantity),0);
      if(avail+0.000001<remaining)throw Object.assign(new Error('رصيد غير كافٍ للصنف '+l.itemId),{code:'P0001'});
+     const price=Number(l.unitPrice);
+     let lineNo=0;
      for(const lot of lots.rows){
       if(remaining<=0.000001)break;
       const q=Math.min(remaining,Number(lot.quantity)),cost=Number(lot.average_unit_cost);
       await c.query('UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[q,b.warehouseId,l.itemId,lot.lot_no]);
       await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
        VALUES($1,$2,$3,$4,'ADJUSTMENT_OUT',$5,$6,'SALES_INVOICE',$7,$8)`,
-       [`SI-${h.rows[0].id.slice(0,8)}-${i+1}-${String(lot.lot_no||'N').slice(0,12)}`,b.warehouseId,l.itemId,lot.lot_no,q,cost,h.rows[0].id,req.authUser.user_id]);
-      lineCost+=q*cost;weightedQty+=q;remaining-=q;
+       [`SI-${h.rows[0].id.slice(0,8)}-${i+1}-${++lineNo}`,b.warehouseId,l.itemId,lot.lot_no,q,cost,h.rows[0].id,req.authUser.user_id]);
+      const lineCost=q*cost,lineTotal=q*price;
+      subtotal+=lineTotal;costTotal+=lineCost;
+      await c.query(`INSERT INTO sales_invoice_lines(sales_invoice_id,item_id,lot_no,quantity,unit_price,unit_cost,line_total,cost_total)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[h.rows[0].id,l.itemId,lot.lot_no,q,price,cost,lineTotal,lineCost]);
+      remaining-=q;
      }
-     const price=Number(l.unitPrice),lineTotal=Number(l.quantity)*price;
-     subtotal+=lineTotal;costTotal+=lineCost;
-     await c.query(`INSERT INTO sales_invoice_lines(sales_invoice_id,item_id,lot_no,quantity,unit_price,unit_cost,line_total,cost_total)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[h.rows[0].id,l.itemId,chosenLot,Number(l.quantity),price,lineCost/weightedQty,lineTotal,lineCost]);
+
     }
     if(discount>subtotal)throw Object.assign(new Error('الخصم أكبر من إجمالي الفاتورة'),{code:'P0001'});
     const total=subtotal-discount;
@@ -94,7 +97,7 @@ export async function commercialRoutes(app,{db}){
      await c.query(`UPDATE sales_invoices SET status=CASE WHEN $1>=total_amount THEN 'PAID' ELSE 'PARTIALLY_PAID' END WHERE id=$2`,[newPaid,a.invoiceId]);
      allocated+=Number(a.amount);
     }
-    if(allocated>Number(b.amount)+0.000001)throw Object.assign(new Error('إجمالي التخصيص أكبر من سند القبض'),{code:'P0001'});
+    if(Math.abs(allocated-Number(b.amount))>0.000001)throw Object.assign(new Error('يجب توزيع كامل مبلغ سند القبض على فواتير العميل'),{code:'P0001'});
     const cash=await account(c,b.paymentMethod==='CASH'?'1000':'1010'),ar=await account(c,'1100');
     const journalLines=[{account:cash,debit:Number(b.amount)},{account:ar,credit:Number(b.amount)}];
     await journal(c,{no:'J-RC-'+b.receiptNo,date:b.receiptDate,sourceType:'CASH_RECEIPT',sourceId:h.rows[0].id,description:'سند قبض '+b.receiptNo,actor:req.authUser.user_id,lines:journalLines});
@@ -110,12 +113,12 @@ export async function commercialRoutes(app,{db}){
     const h=await c.query(`INSERT INTO sales_returns(return_no,sales_invoice_id,warehouse_id,reason,created_by)
       VALUES($1,$2,$3,$4,$5) RETURNING *`,[b.returnNo,b.invoiceId,b.warehouseId,b.reason??null,req.authUser.user_id]);
     for(const l of b.lines){
-     const src=await c.query('SELECT id,item_id,quantity,unit_price,unit_cost FROM sales_invoice_lines WHERE id=$1 AND sales_invoice_id=$2',[l.invoiceLineId,b.invoiceId]);
+     const src=await c.query('SELECT id,item_id,lot_no,quantity,unit_price,unit_cost FROM sales_invoice_lines WHERE id=$1 AND sales_invoice_id=$2',[l.invoiceLineId,b.invoiceId]);
      if(!src.rowCount)throw Object.assign(new Error('بند الفاتورة غير موجود'),{code:'P0001'});
      const prior=await c.query(`SELECT COALESCE(SUM(rl.quantity),0) q FROM sales_return_lines rl JOIN sales_returns r ON r.id=rl.sales_return_id WHERE rl.invoice_line_id=$1 AND r.status<>'REJECTED'`,[l.invoiceLineId]);
      if(Number(prior.rows[0].q)+Number(l.quantity)>Number(src.rows[0].quantity))throw Object.assign(new Error('كمية المرتجع تتجاوز المبيع'),{code:'P0001'});
-     await c.query(`INSERT INTO sales_return_lines(sales_return_id,invoice_line_id,item_id,quantity,unit_price,unit_cost)
-       VALUES($1,$2,$3,$4,$5,$6)`,[h.rows[0].id,src.rows[0].id,src.rows[0].item_id,l.quantity,src.rows[0].unit_price,src.rows[0].unit_cost]);
+     await c.query(`INSERT INTO sales_return_lines(sales_return_id,invoice_line_id,item_id,lot_no,quantity,unit_price,unit_cost)
+       VALUES($1,$2,$3,$4,$5,$6,$7)`,[h.rows[0].id,src.rows[0].id,src.rows[0].item_id,src.rows[0].lot_no,l.quantity,src.rows[0].unit_price,src.rows[0].unit_cost]);
     }
     return h.rows[0];
    });return rep.code(201).send(out);
@@ -135,12 +138,12 @@ export async function commercialRoutes(app,{db}){
     let amount=0,cost=0;
     for(const l of lines.rows){
      amount+=Number(l.quantity)*Number(l.unit_price);cost+=Number(l.quantity)*Number(l.unit_cost);
-     const bal=await c.query('SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,'']);
+     const bal=await c.query('SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
      const old=bal.rowCount?Number(bal.rows[0].quantity):0,avg=bal.rowCount?Number(bal.rows[0].average_unit_cost):0,newQty=old+Number(l.quantity),newAvg=newQty?(old*avg+Number(l.quantity)*Number(l.unit_cost))/newQty:0;
      await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost)
-      VALUES($1,$2,'',$3,$4) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,[h.rows[0].warehouse_id,l.item_id,newQty,newAvg]);
-     await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
-      VALUES($1,$2,$3,'ADJUSTMENT_IN',$4,$5,'SALES_RETURN',$6,$7)`,[`SR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.quantity,l.unit_cost,req.params.id,req.authUser.user_id]);
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,[h.rows[0].warehouse_id,l.item_id,l.lot_no,newQty,newAvg]);
+     await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
+      VALUES($1,$2,$3,$4,'ADJUSTMENT_IN',$5,$6,'SALES_RETURN',$7,$8)`,[`SR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,l.quantity,l.unit_cost,req.params.id,req.authUser.user_id]);
     }
     const ar=await account(c,'1100'),sales=await account(c,'4000'),inventory=await account(c,'1200'),cogs=await account(c,'5000');
     const jl=[];if(amount){jl.push({account:sales,debit:amount});jl.push({account:ar,credit:amount});}if(cost){jl.push({account:inventory,debit:cost});jl.push({account:cogs,credit:cost});}
