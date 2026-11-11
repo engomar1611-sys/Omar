@@ -23,7 +23,22 @@ async function journal(c,{no,date,sourceType,sourceId,description,actor,lines}){
  [h.rows[0].id,l.account,Number(l.debit||0),Number(l.credit||0),l.description??null]);
  return h.rows[0].id;
 }
-export async function commercialRoutes(app,{db}){
+
+async function reverseJournal(c,{sourceType,sourceId,reversalType,reversalNo,actor,reason}){
+ const original=await c.query("SELECT * FROM journal_entries WHERE source_type=$1 AND source_id=$2 AND status='POSTED' FOR UPDATE",[sourceType,sourceId]);
+ if(!original.rowCount)throw Object.assign(new Error('القيد الأصلي غير موجود أو سبق عكسه'),{code:'P0001'});
+ const lines=await c.query('SELECT account_id,debit,credit,description FROM journal_lines WHERE journal_entry_id=$1',[original.rows[0].id]);
+ const reversal=await c.query(`INSERT INTO journal_entries(entry_no,source_type,source_id,description,total_debit,total_credit,created_by)
+  VALUES($1,$2,$3,$4,$5,$5,$6) RETURNING id`,
+  [reversalNo,reversalType,sourceId,'عكس: '+(reason||original.rows[0].description||sourceType),Number(original.rows[0].total_debit),actor]);
+ for(const l of lines.rows)await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,$3,$4,$5)',
+  [reversal.rows[0].id,l.account_id,l.credit,l.debit,'عكس القيد الأصلي']);
+ await c.query("UPDATE journal_entries SET status='REVERSED' WHERE id=$1",[original.rows[0].id]);
+ await c.query('INSERT INTO document_reversals(source_type,source_id,reversal_entry_id,reason,reversed_by) VALUES($1,$2,$3,$4,$5)',
+  [sourceType,sourceId,reversal.rows[0].id,reason,actor]);
+ return reversal.rows[0].id;
+}
+\nexport async function commercialRoutes(app,{db}){
  app.get('/api/v1/customers',auth(app,'CUSTOMERS.READ'),async(_q,rep)=>{try{return (await db.query('SELECT * FROM customers ORDER BY code')).rows;}catch(e){return fail(rep,e);}});
  app.post('/api/v1/customers',auth(app,'CUSTOMERS.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.code,40)||!txt(b.nameAr,200)|| (b.creditLimit!==undefined&&(!Number.isFinite(Number(b.creditLimit))||Number(b.creditLimit)<0)))return bad(rep);
@@ -286,6 +301,51 @@ export async function commercialRoutes(app,{db}){
     return loss.rows[0];
    });return rep.code(201).send(out);
   }catch(e){return fail(rep,e);}
+ });
+
+ app.post('/api/v1/sales/invoices/:id/reverse',auth(app,'SALES.REVERSE'),async(req,rep)=>{
+  const reason=req.body?.reason;if(!txt(reason,500))return bad(rep,'سبب العكس مطلوب');
+  try{const out=await tx(db,async c=>{
+   const h=await c.query("SELECT * FROM sales_invoices WHERE id=$1 FOR UPDATE",[req.params.id]);
+   if(!h.rowCount||!['POSTED','PARTIALLY_PAID','PAID'].includes(h.rows[0].status))throw Object.assign(new Error('الفاتورة غير قابلة للعكس'),{code:'P0001'});
+   const deps=await c.query(`SELECT
+    (SELECT COUNT(*) FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED' WHERE a.sales_invoice_id=$1) receipts,
+    (SELECT COUNT(*) FROM sales_return_lines l JOIN sales_returns r ON r.id=l.sales_return_id WHERE r.sales_invoice_id=$1 AND r.status<>'REJECTED') returns`,[req.params.id]);
+   if(Number(deps.rows[0].receipts)>0)throw Object.assign(new Error('اعكس سندات القبض المرتبطة أولاً'),{code:'P0001'});
+   if(Number(deps.rows[0].returns)>0)throw Object.assign(new Error('لا يمكن عكس فاتورة لها مرتجعات غير مرفوضة'),{code:'P0001'});
+   const lines=await c.query('SELECT * FROM sales_invoice_lines WHERE sales_invoice_id=$1 ORDER BY id',[req.params.id]);
+   for(const l of lines.rows){
+    const bal=await c.query('SELECT quantity,average_unit_cost,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+    const old=bal.rowCount?Number(bal.rows[0].quantity):0,oldCost=bal.rowCount?Number(bal.rows[0].average_unit_cost):0,q=Number(l.quantity),cost=Number(l.unit_cost),newQty=old+q;
+    const avg=newQty?((old*oldCost)+(q*cost))/newQty:0;
+    await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
+     VALUES($1,$2,$3,$4,$5,'RELEASED') ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE
+     SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
+     [h.rows[0].warehouse_id,l.item_id,l.lot_no,newQty,avg]);
+    await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
+     VALUES($1,$2,$3,$4,'SALES_REVERSAL',$5,$6,'SALES_INVOICE_REVERSAL',$7,$8)`,
+     [`SIR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,q,cost,req.params.id,req.authUser.user_id]);
+   }
+   await reverseJournal(c,{sourceType:'SALES_INVOICE',sourceId:req.params.id,reversalType:'SALES_INVOICE_REVERSAL',reversalNo:'J-RSI-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
+   await c.query("UPDATE sales_invoices SET status='CANCELLED' WHERE id=$1",[req.params.id]);
+   return {invoiceId:req.params.id,status:'CANCELLED',restoredLines:lines.rowCount};
+  });return out;}catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/accounting/receipts/:id/reverse',auth(app,'RECEIPTS.REVERSE'),async(req,rep)=>{
+  const reason=req.body?.reason;if(!txt(reason,500))return bad(rep,'سبب العكس مطلوب');
+  try{const out=await tx(db,async c=>{
+   const h=await c.query("SELECT * FROM cash_receipts WHERE id=$1 FOR UPDATE",[req.params.id]);
+   if(!h.rowCount||h.rows[0].status!=='POSTED')throw Object.assign(new Error('سند القبض غير قابل للعكس'),{code:'P0001'});
+   const allocations=await c.query('SELECT sales_invoice_id FROM receipt_allocations WHERE receipt_id=$1',[req.params.id]);
+   await reverseJournal(c,{sourceType:'CASH_RECEIPT',sourceId:req.params.id,reversalType:'CASH_RECEIPT_REVERSAL',reversalNo:'J-RRC-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
+   await c.query("UPDATE cash_receipts SET status='REVERSED' WHERE id=$1",[req.params.id]);
+   for(const a of allocations.rows){
+    const paid=await c.query(`SELECT COALESCE(SUM(x.amount),0) amount FROM receipt_allocations x JOIN cash_receipts r ON r.id=x.receipt_id AND r.status='POSTED' WHERE x.sales_invoice_id=$1`,[a.sales_invoice_id]);
+    const inv=await c.query('SELECT total_amount FROM sales_invoices WHERE id=$1 FOR UPDATE',[a.sales_invoice_id]);
+    if(inv.rowCount)await c.query(`UPDATE sales_invoices SET status=CASE WHEN $1<=0 THEN 'POSTED' WHEN $1>=total_amount THEN 'PAID' ELSE 'PARTIALLY_PAID' END WHERE id=$2 AND status<>'CANCELLED'`,[Number(paid.rows[0].amount),a.sales_invoice_id]);
+   }
+   return {receiptId:req.params.id,status:'REVERSED',recalculatedInvoices:allocations.rowCount};
+  });return out;}catch(e){return fail(rep,e);}
  });
  app.get('/api/v1/reports/trial-balance',auth(app,'REPORTS.READ'),async(req,rep)=>{
   try{return (await db.query(`SELECT a.code,a.name_ar,a.account_type,
