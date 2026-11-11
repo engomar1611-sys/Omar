@@ -288,7 +288,7 @@ export async function operationsRoutes(app, { db }) {
     try{
       const result=await transaction(db,async c=>{
         const h=await c.query('SELECT p.id,p.status,p.warehouse_id,p.total_material_cost,o.item_id,o.lot_no,o.quantity,o.total_cost,b.quantity balance_qty,b.average_unit_cost,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
-        if(!h.rowCount||h.rows[0].status!=='COMPLETED'||h.rows[0].quality_status!=='PENDING_QC')throw Object.assign(new Error('يجب أن يكون الإنتاج مكتملاً والمنتج بانتظار فحص الجودة'),{code:'P0001'});
+        if(!h.rowCount||h.rows[0].status!=='COMPLETED'||!['PENDING_QC','QUARANTINED'].includes(h.rows[0].quality_status))throw Object.assign(new Error('يجب أن يكون الإنتاج مكتملاً والمنتج بانتظار فحص الجودة'),{code:'P0001'});
         await c.query('DELETE FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
         for(const x of components)await c.query('INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by) VALUES($1,$2,$3,$4,$5)',[req.params.id,x.componentCode,x.description.trim(),x.amount,req.authUser.user_id]);
         const sums=await c.query('SELECT COALESCE(SUM(amount),0) extras FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
