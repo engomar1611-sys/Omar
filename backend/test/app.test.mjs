@@ -55,6 +55,19 @@ function makeDb({ allowPermission = true } = {}) {
         rows: [{ barcode: '6221234567890', item_id: '33333333-3333-4333-8333-333333333333', item_code: 'CORN-01', item_name: 'ذرة صفراء', is_primary: true }],
         rowCount: 1
       };
+      if (sql.includes('FROM unit_conversions c')) return {
+        rows: [{
+          id: '44444444-4444-4444-8444-444444444444',
+          from_unit_id: '22222222-2222-4222-8222-222222222222',
+          to_unit_id: '55555555-5555-4555-8555-555555555555',
+          factor: '1000.00000000',
+          from_unit_code: 'KG',
+          from_unit_name: 'كيلوجرام',
+          to_unit_code: 'G',
+          to_unit_name: 'جرام'
+        }],
+        rowCount: 1
+      };
       if (sql.includes('FROM units_of_measure ORDER BY code')) return {
         rows: [{ id: '22222222-2222-4222-8222-222222222222', code: 'KG', name_ar: 'كيلوجرام', decimal_places: 3 }],
         rowCount: 1
@@ -228,6 +241,31 @@ test('barcode lookup resolves a scanned barcode to its active item', async () =>
     });
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().item_code, 'CORN-01');
+  } finally {
+    await app.close();
+  }
+});
+
+
+test('unit conversions listing is protected and returns readable conversion details', async () => {
+  const db = makeDb();
+  db.passwordHash = await bcrypt.hash(PASSWORD, 4);
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db });
+  try {
+    const denied = await app.inject({ method: 'GET', url: '/api/v1/master/unit-conversions' });
+    assert.equal(denied.statusCode, 401);
+    const login = await app.inject({
+      method: 'POST', url: '/api/v1/auth/login',
+      payload: { username: 'admin', password: PASSWORD }
+    });
+    const response = await app.inject({
+      method: 'GET', url: '/api/v1/master/unit-conversions',
+      headers: { authorization: `Bearer ${login.json().accessToken}` }
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json()[0].from_unit_code, 'KG');
+    assert.equal(response.json()[0].to_unit_code, 'G');
+    assert.equal(Number(response.json()[0].factor), 1000);
   } finally {
     await app.close();
   }
