@@ -43,3 +43,33 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_expiry
 CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_lock
   ON auth_login_attempts(locked_until)
   WHERE locked_until IS NOT NULL;
+
+INSERT INTO permissions(code, name_ar, module_code) VALUES
+  ('SYSTEM.ADMIN', 'إدارة النظام بالكامل', 'SYSTEM'),
+  ('USERS.READ', 'عرض المستخدمين', 'USERS'),
+  ('USERS.MANAGE', 'إدارة المستخدمين', 'USERS'),
+  ('ROLES.MANAGE', 'إدارة الأدوار والصلاحيات', 'USERS'),
+  ('ITEMS.READ', 'عرض الأصناف', 'MASTER_DATA'),
+  ('ITEMS.MANAGE', 'إدارة الأصناف', 'MASTER_DATA'),
+  ('WAREHOUSES.READ', 'عرض المخازن', 'MASTER_DATA'),
+  ('WAREHOUSES.MANAGE', 'إدارة المخازن', 'MASTER_DATA'),
+  ('FEED_TYPES.MANAGE', 'إدارة أنواع الأعلاف', 'MASTER_DATA'),
+  ('FEED_PRODUCTS.MANAGE', 'إدارة منتجات الأعلاف', 'MASTER_DATA'),
+  ('FORMULATIONS.READ', 'عرض التركيبات', 'FORMULATIONS'),
+  ('FORMULATIONS.MANAGE', 'إدارة التركيبات', 'FORMULATIONS'),
+  ('FORMULATIONS.APPROVE', 'اعتماد التركيبات', 'FORMULATIONS'),
+  ('INVENTORY.READ', 'عرض المخزون', 'INVENTORY'),
+  ('INVENTORY.MANAGE', 'إدارة حركات المخزون', 'INVENTORY'),
+  ('PURCHASES.READ', 'عرض المشتريات', 'PURCHASES'),
+  ('PURCHASES.MANAGE', 'إدارة المشتريات', 'PURCHASES'),
+  ('PRODUCTION.READ', 'عرض الإنتاج', 'PRODUCTION'),
+  ('PRODUCTION.MANAGE', 'إدارة أوامر الإنتاج', 'PRODUCTION'),
+  ('QUALITY.READ', 'عرض الجودة', 'QUALITY'),
+  ('QUALITY.MANAGE', 'إدارة فحوص الجودة', 'QUALITY'),
+  ('SALES.READ', 'عرض المبيعات', 'SALES'),
+  ('SALES.MANAGE', 'إدارة المبيعات', 'SALES'),
+  ('ACCOUNTING.READ', 'عرض الحسابات', 'ACCOUNTING'),
+  ('ACCOUNTING.POST', 'ترحيل القيود المحاسبية', 'ACCOUNTING'),
+  ('REPORTS.READ', 'عرض التقارير', 'REPORTS'),
+  ('SETTINGS.MANAGE', 'إدارة إعدادات النظام', 'SETTINGS')
+ON CONFLICT (code) DO NOTHING;
