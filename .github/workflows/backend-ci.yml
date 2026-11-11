@@ -1,0 +1,48 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: newfeed
+          POSTGRES_PASSWORD: newfeed_ci_password
+          POSTGRES_DB: newfeed_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U newfeed -d newfeed_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://newfeed:newfeed_ci_password@localhost:5432/newfeed_test
+      AUTH_JWT_SECRET: ci-only-secret-key-with-more-than-32-characters
+      NODE_ENV: test
+      BOOTSTRAP_ADMIN_USERNAME: ci-admin
+      BOOTSTRAP_ADMIN_NAME: CI Admin
+      BOOTSTRAP_ADMIN_PASSWORD: CI-only-strong-password-2026
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package.json
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+      - name: Apply all database migrations on PostgreSQL 16
+        run: npm run migrate
+      - name: Verify first-admin bootstrap against PostgreSQL
+        run: npm run bootstrap:admin
