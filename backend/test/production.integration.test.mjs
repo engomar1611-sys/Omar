@@ -85,6 +85,56 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(Number(finalBalance.rows[0].quantity),10);
     assert.equal(Number(finalBalance.rows[0].average_unit_cost),8.4);
     assert.equal(finalBalance.rows[0].quality_status,'RELEASED');
+
+    const customer = await app.inject({method:'POST',url:'/api/v1/customers',headers,payload:{code:code('CUS'),nameAr:'عميل اختبار تكامل',creditLimit:0}});
+    assert.equal(customer.statusCode,201,customer.body);
+    const invoice = await app.inject({method:'POST',url:'/api/v1/sales/invoices',headers,payload:{
+      invoiceNo:code('SI'),customerId:customer.json().id,warehouseId:warehouse.id,lines:[{itemId:finished.id,quantity:2,unitPrice:20}]
+    }});
+    assert.equal(invoice.statusCode,201,invoice.body);
+    assert.equal(Number(invoice.json().totalAmount),40);
+    const invoiceList = await app.inject({method:'GET',url:'/api/v1/sales/invoices',headers});
+    assert.equal(invoiceList.statusCode,200,invoiceList.body);
+    const invoiceRow = invoiceList.json().find(x=>x.id===invoice.json().id);
+    assert.equal(invoiceRow.lines.length,1);
+    assert.equal(Number(invoiceRow.lines[0].quantity),2);
+
+    const receipt = await app.inject({method:'POST',url:'/api/v1/accounting/receipts',headers,payload:{
+      receiptNo:code('RC'),customerId:customer.json().id,amount:10,paymentMethod:'CASH',allocations:[{invoiceId:invoice.json().id,amount:10}]
+    }});
+    assert.equal(receipt.statusCode,201,receipt.body);
+    const invoiceAfterReceipt = await pool.query('SELECT status FROM sales_invoices WHERE id=$1',[invoice.json().id]);
+    assert.equal(invoiceAfterReceipt.rows[0].status,'PARTIALLY_PAID');
+    const receiptList = await app.inject({method:'GET',url:'/api/v1/accounting/receipts',headers});
+    assert.equal(receiptList.statusCode,200,receiptList.body);
+    assert.ok(receiptList.json().some(x=>x.id===receipt.json().receipt.id));
+
+    const returnCreated = await app.inject({method:'POST',url:'/api/v1/sales/returns',headers,payload:{
+      returnNo:code('SR'),invoiceId:invoice.json().id,warehouseId:warehouse.id,reason:'اختبار مرتجع',
+      lines:[{invoiceLineId:invoiceRow.lines[0].id,quantity:1}]
+    }});
+    assert.equal(returnCreated.statusCode,201,returnCreated.body);
+    const warehouseApproved = await app.inject({method:'POST',url:'/api/v1/sales/returns/'+returnCreated.json().id+'/warehouse-approve',headers,payload:{}});
+    assert.equal(warehouseApproved.statusCode,200,warehouseApproved.body);
+    const accountingApproved = await app.inject({method:'POST',url:'/api/v1/sales/returns/'+returnCreated.json().id+'/accounting-approve',headers,payload:{}});
+    assert.equal(accountingApproved.statusCode,200,accountingApproved.body);
+    const returnQc = await app.inject({method:'POST',url:'/api/v1/quality/sales-returns/'+returnCreated.json().id+'/inspect',headers,payload:{result:'PASS'}});
+    assert.equal(returnQc.statusCode,200,returnQc.body);
+    const returnList = await app.inject({method:'GET',url:'/api/v1/sales/returns',headers});
+    assert.equal(returnList.statusCode,200,returnList.body);
+    assert.ok(returnList.json().some(x=>x.id===returnCreated.json().id));
+
+    const expenseAccounts = await app.inject({method:'GET',url:'/api/v1/accounting/accounts',headers});
+    assert.equal(expenseAccounts.statusCode,200,expenseAccounts.body);
+    const expenseAccount = expenseAccounts.json().find(x=>x.code==='5400');
+    assert.ok(expenseAccount);
+    const expense = await app.inject({method:'POST',url:'/api/v1/accounting/expenses',headers,payload:{
+      expenseNo:code('EX'),accountId:expenseAccount.id,amount:3,paymentMethod:'CASH',description:'مصروف اختبار تكامل'
+    }});
+    assert.equal(expense.statusCode,201,expense.body);
+    const expenseList = await app.inject({method:'GET',url:'/api/v1/accounting/expenses',headers});
+    assert.equal(expenseList.statusCode,200,expenseList.body);
+    assert.ok(expenseList.json().some(x=>x.id===expense.json().id));
     assert.equal(userId.length,36);
   } finally {
     await app.close();

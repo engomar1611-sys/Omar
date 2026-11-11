@@ -48,7 +48,11 @@ export async function commercialRoutes(app,{db}){
   try{const r=await db.query('INSERT INTO customers(code,name_ar,phone,address,credit_limit) VALUES($1,$2,$3,$4,$5) RETURNING *',[b.code.trim(),b.nameAr.trim(),b.phone??null,b.address??null,b.creditLimit??0]);return rep.code(201).send(r.rows[0]);}catch(e){return fail(rep,e);}
  });
  app.get('/api/v1/sales/invoices',auth(app,'SALES.READ'),async(_q,rep)=>{
-  try{return (await db.query(`SELECT i.*,c.code customer_code,c.name_ar customer_name FROM sales_invoices i JOIN customers c ON c.id=i.customer_id ORDER BY i.invoice_date DESC,i.invoice_no DESC`)).rows;}catch(e){return fail(rep,e);}
+  try{return (await db.query(`SELECT i.*,c.code customer_code,c.name_ar customer_name,
+   COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'itemCode',m.code,'itemName',m.name_ar,'lotNo',l.lot_no,'quantity',l.quantity,'unitPrice',l.unit_price,'unitCost',l.unit_cost,'lineTotal',l.line_total)) FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
+   FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+   LEFT JOIN sales_invoice_lines l ON l.sales_invoice_id=i.id LEFT JOIN items m ON m.id=l.item_id
+   GROUP BY i.id,c.code,c.name_ar ORDER BY i.invoice_date DESC,i.invoice_no DESC`)).rows;}catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/sales/invoices',auth(app,'SALES.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.invoiceNo,40)||!b.customerId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||
@@ -98,6 +102,26 @@ export async function commercialRoutes(app,{db}){
    });
    return rep.code(201).send(out);
   }catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/accounting/accounts',auth(app,'ACCOUNTING.READ'),async(_q,rep)=>{
+  try{return (await db.query("SELECT id,code,name_ar,account_type FROM gl_accounts WHERE is_active=TRUE AND account_type='EXPENSE' ORDER BY code")).rows;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/accounting/receipts',auth(app,'ACCOUNTING.READ'),async(_q,rep)=>{
+  try{return (await db.query(`SELECT r.*,c.code customer_code,c.name_ar customer_name,
+   COALESCE(json_agg(json_build_object('invoiceId',i.id,'invoiceNo',i.invoice_no,'amount',a.amount)) FILTER(WHERE a.id IS NOT NULL),'[]'::json) allocations
+   FROM cash_receipts r JOIN customers c ON c.id=r.customer_id
+   LEFT JOIN receipt_allocations a ON a.receipt_id=r.id LEFT JOIN sales_invoices i ON i.id=a.sales_invoice_id
+   GROUP BY r.id,c.code,c.name_ar ORDER BY r.receipt_date DESC,r.receipt_no DESC`)).rows;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/sales/returns',auth(app,'SALES.READ'),async(_q,rep)=>{
+  try{return (await db.query(`SELECT r.*,i.invoice_no,c.name_ar customer_name,
+   COALESCE(json_agg(json_build_object('id',l.id,'invoiceLineId',l.invoice_line_id,'itemId',l.item_id,'lotNo',l.lot_no,'quantity',l.quantity,'unitPrice',l.unit_price)) FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
+   FROM sales_returns r JOIN sales_invoices i ON i.id=r.sales_invoice_id JOIN customers c ON c.id=i.customer_id
+   LEFT JOIN sales_return_lines l ON l.sales_return_id=r.id
+   GROUP BY r.id,i.invoice_no,c.name_ar ORDER BY r.created_at DESC`)).rows;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/accounting/expenses',auth(app,'ACCOUNTING.READ'),async(_q,rep)=>{
+  try{return (await db.query(`SELECT e.*,a.code account_code,a.name_ar account_name FROM expenses e JOIN gl_accounts a ON a.id=e.account_id ORDER BY e.expense_date DESC,e.expense_no DESC`)).rows;}catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/accounting/receipts',auth(app,'RECEIPTS.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.receiptNo,40)||!b.customerId||!pos(b.amount)||!['CASH','BANK','TRANSFER','CHEQUE'].includes(b.paymentMethod)||!Array.isArray(b.allocations))return bad(rep);
