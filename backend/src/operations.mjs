@@ -230,7 +230,7 @@ export async function operationsRoutes(app, { db }) {
               VALUES($1,$2,$3,$4,$5,$6)`,[order.id,l.item_id,lot.lot_no,used,avg,cost]);
             await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
               VALUES($1,$2,$3,$4,'PRODUCTION_ISSUE',$5,$6,'PRODUCTION_ORDER',$7,$8)`,
-              [`PI-${order.id}-${l.item_id}-${lot.lot_no||'NOLOT'}`,order.warehouse_id,l.item_id,lot.lot_no,used,avg,order.id,req.authUser.user_id]);
+              [`PI-${order.id.slice(0,8)}-${l.item_id.slice(0,8)}-${String(lot.lot_no||'NOLOT').slice(0,20)}`,order.warehouse_id,l.item_id,lot.lot_no,used,avg,order.id,req.authUser.user_id]);
             totalCost+=cost;
             required-=used;
           }
