@@ -21,10 +21,11 @@ export async function salesDeliveryRoutes(app, { db }) {
     try {
       return (await db.query(`SELECT d.*,i.invoice_no,c.name_ar customer_name,
         COALESCE(json_agg(json_build_object('id',l.id,'invoiceLineId',l.invoice_line_id,'itemId',l.item_id,
-          'lotNo',l.lot_no,'plannedQty',l.planned_qty,'shippedQty',l.shipped_qty,'deliveredQty',l.delivered_qty))
+          'itemCode',m.code,'itemName',m.name_ar,'lotNo',l.lot_no,'plannedQty',l.planned_qty,'shippedQty',l.shipped_qty,'deliveredQty',l.delivered_qty))
           FILTER (WHERE l.id IS NOT NULL),'[]'::json) lines
         FROM sales_deliveries d JOIN sales_invoices i ON i.id=d.sales_invoice_id
         JOIN customers c ON c.id=i.customer_id LEFT JOIN sales_delivery_lines l ON l.sales_delivery_id=d.id
+        LEFT JOIN items m ON m.id=l.item_id
         GROUP BY d.id,i.invoice_no,c.name_ar ORDER BY d.created_at DESC`)).rows;
     } catch (error) { return fail(reply, error); }
   });
