@@ -45,6 +45,15 @@ export async function masterDataRoutes(app, { db }) {
       [code.trim(), nameAr.trim(), decimalPlaces]);
   });
 
+  app.get('/api/v1/master/unit-conversions', routeOptions(app, 'ITEMS.READ'), async (_req, reply) =>
+    get(reply, `SELECT c.id,c.from_unit_id,c.to_unit_id,c.factor,
+                       f.code AS from_unit_code,f.name_ar AS from_unit_name,
+                       t.code AS to_unit_code,t.name_ar AS to_unit_name
+                  FROM unit_conversions c
+                  JOIN units_of_measure f ON f.id=c.from_unit_id
+                  JOIN units_of_measure t ON t.id=c.to_unit_id
+                 ORDER BY f.code,t.code`));
+
   app.post('/api/v1/master/unit-conversions', routeOptions(app, 'UNITS.MANAGE'), async (req, reply) => {
     const { fromUnitId, toUnitId, factor } = req.body ?? {};
     if (!fromUnitId || !toUnitId || fromUnitId === toUnitId || !Number.isFinite(Number(factor)) || Number(factor) <= 0)
