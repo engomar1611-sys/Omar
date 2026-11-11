@@ -188,7 +188,8 @@ export async function operationsRoutes(app, { db }) {
 
   app.get('/api/v1/production/orders', auth(app,'PRODUCTION.READ'), async(_req,reply)=>{
     try{return (await db.query(`SELECT p.*,fp.code product_code,fp.name_ar product_name,
-      f.version_no formulation_version,w.name_ar warehouse_name
+      f.version_no formulation_version,w.name_ar warehouse_name,
+      EXISTS(SELECT 1 FROM journal_entries j WHERE j.source_type='PRODUCTION_COST' AND j.source_id=p.id AND j.status='POSTED') costs_journal_posted
       FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id
       JOIN formulations f ON f.id=p.formulation_id JOIN warehouses w ON w.id=p.warehouse_id
       ORDER BY p.created_at DESC`)).rows;}
@@ -289,10 +290,31 @@ export async function operationsRoutes(app, { db }) {
       const result=await transaction(db,async c=>{
         const h=await c.query('SELECT p.id,p.status,p.warehouse_id,p.total_material_cost,o.item_id,o.lot_no,o.quantity,o.total_cost,b.quantity balance_qty,b.average_unit_cost,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
         if(!h.rowCount||h.rows[0].status!=='COMPLETED'||!['PENDING_QC','QUARANTINED'].includes(h.rows[0].quality_status))throw Object.assign(new Error('يجب أن يكون الإنتاج مكتملاً والمنتج بانتظار فحص الجودة'),{code:'P0001'});
+        const existingJournal=await c.query("SELECT id FROM journal_entries WHERE source_type='PRODUCTION_COST' AND source_id=$1 FOR UPDATE",[req.params.id]);
+        if(existingJournal.rowCount)throw Object.assign(new Error('تم ترحيل تكلفة هذا الأمر محاسبياً ولا يمكن تعديلها مباشرة'),{code:'P0001'});
         await c.query('DELETE FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
         for(const x of components)await c.query('INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by) VALUES($1,$2,$3,$4,$5)',[req.params.id,x.componentCode,x.description.trim(),x.amount,req.authUser.user_id]);
         const sums=await c.query('SELECT COALESCE(SUM(amount),0) extras FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
-        const oldTotal=Number(h.rows[0].total_cost),newTotal=Number(h.rows[0].total_material_cost)+Number(sums.rows[0].extras),qty=Number(h.rows[0].quantity),balanceQty=Number(h.rows[0].balance_qty),unit=newTotal/qty;
+        const extraTotal=Number(sums.rows[0].extras);
+        if(extraTotal>0){
+          const period=await c.query('SELECT status FROM accounting_periods WHERE CURRENT_DATE BETWEEN start_date AND end_date FOR UPDATE');
+          if(period.rowCount&&period.rows[0].status!=='OPEN')throw Object.assign(new Error('الفترة المحاسبية مغلقة أو مقفلة'),{code:'P0001'});
+          const mapping={LABOR:'5100',ENERGY:'5200',OVERHEAD:'5300',PACKAGING:'5410',WASTE:'5300'};
+          const requiredCodes=['1200',...new Set(components.filter(x=>Number(x.amount)>0).map(x=>mapping[x.componentCode]))];
+          const found=await c.query('SELECT id,code FROM gl_accounts WHERE code=ANY($1::text[]) AND is_active=TRUE',[requiredCodes]);
+          const ids=Object.fromEntries(found.rows.map(x=>[x.code,x.id]));
+          for(const accountCode of requiredCodes)if(!ids[accountCode])throw Object.assign(new Error('الحساب المالي غير معرف: '+accountCode),{code:'P0001'});
+          const entry=await c.query(`INSERT INTO journal_entries(entry_no,entry_date,source_type,source_id,description,total_debit,total_credit,created_by)
+            VALUES($1,CURRENT_DATE,'PRODUCTION_COST',$2,$3,$4,$4,$5) RETURNING id`,
+            ['PC-'+req.params.id,req.params.id,'رسملة تكاليف الإنتاج الإضافية لأمر '+req.params.id,extraTotal,req.authUser.user_id]);
+          await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,$3,0,$4)',
+            [entry.rows[0].id,ids['1200'],extraTotal,'إضافة تكاليف التحويل إلى مخزون المنتج النهائي']);
+          for(const x of components.filter(x=>Number(x.amount)>0)){
+            await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,0,$3,$4)',
+              [entry.rows[0].id,ids[mapping[x.componentCode]],x.amount,x.description.trim()]);
+          }
+        }
+        const oldTotal=Number(h.rows[0].total_cost),newTotal=Number(h.rows[0].total_material_cost)+extraTotal,qty=Number(h.rows[0].quantity),balanceQty=Number(h.rows[0].balance_qty),unit=newTotal/qty;
         await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,unit,req.params.id]);
         await c.query('UPDATE inventory_balances SET average_unit_cost=average_unit_cost+(($1::numeric-$2::numeric)/$3::numeric),updated_at=NOW() WHERE warehouse_id=$4 AND item_id=$5 AND lot_no=$6',
           [newTotal,oldTotal,balanceQty,h.rows[0].warehouse_id,h.rows[0].item_id,h.rows[0].lot_no]);

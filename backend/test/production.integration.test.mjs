@@ -60,10 +60,20 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.deepEqual(rawBalances.rows.map(x=>[x.lot_no,Number(x.quantity)]),[['EARLY',0],['LATE',13]]);
 
     const costs = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/costs',headers,payload:{
-      components:[{componentCode:'LABOR',description:'أجور اختبار',amount:10},{componentCode:'ENERGY',description:'طاقة اختبار',amount:2}]
+      components:[{componentCode:'LABOR',description:'أجور اختبار',amount:10},{componentCode:'ENERGY',description:'طاقة اختبار',amount:2},{componentCode:'OVERHEAD',description:'صناعي غير مباشر',amount:3},{componentCode:'PACKAGING',description:'تعبئة',amount:4},{componentCode:'WASTE',description:'هالك',amount:1}]
     }});
     assert.equal(costs.statusCode,200,costs.body);
-    assert.equal(Number(costs.json().unit_production_cost),7.6);
+    assert.equal(Number(costs.json().unit_production_cost),8.4);
+    const costJournal = await pool.query("SELECT id,total_debit,total_credit FROM journal_entries WHERE source_type='PRODUCTION_COST' AND source_id=$1 AND status='POSTED'",[orderId]);
+    assert.equal(costJournal.rowCount,1);
+    assert.equal(Number(costJournal.rows[0].total_debit),20);
+    assert.equal(Number(costJournal.rows[0].total_credit),20);
+    const costJournalLines = await pool.query('SELECT a.code,SUM(l.debit) debit,SUM(l.credit) credit FROM journal_lines l JOIN gl_accounts a ON a.id=l.account_id WHERE l.journal_entry_id=$1 GROUP BY a.code ORDER BY a.code',[costJournal.rows[0].id]);
+    assert.deepEqual(costJournalLines.rows.map(x=>[x.code,Number(x.debit),Number(x.credit)]),[['1200',20,0],['5100',0,10],['5200',0,2],['5300',0,4],['5410',0,4]]);
+    const duplicateCosts = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/costs',headers,payload:{
+      components:[{componentCode:'LABOR',description:'أجور اختبار',amount:10}]
+    }});
+    assert.equal(duplicateCosts.statusCode,409);
     const failed = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/quality',headers,payload:{result:'FAIL',notes:'فشل اختبار'}});
     assert.equal(failed.statusCode,200,failed.body);
     assert.equal(failed.json().availableForSale,false);
@@ -73,7 +83,7 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
 
     const finalBalance = await pool.query('SELECT quantity,average_unit_cost,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,finished.id,completed.json().outputLotNo || (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no]);
     assert.equal(Number(finalBalance.rows[0].quantity),10);
-    assert.equal(Number(finalBalance.rows[0].average_unit_cost),7.6);
+    assert.equal(Number(finalBalance.rows[0].average_unit_cost),8.4);
     assert.equal(finalBalance.rows[0].quality_status,'RELEASED');
     assert.equal(userId.length,36);
   } finally {
