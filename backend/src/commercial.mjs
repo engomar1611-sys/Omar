@@ -255,7 +255,7 @@ export async function commercialRoutes(app,{db}){
   }catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/purchases/returns',auth(app,'PURCHASE_RETURNS.MANAGE'),async(req,rep)=>{
-  const b=req.body??{};if(!txt(b.returnNo,40)||!b.supplierId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||b.lines.some(x=>!x.itemId||!txt(x.lotNo??'',80)||!pos(x.quantity)))return bad(rep);
+  const b=req.body??{};if(!txt(b.returnNo,40)||!b.supplierId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||b.lines.some(x=>!x.itemId||typeof (x.lotNo??'')!=='string'||(x.lotNo??'').trim().length>80||!pos(x.quantity)))return bad(rep);
   try{
    const out=await tx(db,async c=>{
     const h=await c.query(`INSERT INTO purchase_returns(return_no,supplier_id,warehouse_id,reason,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *`,[b.returnNo,b.supplierId,b.warehouseId,b.reason??null,req.authUser.user_id]);
