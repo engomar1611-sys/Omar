@@ -10,6 +10,7 @@ import { formulationRoutes } from './formulations.mjs';
 import { inventoryRoutes } from './inventory.mjs';
 import { procurementRoutes } from './procurement.mjs';
 import { salesDeliveryRoutes } from './sales-deliveries.mjs';
+import { adminRoutes } from './admin.mjs';
 import { webUiRoutes } from './web-ui.mjs';
 
 const SESSION_HOURS = 8;
@@ -208,6 +209,7 @@ export function buildApp({ logger = true, db = pool, jwtSecret = process.env.AUT
   app.register(inventoryRoutes, { db });
   app.register(procurementRoutes, { db });
   app.register(salesDeliveryRoutes, { db });
+  app.register(adminRoutes, { db });
   app.register(webUiRoutes);
 
   return app;
