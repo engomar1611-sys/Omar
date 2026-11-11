@@ -268,4 +268,55 @@ export async function operationsRoutes(app, { db }) {
       return result;
     }catch(e){return failure(reply,e);}
   });
+
+  app.put('/api/v1/production/orders/:id', auth(app,'PRODUCTION.MANAGE'), async(req,reply)=>{
+    const b=req.body??{};
+    if(!text(b.orderNo,40)||!b.feedProductId||!b.formulationId||!b.warehouseId||!positive(b.plannedQty))return invalid(reply);
+    try{
+      const r=await db.query('UPDATE production_orders p SET order_no=$1,feed_product_id=$2,formulation_id=$3,warehouse_id=$4,planned_qty=$5 WHERE p.id=$6 AND p.status=''DRAFT'' AND EXISTS(SELECT 1 FROM formulations f WHERE f.id=$3 AND f.feed_product_id=$2 AND f.status=''APPROVED'') RETURNING p.*',
+        [b.orderNo.trim(),b.feedProductId,b.formulationId,b.warehouseId,b.plannedQty,req.params.id]);
+      if(!r.rowCount)return reply.code(409).send({error:'INVALID_STATUS_OR_FORMULATION'});
+      return r.rows[0];
+    }catch(e){return failure(reply,e);}
+  });
+
+  app.post('/api/v1/production/orders/:id/costs', auth(app,'PRODUCTION.COSTS.MANAGE'), async(req,reply)=>{
+    const components=req.body?.components,allowed=['LABOR','ENERGY','OVERHEAD','PACKAGING','WASTE'];
+    if(!Array.isArray(components)||components.some(x=>!allowed.includes(x.componentCode)||!text(x.description,200)||!Number.isFinite(Number(x.amount))||Number(x.amount)<0))return invalid(reply);
+    try{
+      const result=await transaction(db,async c=>{
+        const h=await c.query('SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no,o.quantity,o.total_cost,b.quantity balance_qty,b.average_unit_cost,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
+        if(!h.rowCount||h.rows[0].status!=='COMPLETED'||h.rows[0].quality_status!=='PENDING_QC')throw Object.assign(new Error('يجب أن يكون الإنتاج مكتملاً والمنتج بانتظار فحص الجودة'),{code:'P0001'});
+        await c.query('DELETE FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
+        for(const x of components)await c.query('INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by) VALUES($1,$2,$3,$4,$5)',[req.params.id,x.componentCode,x.description.trim(),x.amount,req.authUser.user_id]);
+        const sums=await c.query('SELECT COALESCE(SUM(amount),0) extras FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
+        const oldTotal=Number(h.rows[0].total_cost),newTotal=oldTotal+Number(sums.rows[0].extras),qty=Number(h.rows[0].quantity),unit=newTotal/qty;
+        await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,unit,req.params.id]);
+        await c.query('UPDATE inventory_balances SET average_unit_cost=average_unit_cost+(($1-$2)/$3),updated_at=NOW() WHERE warehouse_id=$4 AND item_id=$5 AND lot_no=$6',
+          [newTotal,oldTotal,qty,h.rows[0].warehouse_id,h.rows[0].item_id,h.rows[0].lot_no]);
+        const updated=await c.query('UPDATE production_orders SET unit_production_cost=$1 WHERE id=$2 RETURNING id,actual_qty,total_material_cost,unit_production_cost',[unit,req.params.id]);
+        return {...updated.rows[0],totalProductionCost:newTotal,additionalCost:Number(sums.rows[0].extras)};
+      });
+      return result;
+    }catch(e){return failure(reply,e);}
+  });
+
+  app.post('/api/v1/production/orders/:id/quality', auth(app,'QUALITY.FINISHED_APPROVE'), async(req,reply)=>{
+    const b=req.body??{};
+    if(!['PASS','FAIL','CONDITIONAL'].includes(b.result))return invalid(reply);
+    try{
+      const result=await transaction(db,async c=>{
+        const h=await c.query('SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no,o.quantity,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
+        if(!h.rowCount||h.rows[0].status!=='COMPLETED'||h.rows[0].quality_status!=='PENDING_QC')throw Object.assign(new Error('المنتج غير متاح للفحص أو تم فحصه مسبقاً'),{code:'P0001'});
+        await c.query('INSERT INTO finished_goods_inspections(production_order_id,inspected_by,result,parameters,notes) VALUES($1,$2,$3,$4::jsonb,$5)',
+          [req.params.id,req.authUser.user_id,b.result,JSON.stringify(b.parameters??{}),b.notes??null]);
+        const status=b.result==='PASS'?'RELEASED':b.result==='FAIL'?'QUARANTINED':'PENDING_QC';
+        await c.query('UPDATE inventory_balances SET quality_status=$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',
+          [status,h.rows[0].warehouse_id,h.rows[0].item_id,h.rows[0].lot_no]);
+        return {productionOrderId:req.params.id,result:b.result,inventoryStatus:status,availableForSale:status==='RELEASED'};
+      });
+      return result;
+    }catch(e){return failure(reply,e);}
+  });
+
 }
