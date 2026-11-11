@@ -213,6 +213,23 @@ export async function commercialRoutes(app,{db}){
    });return rep.code(201).send(out);
   }catch(e){return fail(rep,e);}
  });
+ app.get('/api/v1/accounting/supplier-payments',auth(app,'ACCOUNTING.READ'),async(_q,rep)=>{
+  try{return (await db.query(`SELECT p.*,s.code supplier_code,s.name_ar supplier_name,
+   COALESCE(json_agg(json_build_object('purchaseOrderId',po.id,'orderNo',po.order_no,'amount',a.amount)) FILTER(WHERE a.id IS NOT NULL),'[]'::json) allocations
+   FROM supplier_payments p JOIN suppliers s ON s.id=p.supplier_id
+   LEFT JOIN supplier_payment_allocations a ON a.supplier_payment_id=p.id LEFT JOIN purchase_orders po ON po.id=a.purchase_order_id
+   GROUP BY p.id,s.code,s.name_ar ORDER BY p.payment_date DESC,p.payment_no DESC`)).rows;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/purchases/returns',auth(app,'PURCHASES.READ'),async(_q,rep)=>{
+  try{return (await db.query(`SELECT r.*,s.code supplier_code,s.name_ar supplier_name,w.code warehouse_code,
+   COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'itemCode',i.code,'itemName',i.name_ar,'lotNo',l.lot_no,'quantity',l.quantity,'unitCost',l.unit_cost)) FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
+   FROM purchase_returns r JOIN suppliers s ON s.id=r.supplier_id JOIN warehouses w ON w.id=r.warehouse_id
+   LEFT JOIN purchase_return_lines l ON l.purchase_return_id=r.id LEFT JOIN items i ON i.id=l.item_id
+   GROUP BY r.id,s.code,s.name_ar,w.code ORDER BY r.created_at DESC`)).rows;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/accounting/periods',auth(app,'ACCOUNTING.READ'),async(_q,rep)=>{
+  try{return (await db.query('SELECT * FROM accounting_periods ORDER BY start_date DESC')).rows;}catch(e){return fail(rep,e);}
+ });
  app.post('/api/v1/accounting/supplier-payments',auth(app,'SUPPLIER_PAYMENTS.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.paymentNo,40)||!b.supplierId||!pos(b.amount)||!['CASH','BANK','TRANSFER','CHEQUE'].includes(b.paymentMethod)||!Array.isArray(b.allocations))return bad(rep);
   try{
