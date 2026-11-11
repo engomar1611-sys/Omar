@@ -135,6 +135,46 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     const expenseList = await app.inject({method:'GET',url:'/api/v1/accounting/expenses',headers});
     assert.equal(expenseList.statusCode,200,expenseList.body);
     assert.ok(expenseList.json().some(x=>x.id===expense.json().id));
+
+    const supplier = await app.inject({method:'POST',url:'/api/v1/suppliers',headers,payload:{code:code('SUP'),nameAr:'مورد اختبار تكامل'}});
+    assert.equal(supplier.statusCode,201,supplier.body);
+    const purchase = await app.inject({method:'POST',url:'/api/v1/purchases',headers,payload:{
+      orderNo:code('PUR'),supplierId:supplier.json().id,warehouseId:warehouse.id,lines:[{itemId:raw.id,quantity:5,unitCost:4}]
+    }});
+    assert.equal(purchase.statusCode,201,purchase.body);
+    const purchaseApproved = await app.inject({method:'POST',url:'/api/v1/purchases/'+purchase.json().id+'/approve',headers,payload:{}});
+    assert.equal(purchaseApproved.statusCode,200,purchaseApproved.body);
+    const purchaseList = await app.inject({method:'GET',url:'/api/v1/purchases',headers});
+    const purchaseRow = purchaseList.json().find(x=>x.id===purchase.json().id);
+    assert.equal(purchaseRow.lines.length,1);
+    const goodsReceipt = await app.inject({method:'POST',url:'/api/v1/goods-receipts',headers,payload:{
+      receiptNo:code('GR'),purchaseOrderId:purchase.json().id,
+      lines:[{purchaseOrderLineId:purchaseRow.lines[0].id,quantity:5,lotNo:'BUYLOT-'+suffix,expiryDate:'2027-03-01'}]
+    }});
+    assert.equal(goodsReceipt.statusCode,201,goodsReceipt.body);
+    const receiptDetails = await app.inject({method:'GET',url:'/api/v1/goods-receipts',headers});
+    const goodsReceiptRow = receiptDetails.json().find(x=>x.id===goodsReceipt.json().id);
+    const goodsQc = await app.inject({method:'POST',url:'/api/v1/goods-receipts/'+goodsReceipt.json().id+'/quality',headers,payload:{
+      inspections:[{receiptLineId:goodsReceiptRow.lines[0].id,acceptedQty:5,rejectedQty:0,result:'PASS'}]
+    }});
+    assert.equal(goodsQc.statusCode,200,goodsQc.body);
+    const supplierPayment = await app.inject({method:'POST',url:'/api/v1/accounting/supplier-payments',headers,payload:{
+      paymentNo:code('SP'),supplierId:supplier.json().id,amount:10,paymentMethod:'CASH',allocations:[{purchaseOrderId:purchase.json().id,amount:10}]
+    }});
+    assert.equal(supplierPayment.statusCode,201,supplierPayment.body);
+    const supplierPaymentList = await app.inject({method:'GET',url:'/api/v1/accounting/supplier-payments',headers});
+    assert.equal(supplierPaymentList.statusCode,200,supplierPaymentList.body);
+    assert.ok(supplierPaymentList.json().some(x=>x.id===supplierPayment.json().id));
+    const purchaseReturn = await app.inject({method:'POST',url:'/api/v1/purchases/returns',headers,payload:{
+      returnNo:code('PR'),supplierId:supplier.json().id,warehouseId:warehouse.id,reason:'اختبار مردود مشتريات',
+      lines:[{itemId:raw.id,lotNo:'BUYLOT-'+suffix,quantity:1}]
+    }});
+    assert.equal(purchaseReturn.statusCode,201,purchaseReturn.body);
+    const purchaseReturnList = await app.inject({method:'GET',url:'/api/v1/purchases/returns',headers});
+    assert.equal(purchaseReturnList.statusCode,200,purchaseReturnList.body);
+    assert.ok(purchaseReturnList.json().some(x=>x.id===purchaseReturn.json().returnId));
+    const periods = await app.inject({method:'GET',url:'/api/v1/accounting/periods',headers});
+    assert.equal(periods.statusCode,200,periods.body);
     assert.equal(userId.length,36);
   } finally {
     await app.close();
