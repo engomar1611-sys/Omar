@@ -347,6 +347,50 @@ async function reverseJournal(c,{sourceType,sourceId,reversalType,reversalNo,act
    return {receiptId:req.params.id,status:'REVERSED',recalculatedInvoices:allocations.rowCount};
   });return out;}catch(e){return fail(rep,e);}
  });
+
+ app.post('/api/v1/accounting/supplier-payments/:id/reverse',auth(app,'SUPPLIER_PAYMENTS.REVERSE'),async(req,rep)=>{
+  const reason=req.body?.reason;if(!txt(reason,500))return bad(rep,'سبب العكس مطلوب');
+  try{const out=await tx(db,async c=>{
+   const h=await c.query("SELECT * FROM supplier_payments WHERE id=$1 FOR UPDATE",[req.params.id]);
+   if(!h.rowCount||h.rows[0].status!=='POSTED')throw Object.assign(new Error('سند صرف المورد غير قابل للعكس'),{code:'P0001'});
+   await reverseJournal(c,{sourceType:'SUPPLIER_PAYMENT',sourceId:req.params.id,reversalType:'SUPPLIER_PAYMENT_REVERSAL',reversalNo:'J-RSP-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
+   await c.query("UPDATE supplier_payments SET status='REVERSED' WHERE id=$1",[req.params.id]);
+   return {paymentId:req.params.id,status:'REVERSED'};
+  });return out;}catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/purchases/returns/:id/reverse',auth(app,'PURCHASE_RETURNS.REVERSE'),async(req,rep)=>{
+  const reason=req.body?.reason;if(!txt(reason,500))return bad(rep,'سبب العكس مطلوب');
+  try{const out=await tx(db,async c=>{
+   const h=await c.query("SELECT * FROM purchase_returns WHERE id=$1 FOR UPDATE",[req.params.id]);
+   if(!h.rowCount||h.rows[0].status!=='POSTED')throw Object.assign(new Error('مرتجع المشتريات غير قابل للعكس'),{code:'P0001'});
+   const lines=await c.query('SELECT * FROM purchase_return_lines WHERE purchase_return_id=$1 ORDER BY id',[req.params.id]);
+   for(const l of lines.rows){
+    const bal=await c.query('SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+    const old=bal.rowCount?Number(bal.rows[0].quantity):0,oldCost=bal.rowCount?Number(bal.rows[0].average_unit_cost):0,q=Number(l.quantity),cost=Number(l.unit_cost),newQty=old+q;
+    const avg=newQty?((old*oldCost)+(q*cost))/newQty:0;
+    await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
+     VALUES($1,$2,$3,$4,$5,'RELEASED') ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE
+     SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
+     [h.rows[0].warehouse_id,l.item_id,l.lot_no,newQty,avg]);
+    await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
+     VALUES($1,$2,$3,$4,'PURCHASE_RETURN_REVERSAL',$5,$6,'PURCHASE_RETURN_REVERSAL',$7,$8)`,
+     [`PRR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,q,cost,req.params.id,req.authUser.user_id]);
+   }
+   await reverseJournal(c,{sourceType:'PURCHASE_RETURN',sourceId:req.params.id,reversalType:'PURCHASE_RETURN_REVERSAL',reversalNo:'J-RPR-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
+   await c.query("UPDATE purchase_returns SET status='CANCELLED' WHERE id=$1",[req.params.id]);
+   return {returnId:req.params.id,status:'CANCELLED',restoredLines:lines.rowCount};
+  });return out;}catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/accounting/expenses/:id/reverse',auth(app,'EXPENSES.REVERSE'),async(req,rep)=>{
+  const reason=req.body?.reason;if(!txt(reason,500))return bad(rep,'سبب العكس مطلوب');
+  try{const out=await tx(db,async c=>{
+   const h=await c.query("SELECT * FROM expenses WHERE id=$1 FOR UPDATE",[req.params.id]);
+   if(!h.rowCount||h.rows[0].status!=='POSTED')throw Object.assign(new Error('المصروف غير قابل للعكس'),{code:'P0001'});
+   await reverseJournal(c,{sourceType:'EXPENSE',sourceId:req.params.id,reversalType:'EXPENSE_REVERSAL',reversalNo:'J-REX-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
+   await c.query("UPDATE expenses SET status='REVERSED' WHERE id=$1",[req.params.id]);
+   return {expenseId:req.params.id,status:'REVERSED'};
+  });return out;}catch(e){return fail(rep,e);}
+ });
  app.get('/api/v1/reports/trial-balance',auth(app,'REPORTS.READ'),async(req,rep)=>{
   try{return (await db.query(`SELECT a.code,a.name_ar,a.account_type,
     COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit ELSE 0 END),0) total_debit,
