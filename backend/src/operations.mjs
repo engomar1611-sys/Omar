@@ -285,15 +285,16 @@ export async function operationsRoutes(app, { db }) {
     if(!Array.isArray(components)||components.some(x=>!allowed.includes(x.componentCode)||!text(x.description,200)||!Number.isFinite(Number(x.amount))||Number(x.amount)<0))return invalid(reply);
     try{
       const result=await transaction(db,async c=>{
-        const h=await c.query('SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no,o.quantity,o.total_cost,b.quantity balance_qty,b.average_unit_cost,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
+        const h=await c.query('SELECT p.id,p.status,p.warehouse_id,p.total_material_cost,o.item_id,o.lot_no,o.quantity,o.total_cost,b.quantity balance_qty,b.average_unit_cost,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
         if(!h.rowCount||h.rows[0].status!=='COMPLETED'||h.rows[0].quality_status!=='PENDING_QC')throw Object.assign(new Error('يجب أن يكون الإنتاج مكتملاً والمنتج بانتظار فحص الجودة'),{code:'P0001'});
         await c.query('DELETE FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
         for(const x of components)await c.query('INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by) VALUES($1,$2,$3,$4,$5)',[req.params.id,x.componentCode,x.description.trim(),x.amount,req.authUser.user_id]);
         const sums=await c.query('SELECT COALESCE(SUM(amount),0) extras FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
-        const oldTotal=Number(h.rows[0].total_cost),newTotal=oldTotal+Number(sums.rows[0].extras),qty=Number(h.rows[0].quantity),unit=newTotal/qty;
+        const oldTotal=Number(h.rows[0].total_cost),newTotal=Number(h.rows[0].total_material_cost)+Number(sums.rows[0].extras),qty=Number(h.rows[0].quantity),balanceQty=Number(h.rows[0].balance_qty),unit=newTotal/qty;
         await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,unit,req.params.id]);
         await c.query('UPDATE inventory_balances SET average_unit_cost=average_unit_cost+(($1-$2)/$3),updated_at=NOW() WHERE warehouse_id=$4 AND item_id=$5 AND lot_no=$6',
-          [newTotal,oldTotal,qty,h.rows[0].warehouse_id,h.rows[0].item_id,h.rows[0].lot_no]);
+          [newTotal,oldTotal,balanceQty,h.rows[0].warehouse_id,h.rows[0].item_id,h.rows[0].lot_no]);
+        await c.query('UPDATE stock_movements SET unit_cost=$1 WHERE reference_type=''PRODUCTION_ORDER'' AND reference_id=$2 AND movement_type=''PRODUCTION_OUTPUT''',[unit,req.params.id]);
         const updated=await c.query('UPDATE production_orders SET unit_production_cost=$1 WHERE id=$2 RETURNING id,actual_qty,total_material_cost,unit_production_cost',[unit,req.params.id]);
         return {...updated.rows[0],totalProductionCost:newTotal,additionalCost:Number(sums.rows[0].extras)};
       });
