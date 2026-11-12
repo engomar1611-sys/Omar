@@ -1,0 +1,76 @@
+name: Windows Installers
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  desktop-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+  build-windows:
+    runs-on: windows-latest
+    needs: desktop-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build employee Windows application
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          npm run dist:win
+      - name: Prepare server payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location backend
+          npm install --omit=dev --no-audit --no-fund
+          Pop-Location
+          $payload = Join-Path $PWD 'dist/server-payload'
+          New-Item -ItemType Directory -Force -Path "$payload/backend" | Out-Null
+          Copy-Item backend/package.json "$payload/backend/"
+          Copy-Item backend/src "$payload/backend/" -Recurse
+          Copy-Item backend/migrations "$payload/backend/" -Recurse
+          Copy-Item backend/scripts "$payload/backend/" -Recurse
+          Copy-Item backend/web "$payload/backend/" -Recurse
+          Copy-Item backend/node_modules "$payload/backend/" -Recurse
+          Copy-Item (Get-Command node).Source "$payload/node.exe"
+          Invoke-WebRequest -Uri 'https://github.com/winsw/winsw/releases/download/v3.0.0/WinSW-x64.exe' -OutFile "$payload/NewFeedERPService.exe"
+          Copy-Item server-installer/NewFeedERPService.xml "$payload/"
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build server setup EXE
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          & $iscc 'server-installer/ServerInstaller.iss'
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
+      - name: Upload employee EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEW-FEED-ERP-Employee-Windows-EXE
+          path: desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload server EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEW-FEED-ERP-Server-Windows-EXE
+          path: dist/*.exe
+          if-no-files-found: error
+          retention-days: 14
