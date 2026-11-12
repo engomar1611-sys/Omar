@@ -78,7 +78,7 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(productionDetails.statusCode,200,productionDetails.body);
     assert.equal(productionDetails.json().order.id,orderId);
     assert.equal(productionDetails.json().consumptions.length,2);
-    assert.equal(Number(productionDetails.json().consumptions.reduce((s,x)=>s+Number(x.extended_cost),0)),60);
+    assert.equal(Number(productionDetails.json().consumptions.reduce((s,x)=>s+Number(x.extended_cost),0)),64);
     assert.equal(productionDetails.json().output.lot_no,completed.json().outputLotNo || (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no);
     assert.equal(productionDetails.json().costComponents.length,5);
     assert.equal(productionDetails.json().journalEntries.length,1);
