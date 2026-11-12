@@ -26,6 +26,18 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
    employeeNo:code('EMP2'),fullNameAr:'موظف اختبار سلفة ثانٍ',hireDate:'2026-01-01',basicSalary:2000,departmentId:department.json().id
   }});
   assert.equal(employee2.statusCode,201,employee2.body);
+  const leaveType=await app.inject({method:'POST',url:'/api/v1/hr/leave-types',headers,payload:{code:code('ANNUAL'),nameAr:'إجازة سنوية',annualQuota:21}});
+  assert.equal(leaveType.statusCode,201,leaveType.body);
+  const leave=await app.inject({method:'POST',url:'/api/v1/hr/leaves',headers,payload:{
+   requestNo:code('LV'),employeeId:employee.json().id,leaveTypeId:leaveType.json().id,startDate:'2026-01-05',endDate:'2026-01-06',days:2
+  }});
+  assert.equal(leave.statusCode,201,leave.body);
+  assert.equal((await app.inject({method:'POST',url:'/api/v1/hr/leaves/'+leave.json().id+'/decision',headers,payload:{status:'APPROVED'}})).statusCode,200);
+  const leaveBalances=await app.inject({method:'GET',url:'/api/v1/hr/leave-balances?year=2026',headers});
+  assert.equal(leaveBalances.statusCode,200,leaveBalances.body);
+  const employeeLeaveBalance=leaveBalances.json().find(x=>x.employee_id===employee.json().id&&x.leave_type_id===leaveType.json().id);
+  assert.equal(Number(employeeLeaveBalance.used_days),2);
+  assert.equal(Number(employeeLeaveBalance.remaining_days),19);
   const advance1=await app.inject({method:'POST',url:'/api/v1/hr/advances',headers,payload:{
    advanceNo:code('ADV1'),employeeId:employee.json().id,amount:300,installments:3
   }});
@@ -61,6 +73,15 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
 
   const asset=await app.inject({method:'POST',url:'/api/v1/maintenance/assets',headers,payload:{assetCode:code('AST'),nameAr:'ماكينة خلط اختبار',assetType:'MACHINE',plantId:plant.id,acquisitionCost:50000}});
   assert.equal(asset.statusCode,201,asset.body);
+  const plan=await app.inject({method:'POST',url:'/api/v1/maintenance/plans',headers,payload:{
+   planCode:code('PM'),assetId:asset.json().id,titleAr:'صيانة شهرية لماكينة الخلط',maintenanceType:'PREVENTIVE',intervalDays:30,nextDueDate:'2026-01-01',checklist:['فحص السيور','فحص التشحيم']
+  }});
+  assert.equal(plan.statusCode,201,plan.body);
+  const generatedPm=await app.inject({method:'POST',url:'/api/v1/maintenance/plans/'+plan.json().id+'/generate-work-order',headers,payload:{}});
+  assert.equal(generatedPm.statusCode,200,generatedPm.body);
+  assert.equal(generatedPm.json().plan_id,plan.json().id);
+  const duplicatePm=await app.inject({method:'POST',url:'/api/v1/maintenance/plans/'+plan.json().id+'/generate-work-order',headers,payload:{}});
+  assert.equal(duplicatePm.statusCode,409);
   const wo=await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders',headers,payload:{workOrderNo:code('WO'),assetId:asset.json().id,maintenanceType:'CORRECTIVE',priority:'HIGH',problemDescription:'اهتزاز غير طبيعي'}});
   assert.equal(wo.statusCode,201,wo.body);
   assert.equal((await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders/'+wo.json().id+'/start',headers,payload:{}})).statusCode,200);
