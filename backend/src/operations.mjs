@@ -43,6 +43,47 @@ async function transaction(db, work) {
     throw error;
   } finally { client.release(); }
 }
+async function assertProductionPeriodOpen(c, entryDate) {
+  const period = await c.query(
+    'SELECT status FROM accounting_periods WHERE $1::date BETWEEN start_date AND end_date FOR UPDATE',
+    [entryDate]
+  );
+  if (period.rows.some(row => row.status !== 'OPEN')) {
+    throw Object.assign(new Error('الفترة المحاسبية الخاصة بترحيل الإنتاج مغلقة أو مقفلة'), { code: 'P0001' });
+  }
+}
+
+async function postProductionJournal(c, {
+  entryNo, sourceType, sourceId, description, debitCode, creditCode, amount, userId, entryDate
+}) {
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value < 0) {
+    throw Object.assign(new Error('قيمة قيد الإنتاج غير صحيحة'), { code: 'P0001' });
+  }
+  if (value <= 0.000001) return null;
+  const date = entryDate ?? new Date().toISOString().slice(0, 10);
+  await assertProductionPeriodOpen(c, date);
+  const accounts = await c.query(
+    'SELECT id,code FROM gl_accounts WHERE code = ANY($1::text[]) AND is_active = TRUE',
+    [[debitCode, creditCode]]
+  );
+  const byCode = new Map(accounts.rows.map(row => [row.code, row.id]));
+  if (!byCode.has(debitCode) || !byCode.has(creditCode)) {
+    throw Object.assign(new Error('حسابات ترحيل الإنتاج غير معرفة أو غير نشطة'), { code: 'P0001' });
+  }
+  const entry = await c.query(
+    `INSERT INTO journal_entries(entry_no,entry_date,source_type,source_id,description,total_debit,total_credit,created_by)
+     VALUES($1,$2,$3,$4,$5,$6,$6,$7) RETURNING id`,
+    [entryNo, date, sourceType, sourceId, description, value, userId]
+  );
+  await c.query(
+    `INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description)
+     VALUES($1,$2,$3,0,$4),($1,$5,0,$3,$6)`,
+    [entry.rows[0].id, byCode.get(debitCode), value, description, byCode.get(creditCode), description]
+  );
+  return entry.rows[0].id;
+}
+
 async function issueProductionMaterials(c, order, issueQty, userId) {
   const existing = await c.query('SELECT id FROM production_material_issues WHERE production_order_id=$1 FOR UPDATE',[order.id]);
   if(existing.rowCount) throw Object.assign(new Error('تم صرف خامات أمر الإنتاج مسبقاً'),{code:'P0001'});
@@ -68,6 +109,17 @@ async function issueProductionMaterials(c, order, issueQty, userId) {
     }
   }
   await c.query('UPDATE production_material_issues SET total_cost=$1 WHERE id=$2',[totalCost,issue.id]);
+  await postProductionJournal(c, {
+    entryNo: 'J-MI-' + issue.issue_no,
+    sourceType: 'PRODUCTION_MATERIAL_ISSUE',
+    sourceId: issue.id,
+    description: 'تحويل خامات إلى تحت التشغيل لأمر ' + order.order_no,
+    debitCode: '1300',
+    creditCode: '1200',
+    amount: totalCost,
+    userId,
+    entryDate: issue.issued_at ? new Date(issue.issued_at).toISOString().slice(0, 10) : undefined
+  });
   return {...issue,total_cost:totalCost,lines:issued};
 }
 const text = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.trim().length <= max;
@@ -341,7 +393,9 @@ export async function operationsRoutes(app, { db }) {
             FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
           FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_entry_id=j.id
           LEFT JOIN gl_accounts a ON a.id=l.account_id
-          WHERE j.source_id=$1 AND j.source_type='PRODUCTION_COST'
+          WHERE (j.source_id=$1 AND j.source_type IN ('PRODUCTION_COST','PRODUCTION_COMPLETION'))
+             OR (j.source_type='PRODUCTION_MATERIAL_ISSUE' AND j.source_id=(SELECT id FROM production_material_issues WHERE production_order_id=$1))
+             OR (j.source_type='PRODUCTION_MATERIAL_ISSUE_REVERSAL' AND j.source_id=(SELECT id FROM production_material_issues WHERE production_order_id=$1))
           GROUP BY j.id ORDER BY j.created_at`,[req.params.id]),
         db.query(`SELECT id,issue_no,issue_qty,total_cost,status,issued_at,issued_by,reversed_at,reversed_by,reversal_reason FROM production_material_issues WHERE production_order_id=$1`,[req.params.id]),
         db.query(`SELECT l.id,l.loss_type,l.quantity,l.reason,l.created_at,l.approved_at,l.journal_entry_id,
@@ -606,6 +660,22 @@ export async function operationsRoutes(app, { db }) {
             ['PIR-'+issue.id.slice(0,8)+'-'+sequence,orderResult.rows[0].warehouse_id,line.item_id,line.lot_no,qty,cost,issue.id,req.authUser.user_id]);
           restoredQty+=qty;restoredCost+=qty*cost;
         }
+        const issueJournal = await c.query(
+          "SELECT id FROM journal_entries WHERE source_type='PRODUCTION_MATERIAL_ISSUE' AND source_id=$1 AND status='POSTED'",
+          [issue.id]
+        );
+        if (issueJournal.rowCount) {
+          await postProductionJournal(c, {
+            entryNo: 'J-MIR-' + issue.issue_no,
+            sourceType: 'PRODUCTION_MATERIAL_ISSUE_REVERSAL',
+            sourceId: issue.id,
+            description: 'عكس تحويل خامات تحت التشغيل لأمر ' + issue.production_order_id,
+            debitCode: '1200',
+            creditCode: '1300',
+            amount: restoredCost,
+            userId: req.authUser.user_id
+          });
+        }
         await c.query(`UPDATE production_material_issues SET status='REVERSED',reversed_by=$1,reversed_at=NOW(),reversal_reason=$2 WHERE id=$3`,[req.authUser.user_id,reason.trim(),issue.id]);
         await c.query(`UPDATE production_orders SET status='CANCELLED' WHERE id=$1`,[issue.production_order_id]);
         await c.query(`UPDATE production_schedule_entries SET status='CANCELLED' WHERE production_order_id=$1 AND status IN ('PLANNED','CONFIRMED')`,[issue.production_order_id]);
@@ -627,12 +697,15 @@ export async function operationsRoutes(app, { db }) {
         if(!lines.rowCount)throw Object.assign(new Error('التركيبة لا تحتوي على مكونات'),{code:'P0001'});
         const pctTotal=lines.rows.reduce((sum,line)=>sum+Number(line.percentage),0);
         if(Math.abs(pctTotal-100)>0.000001)throw Object.assign(new Error('مجموع نسب التركيبة يجب أن يساوي 100%'),{code:'P0001'});
-        const issueHeader=await c.query('SELECT id,issue_qty FROM production_material_issues WHERE production_order_id=$1 FOR UPDATE',[order.id]);
+        const issueHeader=await c.query('SELECT id,issue_qty,total_cost,issued_at,status FROM production_material_issues WHERE production_order_id=$1 FOR UPDATE',[order.id]);
         let totalCost=0;
         if(!issueHeader.rowCount){
           const issued=await issueProductionMaterials(c,order,Number(b.actualQty),req.authUser.user_id);
           totalCost=Number(issued.total_cost);
         }else{
+          if (issueHeader.rows[0].status !== 'POSTED') {
+            throw Object.assign(new Error('إذن صرف الخامات معكوس ولا يمكن إتمام أمر الإنتاج'), { code: 'P0001' });
+          }
           const consumed=await c.query(`SELECT item_id,SUM(quantity) quantity,SUM(extended_cost) cost FROM production_consumptions WHERE production_order_id=$1 GROUP BY item_id`,[order.id]);
           const byItem=new Map(consumed.rows.map(row=>[row.item_id,Number(row.quantity)]));
           for(const line of lines.rows){
@@ -640,6 +713,23 @@ export async function operationsRoutes(app, { db }) {
             if((byItem.get(line.item_id)||0)+0.000001<required) throw Object.assign(new Error('الخامات المصروفة لا تكفي لإتمام الكمية الفعلية؛ راجع إذن الصرف'),{code:'P0001'});
           }
           totalCost=consumed.rows.reduce((sum,row)=>sum+Number(row.cost),0);
+          const issueJournal = await c.query(
+            "SELECT id FROM journal_entries WHERE source_type='PRODUCTION_MATERIAL_ISSUE' AND source_id=$1",
+            [issueHeader.rows[0].id]
+          );
+          if (!issueJournal.rowCount) {
+            await postProductionJournal(c, {
+              entryNo: 'J-MI-' + issueHeader.rows[0].id.slice(0, 12),
+              sourceType: 'PRODUCTION_MATERIAL_ISSUE',
+              sourceId: issueHeader.rows[0].id,
+              description: 'تسوية ربط صرف الخامات بدفتر الأستاذ لأمر ' + order.order_no,
+              debitCode: '1300',
+              creditCode: '1200',
+              amount: totalCost,
+              userId: req.authUser.user_id,
+              entryDate: issueHeader.rows[0].issued_at ? new Date(issueHeader.rows[0].issued_at).toISOString().slice(0, 10) : undefined
+            });
+          }
         }
         const unitCost=totalCost/Number(b.actualQty);
         const existingLot=await c.query('SELECT 1 FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[order.warehouse_id,order.output_item_id,b.outputLotNo]);
@@ -652,6 +742,16 @@ export async function operationsRoutes(app, { db }) {
         await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
           VALUES($1,$2,$3,$4,'PRODUCTION_OUTPUT',$5,$6,'PRODUCTION_ORDER',$7,$8)`,
           [`PO-${order.id}`,order.warehouse_id,order.output_item_id,b.outputLotNo,b.actualQty,unitCost,order.id,req.authUser.user_id]);
+        await postProductionJournal(c, {
+          entryNo: 'J-PC-' + order.id.slice(0, 12),
+          sourceType: 'PRODUCTION_COMPLETION',
+          sourceId: order.id,
+          description: 'تحويل تكلفة الإنتاج من تحت التشغيل إلى مخزون المنتج التام لأمر ' + order.order_no,
+          debitCode: '1200',
+          creditCode: '1300',
+          amount: totalCost,
+          userId: req.authUser.user_id
+        });
         const updated=await c.query(`UPDATE production_orders SET status='COMPLETED',actual_qty=$1,completed_at=NOW(),
           total_material_cost=$2,unit_production_cost=$3 WHERE id=$4 RETURNING *`,
           [b.actualQty,totalCost,unitCost,order.id]);

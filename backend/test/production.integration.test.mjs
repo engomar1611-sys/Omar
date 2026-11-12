@@ -78,6 +78,11 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(issue.statusCode,201,issue.body);
     assert.equal(Number(issue.json().issueQty),10);
     assert.equal(issue.json().lines.length,2);
+    const issueJournal = await pool.query(
+      "SELECT j.id,j.total_debit,j.total_credit,a.code FROM journal_entries j JOIN journal_lines l ON l.journal_entry_id=j.id JOIN gl_accounts a ON a.id=l.account_id WHERE j.source_type='PRODUCTION_MATERIAL_ISSUE' AND j.source_id=$1 ORDER BY a.code",
+      [issue.json().id]
+    );
+    assert.deepEqual(issueJournal.rows.map(x=>[x.code,Number(x.total_debit),Number(x.total_credit)]),[['1200',64,64],['1300',64,64]]);
     const duplicateIssue = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/issue',headers,payload:{issueQty:10}});
     assert.equal(duplicateIssue.statusCode,409,'a production order must not be issued twice');
     const processLoss=await app.inject({method:'POST',url:'/api/v1/production/process-losses',headers,payload:{productionOrderId:orderId,itemId:raw.id,lotNo:'EARLY',quantity:0.5,reason:'فاقد أثناء الخلط — اختبار'}});
@@ -91,6 +96,12 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(processLossApproved.json().inventoryAdjusted,false,'already-issued raw material must not be deducted twice');
     const completed = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/complete',headers,payload:{actualQty:10,outputLotNo:code('LOT')}});
     assert.equal(completed.statusCode,200,completed.body);
+    const completionJournal = await pool.query(
+      "SELECT j.id,j.total_debit,j.total_credit,a.code,l.debit,l.credit FROM journal_entries j JOIN journal_lines l ON l.journal_entry_id=j.id JOIN gl_accounts a ON a.id=l.account_id WHERE j.source_type='PRODUCTION_COMPLETION' AND j.source_id=$1 ORDER BY a.code",
+      [orderId]
+    );
+    assert.deepEqual(completionJournal.rows.map(x=>[x.code,Number(x.debit),Number(x.credit),Number(x.total_debit),Number(x.total_credit)]),
+      [['1200',64,0,64,64],['1300',0,64,64,64]]);
 
     const consumed = await pool.query('SELECT lot_no,quantity FROM production_consumptions WHERE production_order_id=$1 ORDER BY lot_no',[orderId]);
     assert.deepEqual(consumed.rows.map(x=>[x.lot_no,Number(x.quantity)]),[['EARLY',3],['LATE',7]]);
@@ -123,9 +134,12 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(Number(productionDetails.json().consumptions.reduce((s,x)=>s+Number(x.extended_cost),0)),64);
     assert.equal(productionDetails.json().output.lot_no,completed.json().outputLotNo || (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no);
     assert.equal(productionDetails.json().costComponents.length,5);
-    assert.equal(productionDetails.json().journalEntries.length,1);
-    assert.equal(productionDetails.json().journalEntries[0].lines.length,6);
-    assert.equal(Number(productionDetails.json().journalEntries[0].total_debit),20);
+    assert.equal(productionDetails.json().journalEntries.length,3);
+    assert.deepEqual(productionDetails.json().journalEntries.map(x=>x.source_type).sort(),
+      ['PRODUCTION_COMPLETION','PRODUCTION_COST','PRODUCTION_MATERIAL_ISSUE'].sort());
+    const costEntry = productionDetails.json().journalEntries.find(x=>x.source_type==='PRODUCTION_COST');
+    assert.equal(costEntry.lines.length,6);
+    assert.equal(Number(costEntry.total_debit),20);
 
     const failed = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/quality',headers,payload:{result:'FAIL',notes:'فشل اختبار'}});
     assert.equal(failed.statusCode,200,failed.body);
@@ -202,6 +216,12 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(reverse.statusCode,200,reverse.body);
     assert.equal(reverse.json().status,'REVERSED');
     assert.equal(reverse.json().productionOrderStatus,'CANCELLED');
+    const reversalJournal = await pool.query(
+      "SELECT j.total_debit,j.total_credit,a.code,l.debit,l.credit FROM journal_entries j JOIN journal_lines l ON l.journal_entry_id=j.id JOIN gl_accounts a ON a.id=l.account_id WHERE j.source_type='PRODUCTION_MATERIAL_ISSUE_REVERSAL' AND j.source_id=$1 ORDER BY a.code",
+      [secondIssue.json().id]
+    );
+    assert.deepEqual(reversalJournal.rows.map(x=>[x.code,Number(x.debit),Number(x.credit),Number(x.total_debit),Number(x.total_credit)]),
+      [['1200',35,0,35,35],['1300',0,35,35,35]]);
     assert.equal(Number(reverse.json().restoredQuantity),5);
     const duplicateReverse=await app.inject({method:'POST',url:'/api/v1/production/material-issues/'+secondIssue.json().id+'/reverse',headers,payload:{reason:'محاولة عكس مكرر'}});
     assert.equal(duplicateReverse.statusCode,409);
