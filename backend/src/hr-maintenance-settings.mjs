@@ -66,8 +66,10 @@ export async function hrRoutes(app,{db}) {
    const je=await c.query("INSERT INTO journal_entries(entry_no,entry_date,source_type,source_id,description,total_debit,total_credit,created_by) VALUES($1,$2,'PAYROLL',$3,$4,$5,$5,$6) RETURNING id",
     ['J-PAY-'+String(q.params.id).slice(0,12),period.rows[0].end_date,q.params.id,'ترحيل مسير رواتب '+period.rows[0].period_code,gross,q.authUser.user_id]);
    const id=je.rows[0].id;
-   await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,$3,0,'مصروف الرواتب'),($1,$4,0,$5,'صافي الرواتب المستحقة'),($1,$6,0,$7,'استرداد سلف العاملين'),($1,$2,0,$8,'خصومات الغياب')",
-    [id,account['5100'],gross,account['2100'],net,account['1300'],advances,absence]);
+   await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,$3,0,'مصروف الرواتب')",[id,account['5100'],gross]);
+   if(net>0)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,0,$3,'صافي الرواتب المستحقة')",[id,account['2100'],net]);
+   if(advances>0)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,0,$3,'استرداد سلف العاملين')",[id,account['1300'],advances]);
+   if(absence>0)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,0,$3,'خصومات الغياب')",[id,account['5100'],absence]);
    const adv=await c.query("SELECT id,remaining_amount FROM employee_advances WHERE status='APPROVED' AND remaining_amount>0 ORDER BY request_date,id FOR UPDATE");
    let remaining=advances;
    for(const x of adv.rows){if(remaining<=0)break;const deduction=Math.min(remaining,Number(x.remaining_amount));await c.query("UPDATE employee_advances SET remaining_amount=remaining_amount-$1,status=CASE WHEN remaining_amount-$1<=0.000001 THEN 'SETTLED' ELSE status END WHERE id=$2",[deduction,x.id]);remaining-=deduction;}
