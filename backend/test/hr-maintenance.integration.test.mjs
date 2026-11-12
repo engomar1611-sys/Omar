@@ -22,6 +22,10 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
    employeeNo:code('EMP'),fullNameAr:'موظف اختبار الرواتب',hireDate:'2026-01-01',basicSalary:1000,departmentId:department.json().id
   }});
   assert.equal(employee.statusCode,201,employee.body);
+  const employeeUpdate=await app.inject({method:'PUT',url:'/api/v1/hr/employees/'+employee.json().id,headers,payload:{employeeNo:employee.json().employee_no,fullNameAr:'موظف اختبار الرواتب بعد التعديل',hireDate:'2026-01-01',basicSalary:1200,departmentId:department.json().id,employmentType:'FULL_TIME',phone:'01000000000',bankName:'بنك الاختبار',address:'عنوان الاختبار'}});
+  assert.equal(employeeUpdate.statusCode,200,employeeUpdate.body);
+  assert.equal(employeeUpdate.json().full_name_ar,'موظف اختبار الرواتب بعد التعديل');
+  assert.equal(Number(employeeUpdate.json().basic_salary),1200);
   const employee2=await app.inject({method:'POST',url:'/api/v1/hr/employees',headers,payload:{
    employeeNo:code('EMP2'),fullNameAr:'موظف اختبار سلفة ثانٍ',hireDate:'2026-01-01',basicSalary:2000,departmentId:department.json().id
   }});
