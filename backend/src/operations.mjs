@@ -505,6 +505,8 @@ export async function operationsRoutes(app, { db }) {
         const issue=issueResult.rows[0];
         const orderResult=await c.query('SELECT id,status,warehouse_id FROM production_orders WHERE id=$1 FOR UPDATE',[issue.production_order_id]);
         if(!orderResult.rowCount||orderResult.rows[0].status!=='RELEASED')throw Object.assign(new Error('لا يمكن عكس الصرف بعد بدء إتمام أمر الإنتاج أو إقفاله'),{code:'P0001'});
+        const activeSchedule=await c.query(`SELECT id FROM production_schedule_entries WHERE production_order_id=$1 AND status IN ('IN_PROGRESS','COMPLETED') FOR UPDATE`,[issue.production_order_id]);
+        if(activeSchedule.rowCount)throw Object.assign(new Error('لا يمكن عكس الصرف بعد بدء تنفيذ جدولة التشغيل'),{code:'P0001'});
         const lines=await c.query(`SELECT pc.item_id,pc.lot_no,pc.quantity,pc.average_unit_cost,b.quantity balance_qty
           FROM production_consumptions pc JOIN inventory_balances b ON b.warehouse_id=$2 AND b.item_id=pc.item_id AND b.lot_no=pc.lot_no
           WHERE pc.production_order_id=$1 ORDER BY pc.item_id,pc.lot_no FOR UPDATE OF b`,[issue.production_order_id,orderResult.rows[0].warehouse_id]);
@@ -525,6 +527,7 @@ export async function operationsRoutes(app, { db }) {
         }
         await c.query(`UPDATE production_material_issues SET status='REVERSED',reversed_by=$1,reversed_at=NOW(),reversal_reason=$2 WHERE id=$3`,[req.authUser.user_id,reason.trim(),issue.id]);
         await c.query(`UPDATE production_orders SET status='CANCELLED' WHERE id=$1`,[issue.production_order_id]);
+        await c.query(`UPDATE production_schedule_entries SET status='CANCELLED' WHERE production_order_id=$1 AND status IN ('PLANNED','CONFIRMED')`,[issue.production_order_id]);
         return {issueId:issue.id,issueNo:issue.issue_no,status:'REVERSED',productionOrderStatus:'CANCELLED',restoredQuantity:restoredQty,restoredCost,reason:reason.trim()};
       });
       return result;
