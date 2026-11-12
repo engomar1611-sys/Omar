@@ -1,4 +1,4 @@
-const {app,BrowserWindow,Menu,ipcMain,shell}=require('electron');
+const {app,BrowserWindow,Menu,ipcMain,shell,net}=require('electron');
 const fs=require('node:fs'),path=require('node:path');
 const {normalizeServerUrl}=require('./config.cjs');
 let mainWindow,setupWindow;
@@ -7,7 +7,7 @@ function readConfig(){try{return {serverUrl:normalizeServerUrl(JSON.parse(fs.rea
 function writeConfig(serverUrl){fs.mkdirSync(path.dirname(configPath()),{recursive:true});fs.writeFileSync(configPath(),JSON.stringify({serverUrl},null,2),{mode:0o600});}
 async function checkServer(value){
  const base=normalizeServerUrl(value),controller=new AbortController(),timer=setTimeout(()=>controller.abort(),7000);
- try{const response=await fetch(base+'/ready',{signal:controller.signal,headers:{accept:'application/json'}});
+ try{const response=await net.fetch(base+'/ready',{signal:controller.signal,headers:{accept:'application/json'}});
   if(!response.ok)throw new Error('السيرفر لا يؤكد جاهزية قاعدة البيانات (HTTP '+response.status+')');
   const result=await response.json();if(result.status!=='ready'||result.database!=='connected')throw new Error('السيرفر يعمل لكن قاعدة البيانات غير جاهزة');
   return {ok:true,serverUrl:base,message:'الاتصال بالسيرفر وقاعدة البيانات ناجح'};
