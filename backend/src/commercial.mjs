@@ -534,6 +534,63 @@ export async function commercialRoutes(app,{db}){
     GROUP BY invoice_date ORDER BY invoice_date DESC`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
  });
 
+ app.get('/api/v1/reports/supplier-statement',auth(app,'REPORTS.READ'),async(req,rep)=>{
+  const supplierCode=String(req.query?.supplierCode??'').trim(),from=req.query?.from??null,to=req.query?.to??null;
+  if(!txt(supplierCode,40))return bad(rep,'كود المورد مطلوب');
+  if((from&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(from)))||(to&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(to))))return bad(rep,'صيغة التاريخ يجب أن تكون YYYY-MM-DD');
+  if(from&&to&&String(from)>String(to))return bad(rep,'تاريخ البداية يجب ألا يتجاوز النهاية');
+  const sql=`WITH transactions AS (
+    SELECT g.received_at::date transaction_date,'GOODS_RECEIPT'::text transaction_type,
+      g.receipt_no document_no,'استلام مشتريات معتمد الجودة'::text description,
+      0::numeric debit,SUM(l.accepted_qty*l.unit_cost)::numeric credit
+    FROM goods_receipts g JOIN purchase_orders po ON po.id=g.purchase_order_id
+      JOIN suppliers s ON s.id=po.supplier_id JOIN goods_receipt_lines l ON l.goods_receipt_id=g.id
+    WHERE s.code=$1 AND g.status IN ('ACCEPTED','PARTIAL')
+    GROUP BY g.id,g.received_at,g.receipt_no
+    UNION ALL
+    SELECT p.payment_date,'SUPPLIER_PAYMENT',p.payment_no,'سداد مورد',
+      SUM(a.amount)::numeric,0::numeric
+    FROM supplier_payments p JOIN suppliers s ON s.id=p.supplier_id
+      JOIN supplier_payment_allocations a ON a.supplier_payment_id=p.id
+    WHERE s.code=$1 AND p.status='POSTED'
+    GROUP BY p.id,p.payment_date,p.payment_no
+    UNION ALL
+    SELECT COALESCE(r.accounting_approved_at::date,r.posted_at::date),'PURCHASE_RETURN',r.return_no,
+      'مرتجع مشتريات معتمد',SUM(l.quantity*l.unit_cost)::numeric,0::numeric
+    FROM purchase_returns r JOIN suppliers s ON s.id=r.supplier_id
+      JOIN purchase_return_lines l ON l.purchase_return_id=r.id
+    WHERE s.code=$1 AND r.status='POSTED'
+    GROUP BY r.id,r.accounting_approved_at,r.posted_at,r.return_no
+  ), opening AS (
+    SELECT COALESCE(SUM(credit-debit),0)::numeric balance FROM transactions
+    WHERE $2::date IS NOT NULL AND transaction_date<$2::date
+  ), period_rows AS (
+    SELECT * FROM transactions
+    WHERE ($2::date IS NULL OR transaction_date>=$2::date)
+      AND ($3::date IS NULL OR transaction_date<=$3::date)
+  ), running AS (
+    SELECT p.*,o.balance+SUM(p.credit-p.debit) OVER(
+      ORDER BY p.transaction_date,p.transaction_type,p.document_no
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) balance
+    FROM period_rows p CROSS JOIN opening o
+  ), closing AS (
+    SELECT o.balance+COALESCE(SUM(p.credit-p.debit),0)::numeric balance
+    FROM opening o LEFT JOIN period_rows p ON TRUE GROUP BY o.balance
+  )
+  SELECT * FROM (
+    SELECT 0 sort_order,NULL::date transaction_date,'OPENING'::text transaction_type,
+      '—'::text document_no,'رصيد افتتاحي'::text description,0::numeric debit,0::numeric credit,o.balance
+    FROM opening o
+    UNION ALL
+    SELECT 1,r.transaction_date,r.transaction_type,r.document_no,r.description,r.debit,r.credit,r.balance FROM running r
+    UNION ALL
+    SELECT 2,NULL::date,'CLOSING'::text,'—'::text,'رصيد ختامي'::text,0::numeric,0::numeric,c.balance FROM closing c
+  ) statement_rows
+  ORDER BY sort_order,transaction_date NULLS FIRST,document_no`;
+  try{return (await db.query(sql,[supplierCode,from,to])).rows;}
+  catch(e){return fail(rep,e);}
+ });
+
  app.get('/api/v1/reports/customer-statement',auth(app,'REPORTS.READ'),async(req,rep)=>{
   const customerCode=String(req.query?.customerCode??'').trim(),from=req.query?.from??null,to=req.query?.to??null;
   if(!txt(customerCode,40))return bad(rep,'كود العميل مطلوب');
