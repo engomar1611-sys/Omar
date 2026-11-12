@@ -133,6 +133,13 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     const releasedAgain = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/quality',headers,payload:{result:'PASS',notes:'اجتاز إعادة الفحص'}});
     assert.equal(releasedAgain.statusCode,200,releasedAgain.body);
     assert.equal(releasedAgain.json().availableForSale,true);
+    const qcHistory=await app.inject({method:'GET',url:'/api/v1/production/orders/'+orderId+'/quality-history',headers});
+    assert.equal(qcHistory.statusCode,200,qcHistory.body);
+    assert.equal(qcHistory.json().length,2);
+    assert.deepEqual(qcHistory.json().map(x=>x.attempt_no),[2,1]);
+    assert.deepEqual(qcHistory.json().map(x=>x.result),['PASS','FAIL']);
+    const invalidQcParameters=await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/quality',headers,payload:{result:'PASS',parameters:['not','an','object']}});
+    assert.equal(invalidQcParameters.statusCode,400);
 
     const finalBalance = await pool.query('SELECT quantity,average_unit_cost,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,finished.id,completed.json().outputLotNo || (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no]);
     assert.equal(Number(finalBalance.rows[0].quantity),10);
