@@ -465,9 +465,22 @@ export async function commercialRoutes(app,{db}){
     GROUP BY a.id ORDER BY a.code`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
  });
  app.get('/api/v1/reports/inventory-valuation',auth(app,'REPORTS.READ'),async(_q,rep)=>{
-  try{return (await db.query(`SELECT w.code warehouse_code,i.code item_code,i.name_ar item_name,b.lot_no,b.expiry_date,b.quality_status,b.quantity,b.average_unit_cost,b.quantity*b.average_unit_cost stock_value
+  try{return (await db.query(`SELECT b.item_id,w.code warehouse_code,i.code item_code,i.name_ar item_name,b.lot_no,b.expiry_date,b.quality_status,b.quantity,b.average_unit_cost,b.quantity*b.average_unit_cost stock_value
     FROM inventory_balances b JOIN warehouses w ON w.id=b.warehouse_id JOIN items i ON i.id=b.item_id
     ORDER BY w.code,i.code,b.lot_no`)).rows;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/reports/expiry-alerts',auth(app,'REPORTS.READ'),async(req,rep)=>{
+  const days=req.query?.days===undefined?30:Number(req.query.days);
+  if(!Number.isInteger(days)||days<0||days>3650)return rep.code(400).send({error:'VALIDATION_ERROR',message:'عدد الأيام يجب أن يكون بين 0 و3650'});
+  try{return (await db.query(`SELECT b.item_id,w.code warehouse_code,i.code item_code,i.name_ar item_name,b.lot_no,
+    b.expiry_date,b.quality_status,b.quantity,b.average_unit_cost,b.quantity*b.average_unit_cost stock_value,
+    (b.expiry_date-CURRENT_DATE) days_to_expiry,
+    CASE WHEN b.expiry_date<CURRENT_DATE THEN 'EXPIRED'
+      WHEN b.expiry_date=CURRENT_DATE THEN 'EXPIRES_TODAY' ELSE 'EXPIRING_SOON' END expiry_status
+    FROM inventory_balances b JOIN warehouses w ON w.id=b.warehouse_id JOIN items i ON i.id=b.item_id
+    WHERE b.expiry_date IS NOT NULL AND b.quantity>0 AND b.expiry_date<=CURRENT_DATE+$1::int
+    ORDER BY b.expiry_date,w.code,i.code,b.lot_no`,[days])).rows;}
+  catch(e){return fail(rep,e);}
  });
  app.get('/api/v1/reports/production-costs',auth(app,'REPORTS.READ'),async(_q,rep)=>{
   try{return (await db.query(`SELECT p.order_no,fp.code product_code,fp.name_ar product_name,p.planned_qty,p.actual_qty,
