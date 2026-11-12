@@ -303,6 +303,7 @@ test('commercial and accounting endpoints require authentication', async () => {
       '/api/v1/sales/invoices',
       '/api/v1/accounting/journals',
       '/api/v1/reports/general-ledger',
+      '/api/v1/reports/supplier-statement',
       '/api/v1/reports/customer-statement',
       '/api/v1/reports/customer-aging'
     ];
@@ -484,4 +485,20 @@ test('customer reports validate required filters and date formats', async () => 
   } finally {
     await app.close();
   }
+});
+
+
+test('supplier statement requires supplier code and validates date filters', async () => {
+  const db = makeDb();
+  db.passwordHash = await bcrypt.hash(PASSWORD, 4);
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { username: 'admin', password: PASSWORD } });
+    assert.equal(login.statusCode, 200);
+    const headers = { authorization: `Bearer ${login.json().accessToken}` };
+    const missingSupplier = await app.inject({ method: 'GET', url: '/api/v1/reports/supplier-statement', headers });
+    assert.equal(missingSupplier.statusCode, 400);
+    const invalidDate = await app.inject({ method: 'GET', url: '/api/v1/reports/supplier-statement?supplierCode=SUP-001&from=bad-date', headers });
+    assert.equal(invalidDate.statusCode, 400);
+  } finally { await app.close(); }
 });
