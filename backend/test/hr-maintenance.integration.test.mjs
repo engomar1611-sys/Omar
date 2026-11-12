@@ -87,9 +87,17 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
   assert.equal(generatedPm.json().plan_id,plan.json().id);
   const duplicatePm=await app.inject({method:'POST',url:'/api/v1/maintenance/plans/'+plan.json().id+'/generate-work-order',headers,payload:{}});
   assert.equal(duplicatePm.statusCode,409);
-  const wo=await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders',headers,payload:{workOrderNo:code('WO'),assetId:asset.json().id,maintenanceType:'CORRECTIVE',priority:'HIGH',problemDescription:'اهتزاز غير طبيعي'}});
+  const wo=await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders',headers,payload:{workOrderNo:code('WO'),assetId:asset.json().id,assignedTo:employee.json().id,maintenanceType:'CORRECTIVE',priority:'HIGH',problemDescription:'اهتزاز غير طبيعي'}});
   assert.equal(wo.statusCode,201,wo.body);
   assert.equal((await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders/'+wo.json().id+'/start',headers,payload:{}})).statusCode,200);
+  const workOrders=await app.inject({method:'GET',url:'/api/v1/maintenance/work-orders',headers});
+  assert.equal(workOrders.statusCode,200,workOrders.body);
+  assert.equal(workOrders.json().find(x=>x.id===wo.json().id).assigned_employee,'موظف اختبار الرواتب');
+  const downtime=await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders/'+wo.json().id+'/downtime',headers,payload:{startedAt:'2026-01-05T09:00:00Z',endedAt:'2026-01-05T10:30:00Z',reason:'انتظار قطعة غيار'}});
+  assert.equal(downtime.statusCode,201,downtime.body);
+  const downtimeList=await app.inject({method:'GET',url:'/api/v1/maintenance/downtime',headers});
+  assert.equal(downtimeList.statusCode,200,downtimeList.body);
+  assert.ok(downtimeList.json().some(x=>x.id===downtime.json().id&&x.reason==='انتظار قطعة غيار'));
   const assetDuringWork=await pool.query('SELECT status FROM fixed_assets WHERE id=$1',[asset.json().id]);
   assert.equal(assetDuringWork.rows[0].status,'UNDER_MAINTENANCE');
   const completed=await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders/'+wo.json().id+'/complete',headers,payload:{workPerformed:'تم تغيير رولمان البلي',laborCost:300,otherCost:50,downtimeMinutes:90}});
