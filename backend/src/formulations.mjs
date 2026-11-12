@@ -1,3 +1,25 @@
+export function calculateMaterialRequirements(lines, quantity) {
+ if (!Number.isFinite(Number(quantity)) || Number(quantity) <= 0) throw new TypeError('الكمية يجب أن تكون أكبر من صفر');
+ const required = lines.map((line) => {
+  const percentage = Number(line.percentage), availableQty = Number(line.available_qty ?? 0);
+  const averageUnitCost = Number(line.average_unit_cost ?? 0);
+  const requiredQty = Number(quantity) * percentage / 100;
+  return {
+   itemId: line.item_id, itemCode: line.item_code, itemName: line.item_name,
+   unitCode: line.unit_code, unitName: line.unit_name, percentage,
+   requiredQty, availableQty, shortageQty: Math.max(0, requiredQty - availableQty),
+   averageUnitCost, estimatedCost: requiredQty * averageUnitCost
+  };
+ });
+ return {
+  lines: required,
+  totalRequiredQty: required.reduce((sum, line) => sum + line.requiredQty, 0),
+  totalEstimatedMaterialCost: required.reduce((sum, line) => sum + line.estimatedCost, 0),
+  allAvailable: required.every((line) => line.shortageQty <= 0.000001),
+  shortages: required.filter((line) => line.shortageQty > 0.000001)
+ };
+}
+
 const auth=(app,p)=>({preHandler:[app.authenticate,app.requirePermission(p)]});
 const fail=(reply,e)=>{if(e.code==='23505')return reply.code(409).send({error:'DUPLICATE'});if(e.code==='23503')return reply.code(409).send({error:'REFERENCED'});if(['23514','22P02'].includes(e.code))return reply.code(400).send({error:'INVALID_DATA'});if(e.code==='P0001')return reply.code(409).send({error:'BUSINESS_RULE',message:e.message});throw e;};
 async function tx(db,fn){const c=await db.connect();try{await c.query('BEGIN');const v=await fn(c);await c.query('COMMIT');return v;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}}
@@ -11,6 +33,29 @@ export async function formulationRoutes(app,{db}){
     LEFT JOIN formulation_lines l ON l.formulation_id=f.id LEFT JOIN items i ON i.id=l.item_id
     WHERE ($1::uuid IS NULL OR f.feed_product_id=$1) GROUP BY f.id,p.code,p.name_ar ORDER BY p.code,f.version_no DESC`,[req.query?.feedProductId??null])).rows;}
   catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/formulations/:id/material-requirements',{preHandler:[app.authenticate,app.requirePermission('PRODUCTION.READ')]},async(req,rep)=>{
+  const quantity=Number(req.query?.quantity),warehouseId=req.query?.warehouseId;
+  if(!Number.isFinite(quantity)||quantity<=0||!warehouseId)return rep.code(400).send({error:'VALIDATION_ERROR',message:'أدخل كمية الإنتاج والمخزن لحساب احتياجات الخامات'});
+  try{
+   const result=await db.query(`SELECT f.id formulation_id,f.status formulation_status,fp.code product_code,fp.name_ar product_name,
+    l.item_id,i.code item_code,i.name_ar item_name,u.code unit_code,u.name_ar unit_name,l.percentage,
+    COALESCE(stock.available_qty,0) available_qty,COALESCE(stock.average_unit_cost,0) average_unit_cost
+    FROM formulations f JOIN feed_products fp ON fp.id=f.feed_product_id
+    JOIN formulation_lines l ON l.formulation_id=f.id JOIN items i ON i.id=l.item_id
+    JOIN units_of_measure u ON u.id=i.base_unit_id
+    LEFT JOIN LATERAL (
+     SELECT SUM(quantity) available_qty,
+      CASE WHEN SUM(quantity)>0 THEN SUM(quantity*average_unit_cost)/SUM(quantity) ELSE 0 END average_unit_cost
+     FROM inventory_balances WHERE warehouse_id=$2 AND item_id=l.item_id AND quality_status='RELEASED'
+    ) stock ON TRUE
+    WHERE f.id=$1 ORDER BY l.sequence_no`,[req.params.id,warehouseId]);
+   if(!result.rowCount)return rep.code(404).send({error:'FORMULATION_NOT_FOUND'});
+   if(result.rows[0].formulation_status!=='APPROVED')return rep.code(409).send({error:'FORMULATION_NOT_APPROVED'});
+   const calculated=calculateMaterialRequirements(result.rows,quantity);
+   return {formulationId:req.params.id,productCode:result.rows[0].product_code,productName:result.rows[0].product_name,
+    warehouseId,plannedQuantity:quantity,...calculated};
+  }catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/formulations',{preHandler:[app.authenticate,app.requirePermission('FORMULATIONS.MANAGE')]},async(req,rep)=>{
   const b=req.body??{};if(!b.feedProductId||!Number.isInteger(b.versionNo)||b.versionNo<1||!Array.isArray(b.lines)||!b.lines.length||
