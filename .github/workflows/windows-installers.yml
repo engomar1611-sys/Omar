@@ -2,9 +2,12 @@ name: Windows Installers
 on:
   workflow_dispatch:
   push:
-    branches: [main, "feature/**"]
+    branches: [main]
   pull_request:
     branches: [main]
+concurrency:
+  group: windows-installers-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
