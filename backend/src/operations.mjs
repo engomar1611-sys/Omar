@@ -196,6 +196,41 @@ export async function operationsRoutes(app, { db }) {
     catch(e){return failure(reply,e);}
   });
 
+  app.get('/api/v1/production/orders/:id/details', auth(app,'PRODUCTION.READ'), async(req,reply)=>{
+    try{
+      const order=await db.query(`SELECT p.*,fp.code product_code,fp.name_ar product_name,
+        f.version_no formulation_version,w.code warehouse_code,w.name_ar warehouse_name
+        FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id
+        JOIN formulations f ON f.id=p.formulation_id JOIN warehouses w ON w.id=p.warehouse_id
+        WHERE p.id=$1`,[req.params.id]);
+      if(!order.rowCount)return reply.code(404).send({error:'NOT_FOUND'});
+      const [consumptions,output,components,journals]=await Promise.all([
+        db.query(`SELECT pc.item_id,i.code item_code,i.name_ar item_name,pc.lot_no,pc.quantity,
+          pc.average_unit_cost,pc.extended_cost
+          FROM production_consumptions pc JOIN items i ON i.id=pc.item_id
+          WHERE pc.production_order_id=$1 ORDER BY i.code,pc.lot_no`,[req.params.id]),
+        db.query(`SELECT o.item_id,i.code item_code,i.name_ar item_name,o.lot_no,o.quantity,o.unit_cost,o.total_cost,
+          b.quality_status,b.expiry_date
+          FROM production_outputs o JOIN items i ON i.id=o.item_id
+          LEFT JOIN inventory_balances b ON b.warehouse_id=(SELECT warehouse_id FROM production_orders WHERE id=$1)
+            AND b.item_id=o.item_id AND b.lot_no=o.lot_no
+          WHERE o.production_order_id=$1`,[req.params.id]),
+        db.query(`SELECT component_code,description,amount FROM production_cost_components
+          WHERE production_order_id=$1 ORDER BY component_code,created_at`,[req.params.id]),
+        db.query(`SELECT j.id,j.entry_no,j.entry_date,j.source_type,j.description,j.status,j.total_debit,j.total_credit,
+          COALESCE(json_agg(json_build_object('account_code',a.code,'account_name',a.name_ar,
+            'debit',l.debit,'credit',l.credit,'description',l.description) ORDER BY a.code)
+            FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
+          FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_entry_id=j.id
+          LEFT JOIN gl_accounts a ON a.id=l.account_id
+          WHERE j.source_id=$1 AND j.source_type='PRODUCTION_COST'
+          GROUP BY j.id ORDER BY j.created_at`,[req.params.id])
+      ]);
+      return {order:order.rows[0],consumptions:consumptions.rows,output:output.rows[0]??null,
+        costComponents:components.rows,journalEntries:journals.rows};
+    }catch(e){return failure(reply,e);}
+  });
+
   app.post('/api/v1/production/orders', auth(app,'PRODUCTION.MANAGE'), async(req,reply)=>{
     const b=req.body??{};
     if(!text(b.orderNo,40)||!b.feedProductId||!b.formulationId||!b.warehouseId||!positive(b.plannedQty))return invalid(reply);
