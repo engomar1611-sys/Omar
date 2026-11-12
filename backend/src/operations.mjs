@@ -186,6 +186,74 @@ export async function operationsRoutes(app, { db }) {
     catch(e){return failure(reply,e);}
   });
 
+  app.get('/api/v1/production/work-centers',auth(app,'PRODUCTION.READ'),async(_req,reply)=>{
+    try{return (await db.query(`SELECT wc.*,pl.code plant_code FROM production_work_centers wc
+      LEFT JOIN plants pl ON pl.id=wc.plant_id ORDER BY wc.code`)).rows;}
+    catch(e){return failure(reply,e);}
+  });
+  app.post('/api/v1/production/work-centers',auth(app,'PRODUCTION.SCHEDULE.MANAGE'),async(req,reply)=>{
+    const b=req.body??{};
+    if(!text(b.code,30)||!text(b.nameAr,120)||!positive(b.capacityKgPerHour))return invalid(reply);
+    try{return reply.code(201).send((await db.query(`INSERT INTO production_work_centers(code,name_ar,plant_id,capacity_kg_per_hour)
+      VALUES($1,$2,$3,$4) RETURNING *`,[b.code.trim(),b.nameAr.trim(),b.plantId??null,b.capacityKgPerHour])).rows[0]);}
+    catch(e){return failure(reply,e);}
+  });
+  app.get('/api/v1/production/schedule',auth(app,'PRODUCTION.READ'),async(req,reply)=>{
+    const from=req.query?.from??null,to=req.query?.to??null;
+    try{return (await db.query(`SELECT s.*,p.order_no,fp.code product_code,fp.name_ar product_name,
+      wc.code work_center_code,wc.name_ar work_center_name
+      FROM production_schedule_entries s JOIN production_orders p ON p.id=s.production_order_id
+      JOIN feed_products fp ON fp.id=p.feed_product_id JOIN production_work_centers wc ON wc.id=s.work_center_id
+      WHERE ($1::timestamptz IS NULL OR s.end_at>=$1) AND ($2::timestamptz IS NULL OR s.start_at<=$2)
+      ORDER BY s.start_at,wc.code`,[from,to])).rows;}
+    catch(e){return failure(reply,e);}
+  });
+  app.post('/api/v1/production/schedule',auth(app,'PRODUCTION.SCHEDULE.MANAGE'),async(req,reply)=>{
+    const b=req.body??{},start=new Date(b.startAt),end=new Date(b.endAt);
+    if(!b.productionOrderId||!b.workCenterId||!Number.isFinite(start.getTime())||!Number.isFinite(end.getTime())||
+      end<=start||!positive(b.plannedQty))return invalid(reply,'أدخل أمر الإنتاج ومركز التشغيل ووقت بداية ونهاية صحيحين وكمية موجبة');
+    const hours=(end-start)/3600000;
+    try{const result=await transaction(db,async c=>{
+      const center=await c.query('SELECT * FROM production_work_centers WHERE id=$1 AND is_active=TRUE FOR UPDATE',[b.workCenterId]);
+      if(!center.rowCount)throw Object.assign(new Error('مركز التشغيل غير موجود أو غير نشط'),{code:'P0001'});
+      const order=await c.query('SELECT id,status,planned_qty FROM production_orders WHERE id=$1 FOR UPDATE',[b.productionOrderId]);
+      if(!order.rowCount||order.rows[0].status!=='RELEASED')throw Object.assign(new Error('يجب تحرير أمر الإنتاج للتشغيل قبل جدولته'),{code:'P0001'});
+      if(Number(b.plannedQty)>Number(center.rows[0].capacity_kg_per_hour)*hours+0.000001)
+        throw Object.assign(new Error('الكمية تتجاوز الطاقة الإنتاجية لمركز التشغيل خلال المدة المحددة'),{code:'P0001'});
+      const overlap=await c.query(`SELECT id FROM production_schedule_entries
+        WHERE work_center_id=$1 AND status IN ('PLANNED','CONFIRMED','IN_PROGRESS')
+          AND start_at<$3 AND end_at>$2 FOR UPDATE`,[b.workCenterId,start.toISOString(),end.toISOString()]);
+      if(overlap.rowCount)throw Object.assign(new Error('يوجد تعارض زمني مع جدول تشغيل آخر على نفس المركز'),{code:'P0001'});
+      const allocated=await c.query(`SELECT COALESCE(SUM(planned_qty),0) qty FROM production_schedule_entries
+        WHERE production_order_id=$1 AND status<>'CANCELLED'`,[b.productionOrderId]);
+      if(Number(allocated.rows[0].qty)+Number(b.plannedQty)>Number(order.rows[0].planned_qty)+0.000001)
+        throw Object.assign(new Error('إجمالي الكميات المجدولة يتجاوز كمية أمر الإنتاج'),{code:'P0001'});
+      const created=await c.query(`INSERT INTO production_schedule_entries
+        (schedule_no,production_order_id,work_center_id,start_at,end_at,planned_qty,notes,created_by)
+        VALUES('SCH-'||TO_CHAR(NOW(),'YYMMDDHH24MISSMS')||'-'||SUBSTRING(REPLACE(gen_random_uuid()::text,'-',''),1,6),
+          $1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+        [b.productionOrderId,b.workCenterId,start.toISOString(),end.toISOString(),b.plannedQty,b.notes??null,req.authUser.user_id]);
+      return created.rows[0];
+    });return reply.code(201).send(result);}catch(e){return failure(reply,e);}
+  });
+  app.put('/api/v1/production/schedule/:id/status',auth(app,'PRODUCTION.SCHEDULE.MANAGE'),async(req,reply)=>{
+    const next=req.body?.status;
+    if(!['CONFIRMED','IN_PROGRESS','COMPLETED','CANCELLED'].includes(next))return invalid(reply,'حالة الجدولة غير صحيحة');
+    try{const result=await transaction(db,async c=>{
+      const row=await c.query('SELECT * FROM production_schedule_entries WHERE id=$1 FOR UPDATE',[req.params.id]);
+      if(!row.rowCount)throw Object.assign(new Error('جدولة الإنتاج غير موجودة'),{code:'P0001'});
+      const current=row.rows[0].status,allowed={PLANNED:['CONFIRMED','CANCELLED'],CONFIRMED:['IN_PROGRESS','CANCELLED'],IN_PROGRESS:['COMPLETED']}[current]??[];
+      if(!allowed.includes(next))throw Object.assign(new Error('انتقال الحالة غير مسموح'),{code:'P0001'});
+      const updated=await c.query(`UPDATE production_schedule_entries SET status=$2,
+        confirmed_by=CASE WHEN $2='CONFIRMED' THEN $3 ELSE confirmed_by END,
+        confirmed_at=CASE WHEN $2='CONFIRMED' THEN NOW() ELSE confirmed_at END,
+        started_at=CASE WHEN $2='IN_PROGRESS' THEN NOW() ELSE started_at END,
+        completed_at=CASE WHEN $2='COMPLETED' THEN NOW() ELSE completed_at END
+        WHERE id=$1 RETURNING *`,[req.params.id,next,req.authUser.user_id]);
+      return updated.rows[0];
+    });return result;}catch(e){return failure(reply,e);}
+  });
+
   app.get('/api/v1/production/orders', auth(app,'PRODUCTION.READ'), async(_req,reply)=>{
     try{return (await db.query(`SELECT p.*,fp.code product_code,fp.name_ar product_name,
       f.version_no formulation_version,w.name_ar warehouse_name,
