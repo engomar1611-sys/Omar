@@ -552,3 +552,28 @@ test('production material planning rejects zero or invalid quantities', () => {
  assert.throws(() => calculateMaterialRequirements([],0),/الكمية/);
  assert.throws(() => calculateMaterialRequirements([],NaN),/الكمية/);
 });
+
+import { calculateMaterialVariance } from '../src/operations.mjs';
+
+test('production material variance compares actual consumption to formulation standard', () => {
+ const lines=calculateMaterialVariance([
+  {item_code:'CORN',expected_quantity:'600',actual_quantity:'630',actual_cost:'6300'},
+  {item_code:'SOY',expected_quantity:'400',actual_quantity:'380',actual_cost:'7600'}
+ ]);
+ assert.equal(lines[0].varianceQuantity,30);
+ assert.equal(lines[0].variancePercent,5);
+ assert.equal(lines[0].expectedCostAtActualUnitCost,6000);
+ assert.equal(lines[0].costVarianceAtActualUnitCost,300);
+ assert.equal(lines[1].varianceQuantity,-20);
+ assert.equal(lines[1].variancePercent,-5);
+ assert.equal(lines[1].expectedCostAtActualUnitCost,8000);
+ assert.equal(lines[1].costVarianceAtActualUnitCost,-400);
+});
+
+test('production material variance handles missing consumption without NaN', () => {
+ const [line]=calculateMaterialVariance([{expected_quantity:'250',actual_quantity:'0',actual_cost:'0'}]);
+ assert.equal(line.varianceQuantity,-250);
+ assert.equal(line.variancePercent,-100);
+ assert.equal(line.expectedCostAtActualUnitCost,0);
+ assert.equal(line.costVarianceAtActualUnitCost,0);
+});
