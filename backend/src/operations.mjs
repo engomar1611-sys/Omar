@@ -305,7 +305,9 @@ export async function operationsRoutes(app, { db }) {
     try{return (await db.query(`SELECT p.*,fp.code product_code,fp.name_ar product_name,
       f.version_no formulation_version,w.name_ar warehouse_name,
       EXISTS(SELECT 1 FROM journal_entries j WHERE j.source_type='PRODUCTION_COST' AND j.source_id=p.id AND j.status='POSTED') costs_journal_posted,
-      EXISTS(SELECT 1 FROM production_material_issues mi WHERE mi.production_order_id=p.id) material_issued
+      EXISTS(SELECT 1 FROM production_material_issues mi WHERE mi.production_order_id=p.id) material_issued,
+      (SELECT mi.status FROM production_material_issues mi WHERE mi.production_order_id=p.id) material_issue_status,
+      (SELECT mi.id FROM production_material_issues mi WHERE mi.production_order_id=p.id) material_issue_id
       FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id
       JOIN formulations f ON f.id=p.formulation_id JOIN warehouses w ON w.id=p.warehouse_id
       ORDER BY p.created_at DESC`)).rows;}
@@ -341,7 +343,7 @@ export async function operationsRoutes(app, { db }) {
           LEFT JOIN gl_accounts a ON a.id=l.account_id
           WHERE j.source_id=$1 AND j.source_type='PRODUCTION_COST'
           GROUP BY j.id ORDER BY j.created_at`,[req.params.id]),
-        db.query(`SELECT id,issue_no,issue_qty,total_cost,issued_at,issued_by FROM production_material_issues WHERE production_order_id=$1`,[req.params.id]),
+        db.query(`SELECT id,issue_no,issue_qty,total_cost,status,issued_at,issued_by,reversed_at,reversed_by,reversal_reason FROM production_material_issues WHERE production_order_id=$1`,[req.params.id]),
         db.query(`SELECT l.id,l.loss_type,l.quantity,l.reason,l.created_at,l.approved_at,l.journal_entry_id,
           CASE WHEN l.approved_by IS NULL THEN 'PENDING_APPROVAL' ELSE 'POSTED' END status,
           j.entry_no,j.total_debit loss_value,creator.display_name created_by_name,approver.display_name approved_by_name
@@ -362,7 +364,7 @@ export async function operationsRoutes(app, { db }) {
     try{
       const result=await db.query(`WITH actual AS (
         SELECT production_order_id,item_id,SUM(quantity) actual_quantity,SUM(extended_cost) actual_cost
-        FROM production_consumptions GROUP BY production_order_id,item_id
+        FROM production_consumptions pc WHERE NOT EXISTS(SELECT 1 FROM production_material_issues mi WHERE mi.production_order_id=pc.production_order_id AND mi.status='REVERSED') GROUP BY production_order_id,item_id
       )
       SELECT p.id production_order_id,p.order_no,p.completed_at::date completed_date,
         fp.code product_code,fp.name_ar product_name,p.actual_qty,
@@ -491,6 +493,44 @@ export async function operationsRoutes(app, { db }) {
         return {id:issued.id,issueNo:issued.issue_no,productionOrderId:order.id,issueQty:issued.issue_qty,totalCost:issued.total_cost,lines:issued.lines};
       });
       return reply.code(201).send(result);
+    }catch(e){return failure(reply,e);}
+  });
+  app.post('/api/v1/production/material-issues/:id/reverse', auth(app,'PRODUCTION.MATERIALS.REVERSE'), async(req,reply)=>{
+    const reason=req.body?.reason;
+    if(!text(reason,1000))return invalid(reply,'سبب عكس إذن الصرف مطلوب ولا يتجاوز 1000 حرف');
+    try{
+      const result=await transaction(db,async c=>{
+        const issueResult=await c.query('SELECT * FROM production_material_issues WHERE id=$1 FOR UPDATE',[req.params.id]);
+        if(!issueResult.rowCount||issueResult.rows[0].status!=='POSTED')throw Object.assign(new Error('إذن الصرف غير موجود أو تم عكسه مسبقاً'),{code:'P0001'});
+        const issue=issueResult.rows[0];
+        const orderResult=await c.query('SELECT id,status,warehouse_id FROM production_orders WHERE id=$1 FOR UPDATE',[issue.production_order_id]);
+        if(!orderResult.rowCount||orderResult.rows[0].status!=='RELEASED')throw Object.assign(new Error('لا يمكن عكس الصرف بعد بدء إتمام أمر الإنتاج أو إقفاله'),{code:'P0001'});
+        const activeSchedule=await c.query(`SELECT id FROM production_schedule_entries WHERE production_order_id=$1 AND status IN ('IN_PROGRESS','COMPLETED') FOR UPDATE`,[issue.production_order_id]);
+        if(activeSchedule.rowCount)throw Object.assign(new Error('لا يمكن عكس الصرف بعد بدء تنفيذ جدولة التشغيل'),{code:'P0001'});
+        const lines=await c.query(`SELECT pc.item_id,pc.lot_no,pc.quantity,pc.average_unit_cost,b.quantity balance_qty
+          FROM production_consumptions pc JOIN inventory_balances b ON b.warehouse_id=$2 AND b.item_id=pc.item_id AND b.lot_no=pc.lot_no
+          WHERE pc.production_order_id=$1 ORDER BY pc.item_id,pc.lot_no FOR UPDATE OF b`,[issue.production_order_id,orderResult.rows[0].warehouse_id]);
+        if(!lines.rowCount)throw Object.assign(new Error('لا توجد تفاصيل خامات مرتبطة بإذن الصرف'),{code:'P0001'});
+        let restoredQty=0,restoredCost=0,sequence=0;
+        for(const line of lines.rows){
+          const later=await c.query(`SELECT id FROM stock_movements WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3
+            AND NOT(reference_type='PRODUCTION_MATERIAL_ISSUE' AND reference_id=$4) AND created_at >= $5 LIMIT 1`,
+            [orderResult.rows[0].warehouse_id,line.item_id,line.lot_no,issue.id,issue.issued_at]);
+          if(later.rowCount)throw Object.assign(new Error('تعذر العكس: توجد حركة مخزنية لاحقة على إحدى التشغيلات المصروفة'),{code:'P0001'});
+          const qty=Number(line.quantity),cost=Number(line.average_unit_cost);
+          await c.query('UPDATE inventory_balances SET quantity=quantity+$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[qty,orderResult.rows[0].warehouse_id,line.item_id,line.lot_no]);
+          sequence++;
+          await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
+            VALUES($1,$2,$3,$4,'ADJUSTMENT_IN',$5,$6,'PRODUCTION_MATERIAL_ISSUE_REVERSAL',$7,$8)`,
+            ['PIR-'+issue.id.slice(0,8)+'-'+sequence,orderResult.rows[0].warehouse_id,line.item_id,line.lot_no,qty,cost,issue.id,req.authUser.user_id]);
+          restoredQty+=qty;restoredCost+=qty*cost;
+        }
+        await c.query(`UPDATE production_material_issues SET status='REVERSED',reversed_by=$1,reversed_at=NOW(),reversal_reason=$2 WHERE id=$3`,[req.authUser.user_id,reason.trim(),issue.id]);
+        await c.query(`UPDATE production_orders SET status='CANCELLED' WHERE id=$1`,[issue.production_order_id]);
+        await c.query(`UPDATE production_schedule_entries SET status='CANCELLED' WHERE production_order_id=$1 AND status IN ('PLANNED','CONFIRMED')`,[issue.production_order_id]);
+        return {issueId:issue.id,issueNo:issue.issue_no,status:'REVERSED',productionOrderStatus:'CANCELLED',restoredQuantity:restoredQty,restoredCost,reason:reason.trim()};
+      });
+      return result;
     }catch(e){return failure(reply,e);}
   });
   app.post('/api/v1/production/orders/:id/complete', auth(app,'PRODUCTION.COMPLETE'), async(req,reply)=>{
