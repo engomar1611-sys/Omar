@@ -11,3 +11,7 @@ INSERT INTO role_permissions(role_id,permission_id)
 SELECT r.id,p.id FROM roles r JOIN permissions p ON p.code IN ('PRODUCTION.LOSSES.MANAGE','PRODUCTION.LOSSES.APPROVE')
 WHERE r.code='SYSTEM_ADMIN'
 ON CONFLICT(role_id,permission_id) DO NOTHING;
+
+ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_movement_type_check;
+ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_movement_type_check
+ CHECK(movement_type IN ('PURCHASE_RECEIPT','PRODUCTION_ISSUE','PRODUCTION_OUTPUT','ADJUSTMENT_IN','ADJUSTMENT_OUT','PRODUCTION_LOSS'));
