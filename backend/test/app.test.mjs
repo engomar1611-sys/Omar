@@ -453,3 +453,35 @@ test('operations web interface script parses successfully', () => {
   assert.ok(scripts.length > 0, 'expected an inline application script');
   for (const script of scripts) assert.doesNotThrow(() => new Function(script[1]));
 });
+
+
+test('customer reports validate required filters and date formats', async () => {
+  const db = makeDb();
+  db.passwordHash = await bcrypt.hash(PASSWORD, 4);
+  const app = buildApp({ logger: false, jwtSecret: 'test-secret-with-at-least-32-characters', db });
+  try {
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { username: 'admin', password: PASSWORD }
+    });
+    assert.equal(login.statusCode, 200);
+    const headers = { authorization: `Bearer ${login.json().accessToken}` };
+    const missingCustomer = await app.inject({
+      method: 'GET', url: '/api/v1/reports/customer-statement', headers
+    });
+    assert.equal(missingCustomer.statusCode, 400);
+    const invalidStatementDate = await app.inject({
+      method: 'GET',
+      url: '/api/v1/reports/customer-statement?customerCode=CUST-001&from=bad-date',
+      headers
+    });
+    assert.equal(invalidStatementDate.statusCode, 400);
+    const invalidAgingDate = await app.inject({
+      method: 'GET', url: '/api/v1/reports/customer-aging?asOf=bad-date', headers
+    });
+    assert.equal(invalidAgingDate.statusCode, 400);
+  } finally {
+    await app.close();
+  }
+});
