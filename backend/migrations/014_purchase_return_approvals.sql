@@ -1,3 +1,4 @@
+ALTER TABLE purchase_returns ALTER COLUMN status TYPE VARCHAR(24);
 ALTER TABLE purchase_returns DROP CONSTRAINT IF EXISTS purchase_returns_status_check;
 ALTER TABLE purchase_returns ADD CONSTRAINT purchase_returns_status_check
  CHECK(status IN ('DRAFT','PENDING_WAREHOUSE','PENDING_ACCOUNTING','POSTED','CANCELLED','REJECTED'));
