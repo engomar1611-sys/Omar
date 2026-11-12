@@ -43,6 +43,33 @@ async function transaction(db, work) {
     throw error;
   } finally { client.release(); }
 }
+async function issueProductionMaterials(c, order, issueQty, userId) {
+  const existing = await c.query('SELECT id FROM production_material_issues WHERE production_order_id=$1 FOR UPDATE',[order.id]);
+  if(existing.rowCount) throw Object.assign(new Error('تم صرف خامات أمر الإنتاج مسبقاً'),{code:'P0001'});
+  const lines = await c.query(`SELECT item_id,SUM(percentage)::numeric percentage FROM formulation_lines WHERE formulation_id=$1 GROUP BY item_id ORDER BY item_id`,[order.formulation_id]);
+  if(!lines.rowCount) throw Object.assign(new Error('التركيبة لا تحتوي على مكونات'),{code:'P0001'});
+  const pctTotal=lines.rows.reduce((sum,line)=>sum+Number(line.percentage),0);
+  if(Math.abs(pctTotal-100)>0.000001) throw Object.assign(new Error('مجموع نسب التركيبة يجب أن يساوي 100%'),{code:'P0001'});
+  const header=await c.query(`INSERT INTO production_material_issues(issue_no,production_order_id,issue_qty,issued_by) VALUES('MI-'||SUBSTRING(REPLACE(gen_random_uuid()::text,'-',''),1,20),$1,$2,$3) RETURNING *`,[order.id,issueQty,userId]);
+  const issue=header.rows[0]; let totalCost=0, sequence=0; const issued=[];
+  for(const line of lines.rows){
+    let required=issueQty*Number(line.percentage)/100;
+    const lots=await c.query(`SELECT lot_no,quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND quantity>0 AND quality_status='RELEASED' ORDER BY expiry_date ASC NULLS LAST,lot_no ASC FOR UPDATE`,[order.warehouse_id,line.item_id]);
+    const available=lots.rows.reduce((sum,lot)=>sum+Number(lot.quantity),0);
+    if(available+0.000001<required) throw Object.assign(new Error('رصيد المخزون المفرج عنه غير كافٍ لأحد مكونات التركيبة'),{code:'P0001'});
+    for(const lot of lots.rows){
+      if(required<=0.000001) break;
+      const used=Math.min(required,Number(lot.quantity)),average=Number(lot.average_unit_cost),cost=used*average;
+      await c.query(`UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4`,[used,order.warehouse_id,line.item_id,lot.lot_no]);
+      await c.query(`INSERT INTO production_consumptions(production_order_id,item_id,lot_no,quantity,average_unit_cost,extended_cost) VALUES($1,$2,$3,$4,$5,$6)`,[order.id,line.item_id,lot.lot_no,used,average,cost]);
+      sequence++;
+      await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by) VALUES($1,$2,$3,$4,'PRODUCTION_ISSUE',$5,$6,'PRODUCTION_MATERIAL_ISSUE',$7,$8)`,['PI-'+issue.id.slice(0,8)+'-'+sequence,order.warehouse_id,line.item_id,lot.lot_no,used,average,issue.id,userId]);
+      totalCost+=cost; issued.push({itemId:line.item_id,lotNo:lot.lot_no,quantity:used,unitCost:average,totalCost:cost}); required-=used;
+    }
+  }
+  await c.query('UPDATE production_material_issues SET total_cost=$1 WHERE id=$2',[totalCost,issue.id]);
+  return {...issue,total_cost:totalCost,lines:issued};
+}
 const text = (v, max) => typeof v === 'string' && v.trim().length > 0 && v.trim().length <= max;
 const positive = (v) => Number.isFinite(Number(v)) && Number(v) > 0;
 
@@ -277,7 +304,8 @@ export async function operationsRoutes(app, { db }) {
   app.get('/api/v1/production/orders', auth(app,'PRODUCTION.READ'), async(_req,reply)=>{
     try{return (await db.query(`SELECT p.*,fp.code product_code,fp.name_ar product_name,
       f.version_no formulation_version,w.name_ar warehouse_name,
-      EXISTS(SELECT 1 FROM journal_entries j WHERE j.source_type='PRODUCTION_COST' AND j.source_id=p.id AND j.status='POSTED') costs_journal_posted
+      EXISTS(SELECT 1 FROM journal_entries j WHERE j.source_type='PRODUCTION_COST' AND j.source_id=p.id AND j.status='POSTED') costs_journal_posted,
+      EXISTS(SELECT 1 FROM production_material_issues mi WHERE mi.production_order_id=p.id) material_issued
       FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id
       JOIN formulations f ON f.id=p.formulation_id JOIN warehouses w ON w.id=p.warehouse_id
       ORDER BY p.created_at DESC`)).rows;}
@@ -292,7 +320,7 @@ export async function operationsRoutes(app, { db }) {
         JOIN formulations f ON f.id=p.formulation_id JOIN warehouses w ON w.id=p.warehouse_id
         WHERE p.id=$1`,[req.params.id]);
       if(!order.rowCount)return reply.code(404).send({error:'NOT_FOUND'});
-      const [consumptions,output,components,journals,losses]=await Promise.all([
+      const [consumptions,output,components,journals,losses,materialIssue]=await Promise.all([
         db.query(`SELECT pc.item_id,i.code item_code,i.name_ar item_name,pc.lot_no,pc.quantity,
           pc.average_unit_cost,pc.extended_cost
           FROM production_consumptions pc JOIN items i ON i.id=pc.item_id
@@ -313,6 +341,7 @@ export async function operationsRoutes(app, { db }) {
           LEFT JOIN gl_accounts a ON a.id=l.account_id
           WHERE j.source_id=$1 AND j.source_type='PRODUCTION_COST'
           GROUP BY j.id ORDER BY j.created_at`,[req.params.id]),
+        db.query(`SELECT id,issue_no,issue_qty,total_cost,issued_at,issued_by FROM production_material_issues WHERE production_order_id=$1`,[req.params.id]),
         db.query(`SELECT l.id,l.loss_type,l.quantity,l.reason,l.created_at,l.approved_at,l.journal_entry_id,
           CASE WHEN l.approved_by IS NULL THEN 'PENDING_APPROVAL' ELSE 'POSTED' END status,
           j.entry_no,j.total_debit loss_value,creator.display_name created_by_name,approver.display_name approved_by_name
@@ -321,7 +350,7 @@ export async function operationsRoutes(app, { db }) {
           WHERE l.production_order_id=$1 ORDER BY l.created_at DESC`,[req.params.id])
       ]);
       return {order:order.rows[0],consumptions:consumptions.rows,output:output.rows[0]??null,
-        costComponents:components.rows,journalEntries:journals.rows,losses:losses.rows};
+        costComponents:components.rows,journalEntries:journals.rows,losses:losses.rows,materialIssue:materialIssue.rows[0]??null};
     }catch(e){return failure(reply,e);}
   });
 
@@ -449,6 +478,21 @@ export async function operationsRoutes(app, { db }) {
     }catch(e){return failure(reply,e);}
   });
 
+  app.post('/api/v1/production/orders/:id/issue', auth(app,'PRODUCTION.COMPLETE'), async(req,reply)=>{
+    const requested=req.body?.issueQty;
+    if(requested!==undefined&&!positive(requested))return invalid(reply,'كمية الصرف يجب أن تكون أكبر من صفر');
+    try{
+      const result=await transaction(db,async c=>{
+        const orderResult=await c.query('SELECT * FROM production_orders WHERE id=$1 FOR UPDATE',[req.params.id]);
+        if(!orderResult.rowCount||orderResult.rows[0].status!=='RELEASED') throw Object.assign(new Error('يجب تحرير أمر الإنتاج قبل صرف الخامات'),{code:'P0001'});
+        const order=orderResult.rows[0],issueQty=requested===undefined?Number(order.planned_qty):Number(requested);
+        if(issueQty>Number(order.planned_qty)+0.000001) throw Object.assign(new Error('كمية الصرف لا يجوز أن تتجاوز الكمية المخططة لأمر الإنتاج'),{code:'P0001'});
+        const issued=await issueProductionMaterials(c,order,issueQty,req.authUser.user_id);
+        return {id:issued.id,issueNo:issued.issue_no,productionOrderId:order.id,issueQty:issued.issue_qty,totalCost:issued.total_cost,lines:issued.lines};
+      });
+      return reply.code(201).send(result);
+    }catch(e){return failure(reply,e);}
+  });
   app.post('/api/v1/production/orders/:id/complete', auth(app,'PRODUCTION.COMPLETE'), async(req,reply)=>{
     const b=req.body??{};
     if(!positive(b.actualQty)||!text(b.outputLotNo,80))return invalid(reply);
@@ -462,27 +506,19 @@ export async function operationsRoutes(app, { db }) {
         if(!lines.rowCount)throw Object.assign(new Error('التركيبة لا تحتوي على مكونات'),{code:'P0001'});
         const pctTotal=lines.rows.reduce((sum,line)=>sum+Number(line.percentage),0);
         if(Math.abs(pctTotal-100)>0.000001)throw Object.assign(new Error('مجموع نسب التركيبة يجب أن يساوي 100%'),{code:'P0001'});
+        const issueHeader=await c.query('SELECT id,issue_qty FROM production_material_issues WHERE production_order_id=$1 FOR UPDATE',[order.id]);
         let totalCost=0;
-        for(const l of lines.rows){
-          let required=Number(b.actualQty)*Number(l.percentage)/100;
-          const lots=await c.query(`SELECT lot_no,quantity,average_unit_cost FROM inventory_balances
-            WHERE warehouse_id=$1 AND item_id=$2 AND quantity>0 AND quality_status='RELEASED'
-            ORDER BY expiry_date ASC NULLS LAST,lot_no ASC FOR UPDATE`,[order.warehouse_id,l.item_id]);
-          const available=lots.rows.reduce((sum,lot)=>sum+Number(lot.quantity),0);
-          if(available+0.000001<required)throw Object.assign(new Error('رصيد المخزون غير كافٍ لأحد مكونات التركيبة'),{code:'P0001'});
-          for(const lot of lots.rows){
-            if(required<=0.000001)break;
-            const used=Math.min(required,Number(lot.quantity)),avg=Number(lot.average_unit_cost),cost=used*avg;
-            await c.query(`UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW()
-              WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4`,[used,order.warehouse_id,l.item_id,lot.lot_no]);
-            await c.query(`INSERT INTO production_consumptions(production_order_id,item_id,lot_no,quantity,average_unit_cost,extended_cost)
-              VALUES($1,$2,$3,$4,$5,$6)`,[order.id,l.item_id,lot.lot_no,used,avg,cost]);
-            await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
-              VALUES($1,$2,$3,$4,'PRODUCTION_ISSUE',$5,$6,'PRODUCTION_ORDER',$7,$8)`,
-              [`PI-${order.id.slice(0,8)}-${l.item_id.slice(0,8)}-${String(lot.lot_no||'NOLOT').slice(0,20)}`,order.warehouse_id,l.item_id,lot.lot_no,used,avg,order.id,req.authUser.user_id]);
-            totalCost+=cost;
-            required-=used;
+        if(!issueHeader.rowCount){
+          const issued=await issueProductionMaterials(c,order,Number(b.actualQty),req.authUser.user_id);
+          totalCost=Number(issued.total_cost);
+        }else{
+          const consumed=await c.query(`SELECT item_id,SUM(quantity) quantity,SUM(extended_cost) cost FROM production_consumptions WHERE production_order_id=$1 GROUP BY item_id`,[order.id]);
+          const byItem=new Map(consumed.rows.map(row=>[row.item_id,Number(row.quantity)]));
+          for(const line of lines.rows){
+            const required=Number(b.actualQty)*Number(line.percentage)/100;
+            if((byItem.get(line.item_id)||0)+0.000001<required) throw Object.assign(new Error('الخامات المصروفة لا تكفي لإتمام الكمية الفعلية؛ راجع إذن الصرف'),{code:'P0001'});
           }
+          totalCost=consumed.rows.reduce((sum,row)=>sum+Number(row.cost),0);
         }
         const unitCost=totalCost/Number(b.actualQty);
         const existingLot=await c.query('SELECT 1 FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[order.warehouse_id,order.output_item_id,b.outputLotNo]);

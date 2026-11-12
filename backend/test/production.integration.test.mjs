@@ -74,6 +74,12 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     const orderId = created.json().id;
     const released = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/release',headers,payload:{}});
     assert.equal(released.statusCode,200,released.body);
+    const issue = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/issue',headers,payload:{issueQty:10}});
+    assert.equal(issue.statusCode,201,issue.body);
+    assert.equal(Number(issue.json().issueQty),10);
+    assert.equal(issue.json().lines.length,2);
+    const duplicateIssue = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/issue',headers,payload:{issueQty:10}});
+    assert.equal(duplicateIssue.statusCode,409,'a production order must not be issued twice');
     const completed = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/complete',headers,payload:{actualQty:10,outputLotNo:code('LOT')}});
     assert.equal(completed.statusCode,200,completed.body);
 
@@ -100,6 +106,8 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     const productionDetails = await app.inject({method:'GET',url:'/api/v1/production/orders/'+orderId+'/details',headers});
     assert.equal(productionDetails.statusCode,200,productionDetails.body);
     assert.equal(productionDetails.json().order.id,orderId);
+    assert.equal(productionDetails.json().materialIssue.issue_no,issue.json().issueNo);
+    assert.equal(Number(productionDetails.json().materialIssue.total_cost),64);
     assert.equal(productionDetails.json().consumptions.length,2);
     assert.equal(Number(productionDetails.json().consumptions.reduce((s,x)=>s+Number(x.extended_cost),0)),64);
     assert.equal(productionDetails.json().output.lot_no,completed.json().outputLotNo || (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no);
