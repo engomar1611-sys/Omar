@@ -34,6 +34,24 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
       VALUES($1,$2,'EARLY',$3,3,5,'RELEASED'),($1,$2,'LATE',$4,20,7,'RELEASED')`,
       [warehouse.id,raw.id,'2026-12-01','2027-01-01']);
 
+    const adjustment = await app.inject({method:'POST',url:'/api/v1/inventory/adjustments',headers,payload:{
+      adjustmentNo:code('ADJ'),warehouseId:warehouse.id,reason:'مطابقة جرد اختبار',
+      lines:[{itemId:finished.id,lotNo:'ADJLOT-'+suffix,quantityDelta:2,unitCost:8}]
+    }});
+    assert.equal(adjustment.statusCode,201,adjustment.body);
+    const adjustmentId=adjustment.json().id;
+    const draftBalances=await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,finished.id,'ADJLOT-'+suffix]);
+    assert.equal(draftBalances.rowCount,0,'draft adjustment must not mutate stock');
+    const adjustmentList=await app.inject({method:'GET',url:'/api/v1/inventory/adjustments',headers});
+    assert.equal(adjustmentList.statusCode,200,adjustmentList.body);
+    assert.ok(adjustmentList.json().some(x=>x.id===adjustmentId&&x.lines.length===1));
+    const approvedAdjustment=await app.inject({method:'POST',url:'/api/v1/inventory/adjustments/'+adjustmentId+'/approve',headers,payload:{}});
+    assert.equal(approvedAdjustment.statusCode,200,approvedAdjustment.body);
+    assert.equal(approvedAdjustment.json().status,'POSTED');
+    const postedBalance=await pool.query('SELECT quantity,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,finished.id,'ADJLOT-'+suffix]);
+    assert.equal(Number(postedBalance.rows[0].quantity),2);
+    assert.equal(postedBalance.rows[0].quality_status,'PENDING_QC');
+
     const formulation = await app.inject({method:'POST',url:'/api/v1/formulations',headers,payload:{
       feedProductId:product.id,versionNo:1,lines:[{itemId:raw.id,percentage:100}]
     }});

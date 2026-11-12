@@ -2,6 +2,18 @@ const auth=(app,p)=>({preHandler:[app.authenticate,app.requirePermission(p)]});
 const fail=(rep,e)=>{if(e.code==='23505')return rep.code(409).send({error:'DUPLICATE'});if(e.code==='23503')return rep.code(409).send({error:'REFERENCED'});if(['23514','22P02'].includes(e.code))return rep.code(400).send({error:'INVALID_DATA'});if(e.code==='P0001')return rep.code(409).send({error:'BUSINESS_RULE',message:e.message});throw e;};
 async function tx(db,fn){const c=await db.connect();try{await c.query('BEGIN');const v=await fn(c);await c.query('COMMIT');return v;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}}
 export async function inventoryRoutes(app,{db}){
+ app.get('/api/v1/inventory/adjustments',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.READ')]},async(req,rep)=>{
+  try{return (await db.query(`SELECT a.*,w.code warehouse_code,w.name_ar warehouse_name,u.display_name created_by_name,
+    approver.display_name approved_by_name,
+    COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'itemCode',i.code,'itemName',i.name_ar,
+      'lotNo',l.lot_no,'quantityDelta',l.quantity_delta,'unitCost',l.unit_cost)
+      ORDER BY i.code,l.lot_no) FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
+    FROM inventory_adjustments a JOIN warehouses w ON w.id=a.warehouse_id
+    LEFT JOIN users u ON u.id=a.created_by LEFT JOIN users approver ON approver.id=a.approved_by
+    LEFT JOIN inventory_adjustment_lines l ON l.adjustment_id=a.id LEFT JOIN items i ON i.id=l.item_id
+    GROUP BY a.id,w.code,w.name_ar,u.display_name,approver.display_name ORDER BY a.created_at DESC LIMIT 500`)).rows;}
+  catch(e){return fail(rep,e);}
+ });
  app.get('/api/v1/inventory/movements',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.READ')]},async(req,rep)=>{
   try{return (await db.query(`SELECT m.*,i.code item_code,i.name_ar item_name,w.code warehouse_code
    FROM stock_movements m JOIN items i ON i.id=m.item_id JOIN warehouses w ON w.id=m.warehouse_id
@@ -17,7 +29,7 @@ export async function inventoryRoutes(app,{db}){
    return h.rows[0];
   });return rep.code(201).send(result);}catch(e){return fail(rep,e);}
  });
- app.post('/api/v1/inventory/adjustments/:id/approve',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.ADJUST')]},async(req,rep)=>{
+ app.post('/api/v1/inventory/adjustments/:id/approve',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.ADJUST.APPROVE')]},async(req,rep)=>{
   try{const result=await tx(db,async c=>{
    const h=await c.query('SELECT * FROM inventory_adjustments WHERE id=$1 FOR UPDATE',[req.params.id]);
    if(!h.rowCount||h.rows[0].status!=='DRAFT')throw Object.assign(new Error('التسوية غير متاحة للاعتماد'),{code:'P0001'});
