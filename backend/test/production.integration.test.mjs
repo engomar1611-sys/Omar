@@ -115,6 +115,29 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(Number(finalBalance.rows[0].average_unit_cost),8.4);
     assert.equal(finalBalance.rows[0].quality_status,'RELEASED');
 
+    const productionLoss=await app.inject({method:'POST',url:'/api/v1/production/losses',headers,payload:{
+      productionOrderId:orderId,lossType:'DAMAGE',quantity:1,reason:'تلف أثناء التداول — اختبار'
+    }});
+    assert.equal(productionLoss.statusCode,201,productionLoss.body);
+    assert.equal(productionLoss.json().status,'PENDING_APPROVAL');
+    const beforeLossApproval=await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,finished.id,finalBalance.rows[0] ? (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no : '']);
+    assert.equal(Number(beforeLossApproval.rows[0].quantity),10,'pending loss must not reduce stock');
+    const productionLossList=await app.inject({method:'GET',url:'/api/v1/production/losses',headers});
+    assert.equal(productionLossList.statusCode,200,productionLossList.body);
+    assert.ok(productionLossList.json().some(x=>x.id===productionLoss.json().id));
+    const approvedLoss=await app.inject({method:'POST',url:'/api/v1/production/losses/'+productionLoss.json().id+'/approve',headers,payload:{}});
+    assert.equal(approvedLoss.statusCode,200,approvedLoss.body);
+    assert.equal(approvedLoss.json().status,'POSTED');
+    assert.equal(Number(approvedLoss.json().totalCost),8.4);
+    const duplicateLossApproval=await app.inject({method:'POST',url:'/api/v1/production/losses/'+productionLoss.json().id+'/approve',headers,payload:{}});
+    assert.equal(duplicateLossApproval.statusCode,409);
+    const afterLossApproval=await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,finished.id,(await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no]);
+    assert.equal(Number(afterLossApproval.rows[0].quantity),9);
+    const lossJournal=await pool.query("SELECT total_debit,total_credit FROM journal_entries WHERE source_type='PRODUCTION_LOSS' AND source_id=$1",[productionLoss.json().id]);
+    assert.equal(lossJournal.rowCount,1);
+    assert.equal(Number(lossJournal.rows[0].total_debit),8.4);
+    assert.equal(Number(lossJournal.rows[0].total_credit),8.4);
+
     const customer = await app.inject({method:'POST',url:'/api/v1/customers',headers,payload:{code:code('CUS'),nameAr:'عميل اختبار تكامل',creditLimit:0}});
     assert.equal(customer.statusCode,201,customer.body);
     const invoice = await app.inject({method:'POST',url:'/api/v1/sales/invoices',headers,payload:{
