@@ -472,7 +472,7 @@ export async function commercialRoutes(app,{db}){
  app.get('/api/v1/reports/expiry-alerts',auth(app,'REPORTS.READ'),async(req,rep)=>{
   const days=req.query?.days===undefined?30:Number(req.query.days);
   if(!Number.isInteger(days)||days<0||days>3650)return rep.code(400).send({error:'VALIDATION_ERROR',message:'عدد الأيام يجب أن يكون بين 0 و3650'});
-  try{return (await db.query(`SELECT w.code warehouse_code,i.code item_code,i.name_ar item_name,b.lot_no,
+  try{return (await db.query(`SELECT b.item_id,w.code warehouse_code,i.code item_code,i.name_ar item_name,b.lot_no,
     b.expiry_date,b.quality_status,b.quantity,b.average_unit_cost,b.quantity*b.average_unit_cost stock_value,
     (b.expiry_date-CURRENT_DATE) days_to_expiry,
     CASE WHEN b.expiry_date<CURRENT_DATE THEN 'EXPIRED'
