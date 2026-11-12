@@ -68,6 +68,11 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
   const calc=await app.inject({method:'POST',url:'/api/v1/hr/payroll-periods/'+period.json().id+'/calculate',headers,payload:{}});
   assert.equal(calc.statusCode,200,calc.body);
   assert.equal(Number(calc.json().totalNet),2900);
+  const payslips=await app.inject({method:'GET',url:'/api/v1/hr/payroll-runs/'+calc.json().runId+'/items',headers});
+  assert.equal(payslips.statusCode,200,payslips.body);
+  assert.equal(payslips.json().length,2);
+  assert.ok(payslips.json().some(x=>x.employee_no===employee.json().employee_no&&Number(x.net_amount)>0));
+  assert.ok(payslips.json().every(x=>Object.hasOwn(x,'basic_amount')&&Object.hasOwn(x,'absence_deduction')&&Object.hasOwn(x,'advance_deduction')));
   const approved=await app.inject({method:'POST',url:'/api/v1/hr/payroll-runs/'+calc.json().runId+'/approve',headers,payload:{}});
   assert.equal(approved.statusCode,200,approved.body);
   const posted=await app.inject({method:'POST',url:'/api/v1/hr/payroll-runs/'+calc.json().runId+'/post',headers,payload:{}});
