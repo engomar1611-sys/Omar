@@ -210,6 +210,19 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
       lines:[{itemId:raw.id,lotNo:'BUYLOT-'+suffix,quantity:1}]
     }});
     assert.equal(purchaseReturn.statusCode,201,purchaseReturn.body);
+    assert.equal(purchaseReturn.json().status,'PENDING_WAREHOUSE');
+    const beforeReturnApproval = await pool.query("SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3",[warehouse.id,raw.id,'BUYLOT-'+suffix]);
+    assert.equal(Number(beforeReturnApproval.rows[0].quantity),5);
+    const purchaseReturnWarehouse = await app.inject({method:'POST',url:'/api/v1/purchases/returns/'+purchaseReturn.json().returnId+'/warehouse-approve',headers,payload:{}});
+    assert.equal(purchaseReturnWarehouse.statusCode,200,purchaseReturnWarehouse.body);
+    assert.equal(purchaseReturnWarehouse.json().status,'PENDING_ACCOUNTING');
+    const afterWarehouseApproval = await pool.query("SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3",[warehouse.id,raw.id,'BUYLOT-'+suffix]);
+    assert.equal(Number(afterWarehouseApproval.rows[0].quantity),4);
+    const purchaseReturnAccounting = await app.inject({method:'POST',url:'/api/v1/purchases/returns/'+purchaseReturn.json().returnId+'/accounting-approve',headers,payload:{}});
+    assert.equal(purchaseReturnAccounting.statusCode,200,purchaseReturnAccounting.body);
+    assert.equal(purchaseReturnAccounting.json().status,'POSTED');
+    const duplicatePurchaseReturnApproval = await app.inject({method:'POST',url:'/api/v1/purchases/returns/'+purchaseReturn.json().returnId+'/accounting-approve',headers,payload:{}});
+    assert.equal(duplicatePurchaseReturnApproval.statusCode,409);
     const purchaseReturnList = await app.inject({method:'GET',url:'/api/v1/purchases/returns',headers});
     assert.equal(purchaseReturnList.statusCode,200,purchaseReturnList.body);
     assert.ok(purchaseReturnList.json().some(x=>x.id===purchaseReturn.json().returnId));

@@ -256,25 +256,44 @@ export async function commercialRoutes(app,{db}){
  });
  app.post('/api/v1/purchases/returns',auth(app,'PURCHASE_RETURNS.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.returnNo,40)||!b.supplierId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||b.lines.some(x=>!x.itemId||typeof (x.lotNo??'')!=='string'||(x.lotNo??'').trim().length>80||!pos(x.quantity)))return bad(rep);
-  try{
-   const out=await tx(db,async c=>{
-    const h=await c.query(`INSERT INTO purchase_returns(return_no,supplier_id,warehouse_id,reason,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *`,[b.returnNo,b.supplierId,b.warehouseId,b.reason??null,req.authUser.user_id]);
-    for(const l of b.lines){
-     const bal=await c.query('SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND quality_status=\'RELEASED\' FOR UPDATE',[b.warehouseId,l.itemId,l.lotNo??'']);
-     if(!bal.rowCount||Number(bal.rows[0].quantity)<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لمرتجع المشتريات'),{code:'P0001'});
-     const cost=Number(bal.rows[0].average_unit_cost);
-     await c.query('INSERT INTO purchase_return_lines(purchase_return_id,item_id,lot_no,quantity,unit_cost) VALUES($1,$2,$3,$4,$5)',[h.rows[0].id,l.itemId,l.lotNo??'',l.quantity,cost]);
-     await c.query('UPDATE inventory_balances SET quantity=quantity-$1 WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[l.quantity,b.warehouseId,l.itemId,l.lotNo??'']);
-     await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
-      VALUES($1,$2,$3,$4,'ADJUSTMENT_OUT',$5,$6,'PURCHASE_RETURN',$7,$8)`,[`PR-${h.rows[0].id.slice(0,12)}-${l.itemId.slice(0,8)}`,b.warehouseId,l.itemId,l.lotNo??'',l.quantity,cost,h.rows[0].id,req.authUser.user_id]);
-    }
-    const total=(await c.query('SELECT COALESCE(SUM(quantity*unit_cost),0) amount FROM purchase_return_lines WHERE purchase_return_id=$1',[h.rows[0].id])).rows[0].amount;
-    const ap=await account(c,'2000'),inv=await account(c,'1200');
-    await journal(c,{no:'J-PR-'+b.returnNo,sourceType:'PURCHASE_RETURN',sourceId:h.rows[0].id,description:'مرتجع مشتريات '+b.returnNo,actor:req.authUser.user_id,lines:[{account:ap,debit:Number(total)},{account:inv,credit:Number(total)}]});
-    await c.query(`UPDATE purchase_returns SET status='POSTED',posted_at=NOW() WHERE id=$1`,[h.rows[0].id]);
-    return {returnId:h.rows[0].id,total,status:'POSTED'};
-   });return rep.code(201).send(out);
-  }catch(e){return fail(rep,e);}
+  try{const out=await tx(db,async c=>{
+   const h=await c.query(`INSERT INTO purchase_returns(return_no,supplier_id,warehouse_id,reason,created_by,status) VALUES($1,$2,$3,$4,$5,'PENDING_WAREHOUSE') RETURNING *`,[b.returnNo,b.supplierId,b.warehouseId,b.reason??null,req.authUser.user_id]);
+   for(const l of b.lines){
+    const bal=await c.query("SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND quality_status='RELEASED' FOR UPDATE",[b.warehouseId,l.itemId,l.lotNo??'']);
+    if(!bal.rowCount||Number(bal.rows[0].quantity)<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لمرتجع المشتريات'),{code:'P0001'});
+    await c.query('INSERT INTO purchase_return_lines(purchase_return_id,item_id,lot_no,quantity,unit_cost) VALUES($1,$2,$3,$4,$5)',[h.rows[0].id,l.itemId,l.lotNo??'',l.quantity,bal.rows[0].average_unit_cost]);
+   }
+   return {returnId:h.rows[0].id,status:'PENDING_WAREHOUSE'};
+  });return rep.code(201).send(out);}catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/purchases/returns/:id/warehouse-approve',auth(app,'PURCHASE_RETURNS.WAREHOUSE_APPROVE'),async(req,rep)=>{
+  try{const out=await tx(db,async c=>{
+   const h=await c.query("SELECT * FROM purchase_returns WHERE id=$1 FOR UPDATE",[req.params.id]);
+   if(!h.rowCount||h.rows[0].status!=='PENDING_WAREHOUSE')throw Object.assign(new Error('مرتجع المشتريات ليس بانتظار اعتماد المخزن'),{code:'P0001'});
+   const lines=await c.query('SELECT * FROM purchase_return_lines WHERE purchase_return_id=$1 ORDER BY id',[req.params.id]);
+   for(const l of lines.rows){
+    const bal=await c.query("SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND quality_status='RELEASED' FOR UPDATE",[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+    if(!bal.rowCount||Number(bal.rows[0].quantity)+0.000001<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لاعتماد المرتجع'),{code:'P0001'});
+    const cost=Number(bal.rows[0].average_unit_cost);
+    await c.query('UPDATE purchase_return_lines SET unit_cost=$1 WHERE id=$2',[cost,l.id]);
+    await c.query('UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[l.quantity,h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+    await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
+     VALUES($1,$2,$3,$4,'ADJUSTMENT_OUT',$5,$6,'PURCHASE_RETURN',$7,$8)`,[`PR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,l.quantity,cost,req.params.id,req.authUser.user_id]);
+   }
+   await c.query("UPDATE purchase_returns SET status='PENDING_ACCOUNTING',warehouse_approved_by=$1,warehouse_approved_at=NOW() WHERE id=$2",[req.authUser.user_id,req.params.id]);
+   return {returnId:req.params.id,status:'PENDING_ACCOUNTING',warehouseApproved:true};
+  });return out;}catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/purchases/returns/:id/accounting-approve',auth(app,'PURCHASE_RETURNS.ACCOUNTING_APPROVE'),async(req,rep)=>{
+  try{const out=await tx(db,async c=>{
+   const h=await c.query("SELECT * FROM purchase_returns WHERE id=$1 FOR UPDATE",[req.params.id]);
+   if(!h.rowCount||h.rows[0].status!=='PENDING_ACCOUNTING')throw Object.assign(new Error('مرتجع المشتريات لم يجتز اعتماد المخزن'),{code:'P0001'});
+   const total=Number((await c.query('SELECT COALESCE(SUM(quantity*unit_cost),0) amount FROM purchase_return_lines WHERE purchase_return_id=$1',[req.params.id])).rows[0].amount);
+   const ap=await account(c,'2000'),inv=await account(c,'1200');
+   await journal(c,{no:'J-PR-'+h.rows[0].return_no,sourceType:'PURCHASE_RETURN',sourceId:req.params.id,description:'مرتجع مشتريات '+h.rows[0].return_no,actor:req.authUser.user_id,lines:[{account:ap,debit:total},{account:inv,credit:total}]});
+   await c.query("UPDATE purchase_returns SET status='POSTED',accounting_approved_by=$1,accounting_approved_at=NOW(),posted_at=NOW() WHERE id=$2",[req.authUser.user_id,req.params.id]);
+   return {returnId:req.params.id,total,status:'POSTED'};
+  });return out;}catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/accounting/periods/close',auth(app,'ACCOUNTING.PERIODS.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.periodCode,20)||!b.startDate||!b.endDate||String(b.endDate)<String(b.startDate))return bad(rep);
