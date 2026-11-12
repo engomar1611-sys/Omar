@@ -47,7 +47,7 @@ export async function formulationRoutes(app,{db}){
     LEFT JOIN LATERAL (
      SELECT SUM(quantity) available_qty,
       CASE WHEN SUM(quantity)>0 THEN SUM(quantity*average_unit_cost)/SUM(quantity) ELSE 0 END average_unit_cost
-     FROM inventory_balances WHERE warehouse_id=$2 AND item_id=l.item_id AND quality_status='RELEASED'
+     FROM inventory_balances WHERE warehouse_id=$2 AND item_id=l.item_id
     ) stock ON TRUE
     WHERE f.id=$1 ORDER BY l.sequence_no`,[req.params.id,warehouseId]);
    if(!result.rowCount)return rep.code(404).send({error:'FORMULATION_NOT_FOUND'});
