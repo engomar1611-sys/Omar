@@ -49,7 +49,7 @@ jobs:
           Copy-Item backend/web "$payload/backend/" -Recurse
           Copy-Item backend/node_modules "$payload/backend/" -Recurse
           Copy-Item (Get-Command node).Source "$payload/node.exe"
-          Invoke-WebRequest -Uri 'https://github.com/winsw/winsw/releases/download/v3.0.0/WinSW-x64.exe' -OutFile "$payload/NewFeedERPService.exe"
+          Invoke-WebRequest -Uri 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET461.exe' -OutFile "$payload/NewFeedERPService.exe"
           Copy-Item server-installer/NewFeedERPService.xml "$payload/"
       - name: Install Inno Setup
         shell: pwsh
