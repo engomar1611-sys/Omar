@@ -729,9 +729,9 @@ export async function operationsRoutes(app, { db }) {
         if(!h.rowCount||h.rows[0].status!=='COMPLETED'||!['PENDING_QC','QUARANTINED'].includes(h.rows[0].quality_status))throw Object.assign(new Error('المنتج غير متاح للفحص أو تم فحصه مسبقاً'),{code:'P0001'});
         const status=b.result==='PASS'?'RELEASED':b.result==='FAIL'?'QUARANTINED':'PENDING_QC';
         const attempt=await c.query('SELECT COALESCE(MAX(attempt_no),0)+1 attempt_no FROM finished_goods_inspection_history WHERE production_order_id=$1',[req.params.id]);
-        await c.query(`INSERT INTO finished_goods_inspection_history(production_order_id,attempt_no,inspected_by,result,parameters,notes,inventory_status) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)`,[req.params.id,attempt.rows[0].attempt_no,req.authUser.user_id,b.result,JSON.stringify(b.parameters),b.notes?.trim()||null,status]);
+        await c.query(`INSERT INTO finished_goods_inspection_history(production_order_id,attempt_no,inspected_by,result,parameters,notes,inventory_status) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)`,[req.params.id,attempt.rows[0].attempt_no,req.authUser.user_id,b.result,JSON.stringify(b.parameters??{}),b.notes?.trim()||null,status]);
         await c.query('INSERT INTO finished_goods_inspections(production_order_id,inspected_by,result,parameters,notes) VALUES($1,$2,$3,$4::jsonb,$5) ON CONFLICT(production_order_id) DO UPDATE SET inspected_by=EXCLUDED.inspected_by,inspected_at=NOW(),result=EXCLUDED.result,parameters=EXCLUDED.parameters,notes=EXCLUDED.notes',
-          [req.params.id,req.authUser.user_id,b.result,JSON.stringify(b.parameters),b.notes?.trim()||null]);
+          [req.params.id,req.authUser.user_id,b.result,JSON.stringify(b.parameters??{}),b.notes?.trim()||null]);
         await c.query('UPDATE inventory_balances SET quality_status=$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',
           [status,h.rows[0].warehouse_id,h.rows[0].item_id,h.rows[0].lot_no]);
         return {productionOrderId:req.params.id,result:b.result,inventoryStatus:status,availableForSale:status==='RELEASED'};
