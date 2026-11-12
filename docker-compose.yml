@@ -6,16 +6,39 @@ services:
     environment:
       POSTGRES_DB: newfeed_erp
       POSTGRES_USER: newfeed
-      POSTGRES_PASSWORD: newfeed_dev_password
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Create .env using scripts/start-test.ps1}
     volumes:
       - new_feed_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U newfeed -d newfeed_erp"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: new-feed-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: postgresql://newfeed:${POSTGRES_PASSWORD}@postgres:5432/newfeed_erp
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?Create .env using scripts/start-test.ps1}
+      LOG_LEVEL: info
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   new_feed_pgdata:
