@@ -1,0 +1,13 @@
+<service>
+  <id>NewFeedERP</id>
+  <name>NEW FEED ERP Server</name>
+  <description>Central API service for NEW FEED ERP</description>
+  <executable>%BASE%\node.exe</executable>
+  <arguments>src\server.mjs</arguments>
+  <workingdirectory>%BASE%\backend</workingdirectory>
+  <env name="NODE_ENV" value="production" />
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec" />
+  <onfailure action="restart" delay="30 sec" />
+  <log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>8</keepFiles></log>
+</service>
