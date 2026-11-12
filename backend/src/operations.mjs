@@ -320,7 +320,7 @@ export async function operationsRoutes(app, { db }) {
         JOIN formulations f ON f.id=p.formulation_id JOIN warehouses w ON w.id=p.warehouse_id
         WHERE p.id=$1`,[req.params.id]);
       if(!order.rowCount)return reply.code(404).send({error:'NOT_FOUND'});
-      const [consumptions,output,components,journals,losses,materialIssue]=await Promise.all([
+      const [consumptions,output,components,journals,materialIssue,losses]=await Promise.all([
         db.query(`SELECT pc.item_id,i.code item_code,i.name_ar item_name,pc.lot_no,pc.quantity,
           pc.average_unit_cost,pc.extended_cost
           FROM production_consumptions pc JOIN items i ON i.id=pc.item_id
@@ -478,7 +478,7 @@ export async function operationsRoutes(app, { db }) {
     }catch(e){return failure(reply,e);}
   });
 
-  app.post('/api/v1/production/orders/:id/issue', auth(app,'PRODUCTION.COMPLETE'), async(req,reply)=>{
+  app.post('/api/v1/production/orders/:id/issue', auth(app,'PRODUCTION.MATERIALS.ISSUE'), async(req,reply)=>{
     const requested=req.body?.issueQty;
     if(requested!==undefined&&!positive(requested))return invalid(reply,'كمية الصرف يجب أن تكون أكبر من صفر');
     try{
