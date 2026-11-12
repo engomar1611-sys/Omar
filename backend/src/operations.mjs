@@ -416,27 +416,37 @@ export async function operationsRoutes(app, { db }) {
         GROUP BY pc.production_order_id
       ), output AS (
         SELECT po.production_order_id,SUM(po.quantity) output_quantity,SUM(po.total_cost) output_cost FROM production_outputs po GROUP BY po.production_order_id
+      ), process_losses AS (
+        SELECT pl.production_order_id,SUM(pl.quantity) approved_process_loss,
+          SUM(pl.quantity*pc.average_unit_cost) approved_process_loss_cost
+        FROM production_process_losses pl JOIN production_consumptions pc
+          ON pc.production_order_id=pl.production_order_id AND pc.item_id=pl.item_id AND pc.lot_no=pl.lot_no
+        WHERE pl.status='APPROVED' GROUP BY pl.production_order_id
       ), finished_losses AS (
         SELECT production_order_id,SUM(quantity) approved_finished_loss FROM production_losses WHERE approved_by IS NOT NULL GROUP BY production_order_id
       )
       SELECT p.id production_order_id,p.order_no,p.completed_at::date completed_date,fp.code product_code,fp.name_ar product_name,
         p.planned_qty,p.actual_qty,COALESCE(c.input_quantity,0) input_quantity,COALESCE(o.output_quantity,0) output_quantity,
-        COALESCE(c.input_quantity,0)-COALESCE(o.output_quantity,0) mass_balance_difference,
+        COALESCE(c.input_quantity,0)-COALESCE(o.output_quantity,0)-COALESCE(pl.approved_process_loss,0) mass_balance_difference,
         CASE WHEN COALESCE(c.input_quantity,0)>0 THEN COALESCE(o.output_quantity,0)*100.0/c.input_quantity ELSE 0 END yield_percent,
-        COALESCE(c.material_cost,0) material_cost,COALESCE(o.output_cost,0) output_cost,COALESCE(fl.approved_finished_loss,0) approved_finished_loss
+        COALESCE(c.material_cost,0) material_cost,COALESCE(o.output_cost,0) output_cost,
+        COALESCE(pl.approved_process_loss,0) approved_process_loss,COALESCE(pl.approved_process_loss_cost,0) approved_process_loss_cost,
+        COALESCE(fl.approved_finished_loss,0) approved_finished_loss
       FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id
       LEFT JOIN consumed c ON c.production_order_id=p.id LEFT JOIN output o ON o.production_order_id=p.id
-      LEFT JOIN finished_losses fl ON fl.production_order_id=p.id
+      LEFT JOIN process_losses pl ON pl.production_order_id=p.id LEFT JOIN finished_losses fl ON fl.production_order_id=p.id
       WHERE p.status='COMPLETED' AND ($1::date IS NULL OR p.completed_at::date >= $1::date)
         AND ($2::date IS NULL OR p.completed_at::date <= $2::date) AND ($3::uuid IS NULL OR p.id=$3::uuid)
       ORDER BY p.completed_at DESC,p.order_no`,[from??null,to??null,productionOrderId??null]);
       const lines=result.rows.map(x=>({...x,plannedQuantity:Number(x.planned_qty),actualQuantity:Number(x.actual_qty),
         inputQuantity:Number(x.input_quantity),outputQuantity:Number(x.output_quantity),massBalanceDifference:Number(x.mass_balance_difference),
-        yieldPercent:Number(x.yield_percent),materialCost:Number(x.material_cost),outputCost:Number(x.output_cost),approvedFinishedLoss:Number(x.approved_finished_loss)}));
+        yieldPercent:Number(x.yield_percent),materialCost:Number(x.material_cost),outputCost:Number(x.output_cost),
+        approvedProcessLoss:Number(x.approved_process_loss),approvedProcessLossCost:Number(x.approved_process_loss_cost),approvedFinishedLoss:Number(x.approved_finished_loss)}));
       const totals=lines.reduce((a,x)=>{a.orders++;a.plannedQuantity+=x.plannedQuantity;a.actualQuantity+=x.actualQuantity;
         a.inputQuantity+=x.inputQuantity;a.outputQuantity+=x.outputQuantity;a.massBalanceDifference+=x.massBalanceDifference;
-        a.materialCost+=x.materialCost;a.outputCost+=x.outputCost;a.approvedFinishedLoss+=x.approvedFinishedLoss;return a;
-      },{orders:0,plannedQuantity:0,actualQuantity:0,inputQuantity:0,outputQuantity:0,massBalanceDifference:0,materialCost:0,outputCost:0,approvedFinishedLoss:0});
+        a.materialCost+=x.materialCost;a.outputCost+=x.outputCost;a.approvedProcessLoss+=x.approvedProcessLoss;
+        a.approvedProcessLossCost+=x.approvedProcessLossCost;a.approvedFinishedLoss+=x.approvedFinishedLoss;return a;
+      },{orders:0,plannedQuantity:0,actualQuantity:0,inputQuantity:0,outputQuantity:0,massBalanceDifference:0,materialCost:0,outputCost:0,approvedProcessLoss:0,approvedProcessLossCost:0,approvedFinishedLoss:0});
       totals.yieldPercent=totals.inputQuantity>0?totals.outputQuantity*100/totals.inputQuantity:0;
       return {filters:{from:from??null,to:to??null,productionOrderId:productionOrderId??null},count:lines.length,totals,lines};
     }catch(e){return failure(reply,e);}

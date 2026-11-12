@@ -173,7 +173,9 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(Number(yieldReport.json().totals.inputQuantity),10);
     assert.equal(Number(yieldReport.json().totals.outputQuantity),10);
     assert.equal(Number(yieldReport.json().totals.yieldPercent),100);
-    assert.equal(Number(yieldReport.json().totals.massBalanceDifference),0);
+    assert.equal(Number(yieldReport.json().totals.massBalanceDifference),-0.5);
+    assert.equal(Number(yieldReport.json().totals.approvedProcessLoss),0.5);
+    assert.equal(Number(yieldReport.json().totals.approvedProcessLossCost),2.5);
     assert.equal(Number(yieldReport.json().totals.approvedFinishedLoss),1,'post-production approved losses are reported separately');
     const invalidYieldDates=await app.inject({method:'GET',url:'/api/v1/reports/production-yield?from=2026-12-31&to=2026-01-01',headers});
     assert.equal(invalidYieldDates.statusCode,400);
