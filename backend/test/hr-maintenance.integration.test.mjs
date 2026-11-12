@@ -114,6 +114,19 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
   const closed=await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders/'+wo.json().id+'/approve',headers,payload:{}});
   assert.equal(closed.statusCode,200,closed.body);
   assert.equal(closed.json().status,'APPROVED');
+  assert.equal(Number(closed.json().total_cost),350);
+  assert.equal(Number(closed.json().parts_cost),0);
+  assert.ok(closed.json().journal_entry_id);
+  const maintenanceCosts=await app.inject({method:'GET',url:'/api/v1/maintenance/work-orders/'+wo.json().id+'/costs',headers});
+  assert.equal(maintenanceCosts.statusCode,200,maintenanceCosts.body);
+  assert.equal(Number(maintenanceCosts.json().total_cost),350);
+  assert.equal(maintenanceCosts.json().journal.length,2);
+  assert.equal(Number(maintenanceCosts.json().journal.reduce((n,l)=>n+Number(l.debit),0)),350);
+  assert.equal(Number(maintenanceCosts.json().journal.reduce((n,l)=>n+Number(l.credit),0)),350);
+  const maintenanceJournal=await pool.query("SELECT total_debit,total_credit FROM journal_entries WHERE source_type='MAINTENANCE_WORK_ORDER' AND source_id=$1",[wo.json().id]);
+  assert.equal(maintenanceJournal.rowCount,1);
+  assert.equal(Number(maintenanceJournal.rows[0].total_debit),350);
+  assert.equal(Number(maintenanceJournal.rows[0].total_credit),350);
 
   const setting=await app.inject({method:'PUT',url:'/api/v1/settings/company',headers,payload:{nameAr:'شركة الاختبار',currency:'EGP',timezone:'Africa/Cairo',taxNumber:'TEST-TAX',commercialRegister:'TEST-CR'}});
   assert.equal(setting.statusCode,200,setting.body);
