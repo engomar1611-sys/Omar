@@ -465,7 +465,7 @@ export async function commercialRoutes(app,{db}){
     GROUP BY a.id ORDER BY a.code`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
  });
  app.get('/api/v1/reports/inventory-valuation',auth(app,'REPORTS.READ'),async(_q,rep)=>{
-  try{return (await db.query(`SELECT w.code warehouse_code,i.code item_code,i.name_ar item_name,b.lot_no,b.expiry_date,b.quality_status,b.quantity,b.average_unit_cost,b.quantity*b.average_unit_cost stock_value
+  try{return (await db.query(`SELECT b.item_id,w.code warehouse_code,i.code item_code,i.name_ar item_name,b.lot_no,b.expiry_date,b.quality_status,b.quantity,b.average_unit_cost,b.quantity*b.average_unit_cost stock_value
     FROM inventory_balances b JOIN warehouses w ON w.id=b.warehouse_id JOIN items i ON i.id=b.item_id
     ORDER BY w.code,i.code,b.lot_no`)).rows;}catch(e){return fail(rep,e);}
  });
