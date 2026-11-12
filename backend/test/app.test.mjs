@@ -530,3 +530,25 @@ test('item category API rejects unsupported category kinds', async () => {
   assert.equal(invalid.statusCode,400);
  } finally {await app.close();}
 });
+
+import { calculateMaterialRequirements } from '../src/formulations.mjs';
+
+test('production material planning calculates required quantities, shortages and estimated cost', () => {
+ const result=calculateMaterialRequirements([
+  {item_id:'a',item_code:'CORN',item_name:'ذرة',unit_code:'KG',unit_name:'كيلوجرام',percentage:'60',available_qty:'500',average_unit_cost:'10'},
+  {item_id:'b',item_code:'SOY',item_name:'صويا',unit_code:'KG',unit_name:'كيلوجرام',percentage:'40',available_qty:'100',average_unit_cost:'20'}
+ ],1000);
+ assert.equal(result.lines[0].requiredQty,600);
+ assert.equal(result.lines[0].shortageQty,100);
+ assert.equal(result.lines[1].requiredQty,400);
+ assert.equal(result.lines[1].shortageQty,300);
+ assert.equal(result.totalRequiredQty,1000);
+ assert.equal(result.totalEstimatedMaterialCost,14000);
+ assert.equal(result.allAvailable,false);
+ assert.equal(result.shortages.length,2);
+});
+
+test('production material planning rejects zero or invalid quantities', () => {
+ assert.throws(() => calculateMaterialRequirements([],0),/الكمية/);
+ assert.throws(() => calculateMaterialRequirements([],NaN),/الكمية/);
+});
