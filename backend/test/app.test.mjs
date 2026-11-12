@@ -517,3 +517,16 @@ test('production scheduling routes require authentication and validate schedule 
   assert.equal(invalidSchedule.statusCode,400);
  } finally {await app.close();}
 });
+
+
+test('item category API rejects unsupported category kinds', async () => {
+ const db=makeDb(); db.passwordHash=await bcrypt.hash(PASSWORD,4);
+ const app=buildApp({logger:false,jwtSecret:'test-secret-with-at-least-32-characters',db});
+ try {
+  const login=await app.inject({method:'POST',url:'/api/v1/auth/login',payload:{username:'admin',password:PASSWORD}});
+  assert.equal(login.statusCode,200);
+  const headers={authorization:`Bearer ${login.json().accessToken}`};
+  const invalid=await app.inject({method:'POST',url:'/api/v1/master/categories',headers,payload:{code:'TEST-X',nameAr:'اختبار',categoryKind:'UNKNOWN'}});
+  assert.equal(invalid.statusCode,400);
+ } finally {await app.close();}
+});
