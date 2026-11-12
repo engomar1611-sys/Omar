@@ -213,6 +213,37 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(reversedPayment.rows[0].status,'REVERSED');
     const periods = await app.inject({method:'GET',url:'/api/v1/accounting/periods',headers});
     assert.equal(periods.statusCode,200,periods.body);
+    const roleCreated = await app.inject({method:'POST',url:'/api/v1/admin/roles',headers,payload:{
+      code:code('SALES_CLERK').toUpperCase(),nameAr:'موظف مبيعات اختبار',permissionCodes:['SALES.READ','SALES.MANAGE']
+    }});
+    assert.equal(roleCreated.statusCode,201,roleCreated.body);
+    const permissions = await app.inject({method:'GET',url:'/api/v1/admin/permissions',headers});
+    assert.equal(permissions.statusCode,200,permissions.body);
+    const managedUser = await app.inject({method:'POST',url:'/api/v1/admin/users',headers,payload:{
+      username:code('sales.user').toLowerCase(),displayName:'موظف مبيعات اختبار',password:'test-password-123456789',roleIds:[roleCreated.json().id]
+    }});
+    assert.equal(managedUser.statusCode,201,managedUser.body);
+    const usersList = await app.inject({method:'GET',url:'/api/v1/admin/users',headers});
+    assert.equal(usersList.statusCode,200,usersList.body);
+    assert.ok(usersList.json().some(x=>x.id===managedUser.json().id));
+    const roleList = await app.inject({method:'GET',url:'/api/v1/admin/roles',headers});
+    assert.equal(roleList.statusCode,200,roleList.body);
+    const employeeLogin = await app.inject({method:'POST',url:'/api/v1/auth/login',payload:{username:managedUser.json().username,password:'test-password-123456789'}});
+    assert.equal(employeeLogin.statusCode,200,employeeLogin.body);
+    const employeeHeaders={authorization:'Bearer '+employeeLogin.json().accessToken,'content-type':'application/json'};
+    const employeeMe=await app.inject({method:'GET',url:'/api/v1/auth/me',headers:employeeHeaders});
+    assert.equal(employeeMe.statusCode,200,employeeMe.body);
+    assert.ok(employeeMe.json().permissions.includes('SALES.MANAGE'));
+    const rolePermissionUpdate=await app.inject({method:'PUT',url:'/api/v1/admin/roles/'+roleCreated.json().id+'/permissions',headers,payload:{permissionCodes:['SALES.READ']}});
+    assert.equal(rolePermissionUpdate.statusCode,200,rolePermissionUpdate.body);
+    const updatedMe=await app.inject({method:'GET',url:'/api/v1/auth/me',headers:employeeHeaders});
+    assert.deepEqual(updatedMe.json().permissions,['SALES.READ']);
+    const reset=await app.inject({method:'POST',url:'/api/v1/admin/users/'+managedUser.json().id+'/reset-password',headers,payload:{password:'another-test-password-123456'}});
+    assert.equal(reset.statusCode,200,reset.body);
+    const revokedSession=await app.inject({method:'GET',url:'/api/v1/auth/me',headers:employeeHeaders});
+    assert.equal(revokedSession.statusCode,401);
+    const selfDeactivate=await app.inject({method:'PUT',url:'/api/v1/admin/users/'+userId+'/status',headers,payload:{active:false}});
+    assert.equal(selfDeactivate.statusCode,409);
     assert.equal(userId.length,36);
   } finally {
     await app.close();
