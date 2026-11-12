@@ -124,6 +124,7 @@ async function hrLoad(kind){
  if(kind==='leaves'&&x.status==='PENDING'&&can('HR.LEAVE.APPROVE'))['APPROVED','REJECTED'].forEach(s=>{const b=document.createElement('button');b.className='btn secondary';b.textContent=s==='APPROVED'?'اعتماد':'رفض';b.onclick=async()=>{try{await apiPost('/api/v1/hr/leaves/'+x.id+'/decision',{status:s});hrLoad(kind)}catch(e){alert(e.message)}};a.append(b)});
  if(kind==='advances'&&x.status==='PENDING'&&can('HR.ADVANCES.MANAGE')){const b=document.createElement('button');b.className='btn';b.textContent='اعتماد السلفة';b.onclick=async()=>{try{await apiPost('/api/v1/hr/advances/'+x.id+'/approve',{});hrLoad(kind)}catch(e){alert(e.message)}};a.append(b)}
  if(kind==='payroll-runs'&&x.status==='CALCULATED'&&can('HR.PAYROLL.APPROVE')){const b=document.createElement('button');b.className='btn';b.textContent='اعتماد المسير';b.onclick=async()=>{try{await apiPost('/api/v1/hr/payroll-runs/'+x.id+'/approve',{});hrLoad(kind)}catch(e){alert(e.message)}};a.append(b)}
+ if(kind==='payroll-runs'&&can('HR.READ')){const b=document.createElement('button');b.className='btn secondary';b.textContent='طباعة مفردات المرتب';b.onclick=()=>printPayrollPayslips(x);a.append(b)}
  if(kind==='payroll-runs'&&x.status==='APPROVED'&&can('HR.PAYROLL.APPROVE')){const b=document.createElement('button');b.className='btn';b.textContent='ترحيل محاسبي';b.onclick=async()=>{if(!confirm('تأكيد ترحيل مسير الرواتب إلى الحسابات؟'))return;try{await apiPost('/api/v1/hr/payroll-runs/'+x.id+'/post',{});hrLoad(kind)}catch(e){alert(e.message)}};a.append(b)}
  if(kind==='employees'&&can('HR.MANAGE')){const edit=document.createElement('button');edit.className='btn secondary';edit.textContent='تعديل الملف الوظيفي';edit.onclick=()=>hrEditForm(x);a.append(edit)}
  if(kind==='employees'&&x.status==='ACTIVE'&&can('HR.MANAGE')){const b=document.createElement('button');b.className='btn secondary';b.textContent='إيقاف الموظف';b.onclick=async()=>{if(!confirm('إيقاف الموظف؟'))return;try{await apiPut('/api/v1/hr/employees/'+x.id+'/status',{status:'SUSPENDED'});hrLoad(kind)}catch(e){alert(e.message)}};a.append(b)}
@@ -133,6 +134,20 @@ async function hrLoad(kind){
  if($('#hrAdd'))$('#hrAdd').onclick=()=>hrForm(kind);
  }catch(e){host.innerHTML='<div class="notice">'+escapeHtml(e.message)+'</div>'}
 }
+
+async function printPayrollPayslips(run){
+ const win=window.open('','_blank');
+ if(!win){alert('يرجى السماح بالنوافذ المنبثقة لطباعة مفردات المرتب');return}
+ try{
+  const items=await api('/api/v1/hr/payroll-runs/'+encodeURIComponent(run.id)+'/items');
+  if(!items.length){win.close();alert('لا توجد مفردات رواتب في هذا المسير');return}
+  const money=v=>Number(v||0).toLocaleString('ar-EG',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const esc=v=>escapeHtml(v??'');
+  const pages=items.map((x,i)=>'<section class="slip"><header><h1>NEW FEED ERP</h1><h2>مفردات مرتب</h2><p>الفترة: '+esc(run.period_code)+' — من '+esc(String(run.start_date||'').slice(0,10))+' إلى '+esc(String(run.end_date||'').slice(0,10))+'</p></header><div class="identity"><b>الموظف:</b> '+esc(x.full_name_ar)+' <span><b>الكود:</b> '+esc(x.employee_no)+'</span></div><table><thead><tr><th>البيان</th><th>المبلغ (جنيه)</th></tr></thead><tbody><tr><td>الراتب الأساسي</td><td>'+money(x.basic_amount)+'</td></tr><tr><td>البدلات</td><td>'+money(x.allowances)+'</td></tr><tr><td>العمل الإضافي</td><td>'+money(x.overtime_amount)+'</td></tr><tr><td>المكافآت</td><td>'+money(x.bonuses)+'</td></tr><tr><td>خصم الغياب</td><td>('+money(x.absence_deduction)+')</td></tr><tr><td>خصم السلف</td><td>('+money(x.advance_deduction)+')</td></tr><tr><td>خصومات أخرى</td><td>('+money(x.deductions)+')</td></tr><tr class="total"><th>صافي المستحق</th><th>'+money(x.net_amount)+'</th></tr></tbody></table><footer><span>توقيع الموظف: __________________</span><span>اعتماد الحسابات: __________________</span></footer><small>حالة المسير: '+esc(run.status)+' — مستند داخلي</small></section>').join('');
+  win.document.open();win.document.write('<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>مفردات رواتب '+esc(run.period_code)+'</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#111;margin:0}.slip{box-sizing:border-box;padding:18mm 16mm;min-height:270mm;page-break-after:always}.slip:last-child{page-break-after:auto}header{text-align:center;border-bottom:2px solid #222;padding-bottom:10px;margin-bottom:22px}h1{font-size:22px;margin:0 0 8px}h2{font-size:19px;margin:0 0 8px}.identity{display:flex;justify-content:space-between;margin:20px 0;font-size:16px}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{border:1px solid #555;padding:11px;text-align:right}thead,.total{background:#eee}.total{font-size:17px}footer{display:flex;justify-content:space-between;margin-top:55px;font-size:14px}small{display:block;margin-top:35px;color:#555}@media print{.slip{break-after:page}.slip:last-child{break-after:auto}@page{size:A4;margin:0}}</style></head><body>'+pages+'</body></html>');win.document.close();win.focus();setTimeout(()=>win.print(),300);
+ }catch(e){win.close();alert('تعذر تجهيز مفردات المرتب: '+e.message)}
+}
+
 async function hrEditForm(employee){
  const host=$('#hrData');
  try{
