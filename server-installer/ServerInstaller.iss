@@ -26,5 +26,5 @@ Name: "{group}\إعداد خادم NEW FEED ERP"; Filename: "powershell.exe"; Pa
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\configure-server.ps1"""; WorkingDir: "{app}"; Flags: postinstall waituntilterminated runascurrentuser; Description: "إعداد قاعدة البيانات وتشغيل خدمة NEW FEED ERP"
 
 [UninstallRun]
-Filename: "{app}\\NewFeedERPService.exe"; Parameters: "stop"; Flags: runhidden
-Filename: "{app}\\NewFeedERPService.exe"; Parameters: "uninstall"; Flags: runhidden
+Filename: "{app}\NewFeedERPService.exe"; Parameters: "stop"; Flags: runhidden
+Filename: "{app}\NewFeedERPService.exe"; Parameters: "uninstall"; Flags: runhidden
