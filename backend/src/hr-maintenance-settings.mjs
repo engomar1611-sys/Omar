@@ -49,6 +49,34 @@ export async function hrRoutes(app,{db}) {
  app.get('/api/v1/hr/payroll-runs',auth(app,'HR.READ'),async(_q,r)=>{try{return (await db.query(`SELECT r.*,p.period_code,p.start_date,p.end_date,COUNT(i.id)::int employee_count FROM payroll_runs r JOIN payroll_periods p ON p.id=r.payroll_period_id LEFT JOIN payroll_items i ON i.payroll_run_id=r.id GROUP BY r.id,p.period_code,p.start_date,p.end_date ORDER BY p.start_date DESC`)).rows}catch(e){return fail(r,e)}});
  app.get('/api/v1/hr/payroll-runs/:id/items',auth(app,'HR.READ'),async(q,r)=>{try{return (await db.query('SELECT i.*,e.employee_no,e.full_name_ar FROM payroll_items i JOIN employees e ON e.id=i.employee_id WHERE i.payroll_run_id=$1 ORDER BY e.employee_no',[q.params.id])).rows}catch(e){return fail(r,e)}});
  app.post('/api/v1/hr/payroll-runs/:id/approve',auth(app,'HR.PAYROLL.APPROVE'),async(q,r)=>{try{return await tx(db,async c=>{const x=await c.query(`UPDATE payroll_runs SET status='APPROVED',approved_by=$1,approved_at=NOW() WHERE id=$2 AND status='CALCULATED' RETURNING *`,[q.authUser.user_id,q.params.id]);if(!x.rowCount)throw Object.assign(new Error('المسير غير محسوب أو معتمد مسبقاً'),{code:'P0001'});await c.query(`UPDATE payroll_periods SET status='APPROVED',approved_by=$1,approved_at=NOW() WHERE id=$2`,[q.authUser.user_id,x.rows[0].payroll_period_id]);return x.rows[0]})}catch(e){return fail(r,e)}});
+ app.post('/api/v1/hr/payroll-runs/:id/post',auth(app,'HR.PAYROLL.APPROVE'),async(q,r)=>{try{return await tx(db,async c=>{
+  const run=await c.query("SELECT * FROM payroll_runs WHERE id=$1 FOR UPDATE",[q.params.id]);
+  if(!run.rowCount||run.rows[0].status!=='APPROVED')throw Object.assign(new Error('يجب اعتماد مسير الرواتب قبل الترحيل'),{code:'P0001'});
+  const period=await c.query("SELECT * FROM payroll_periods WHERE id=$1 FOR UPDATE",[run.rows[0].payroll_period_id]);
+  const lock=await c.query("SELECT status FROM accounting_periods WHERE $1::date BETWEEN start_date AND end_date FOR UPDATE",[period.rows[0].end_date]);
+  if(lock.rowCount&&lock.rows[0].status!=='OPEN')throw Object.assign(new Error('الفترة المحاسبية مغلقة أو مقفلة'),{code:'P0001'});
+  const sums=await c.query("SELECT COALESCE(SUM(basic_amount+allowances+overtime_amount+bonuses),0) gross,COALESCE(SUM(absence_deduction),0) absence,COALESCE(SUM(advance_deduction),0) advances,COALESCE(SUM(net_amount),0) net FROM payroll_items WHERE payroll_run_id=$1",[q.params.id]);
+  const s=sums.rows[0],gross=Number(s.gross),absence=Number(s.absence),advances=Number(s.advances),net=Number(s.net);
+  if(Math.abs(gross-net-absence-advances)>0.00001)throw Object.assign(new Error('إجمالي مسير الرواتب غير متوازن'),{code:'P0001'});
+  if(gross>0){
+   const a=await c.query("SELECT code,id FROM gl_accounts WHERE code IN ('5100','1300','2100')");
+   const account=Object.fromEntries(a.rows.map(x=>[x.code,x.id]));
+   if(!account['5100']||!account['1300']||!account['2100'])throw Object.assign(new Error('حسابات الرواتب أو السلف غير معرفة'),{code:'P0001'});
+   const je=await c.query("INSERT INTO journal_entries(entry_no,entry_date,source_type,source_id,description,total_debit,total_credit,created_by) VALUES($1,$2,'PAYROLL',$3,$4,$5,$5,$6) RETURNING id",
+    ['J-PAY-'+String(q.params.id).slice(0,12),period.rows[0].end_date,q.params.id,'ترحيل مسير رواتب '+period.rows[0].period_code,gross,q.authUser.user_id]);
+   const id=je.rows[0].id;
+   await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,$3,0,'مصروف الرواتب'),($1,$4,0,$5,'صافي الرواتب المستحقة'),($1,$6,0,$7,'استرداد سلف العاملين'),($1,$2,0,$8,'خصومات الغياب')",
+    [id,account['5100'],gross,account['2100'],net,account['1300'],advances,absence]);
+   const adv=await c.query("SELECT id,remaining_amount FROM employee_advances WHERE status='APPROVED' AND remaining_amount>0 ORDER BY request_date,id FOR UPDATE");
+   let remaining=advances;
+   for(const x of adv.rows){if(remaining<=0)break;const deduction=Math.min(remaining,Number(x.remaining_amount));await c.query("UPDATE employee_advances SET remaining_amount=remaining_amount-$1,status=CASE WHEN remaining_amount-$1<=0.000001 THEN 'SETTLED' ELSE status END WHERE id=$2",[deduction,x.id]);remaining-=deduction;}
+  }
+  await c.query("UPDATE payroll_runs SET status='POSTED',posted_by=$1,posted_at=NOW() WHERE id=$2",[q.authUser.user_id,q.params.id]);
+  await c.query("UPDATE payroll_periods SET status='POSTED' WHERE id=$1",[run.rows[0].payroll_period_id]);
+  await c.query("INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,details) VALUES($1,'POST','PAYROLL_RUN',$2,$3::jsonb)",[q.authUser.user_id,q.params.id,JSON.stringify({gross,net,absence,advances})]);
+  return {runId:q.params.id,status:'POSTED',gross,net,absenceDeduction:absence,advanceDeduction:advances};
+ })}catch(e){return fail(r,e)}});
+
 }
 
 export async function maintenanceRoutes(app,{db}) {
