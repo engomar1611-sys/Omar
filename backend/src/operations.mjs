@@ -231,6 +231,65 @@ export async function operationsRoutes(app, { db }) {
     }catch(e){return failure(reply,e);}
   });
 
+  app.get('/api/v1/production/losses', auth(app,'PRODUCTION.READ'), async(_req,reply)=>{
+    try{return (await db.query(`SELECT l.*,p.order_no,fp.code product_code,fp.name_ar product_name,o.lot_no,
+      o.quantity output_quantity,o.unit_cost,CASE WHEN l.approved_by IS NULL THEN 'PENDING_APPROVAL' ELSE 'POSTED' END status,
+      creator.display_name created_by_name,approver.display_name approved_by_name
+      FROM production_losses l JOIN production_orders p ON p.id=l.production_order_id
+      JOIN feed_products fp ON fp.id=p.feed_product_id JOIN production_outputs o ON o.production_order_id=p.id
+      LEFT JOIN users creator ON creator.id=l.created_by LEFT JOIN users approver ON approver.id=l.approved_by
+      ORDER BY l.created_at DESC LIMIT 500`)).rows;}
+    catch(e){return failure(reply,e);}
+  });
+  app.post('/api/v1/production/losses', auth(app,'PRODUCTION.LOSSES.MANAGE'), async(req,reply)=>{
+    const b=req.body??{};
+    if(!b.productionOrderId||!['PROCESS','MOISTURE','DAMAGE','OTHER'].includes(b.lossType)||!positive(b.quantity)||!text(b.reason,1000))return invalid(reply);
+    try{const result=await transaction(db,async c=>{
+      const h=await c.query(`SELECT p.id,p.status,o.quantity output_quantity,b.quantity balance_qty,b.quality_status
+        FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id
+        JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no
+        WHERE p.id=$1 FOR UPDATE OF p,b`,[b.productionOrderId]);
+      if(!h.rowCount||h.rows[0].status!=='COMPLETED'||h.rows[0].quality_status!=='RELEASED')
+        throw Object.assign(new Error('يجب أن يكون أمر الإنتاج مكتملاً والمنتج النهائي مجتازاً للجودة'),{code:'P0001'});
+      if(Number(b.quantity)>Number(h.rows[0].balance_qty)+0.000001)
+        throw Object.assign(new Error('كمية الهالك تتجاوز رصيد التشغيلة المتاح'),{code:'P0001'});
+      const created=await c.query(`INSERT INTO production_losses(production_order_id,loss_type,quantity,reason,created_by)
+        VALUES($1,$2,$3,$4,$5) RETURNING *`,[b.productionOrderId,b.lossType,b.quantity,b.reason.trim(),req.authUser.user_id]);
+      return {...created.rows[0],status:'PENDING_APPROVAL'};
+    });return reply.code(201).send(result);}catch(e){return failure(reply,e);}
+  });
+  app.post('/api/v1/production/losses/:id/approve', auth(app,'PRODUCTION.LOSSES.APPROVE'), async(req,reply)=>{
+    try{const result=await transaction(db,async c=>{
+      const loss=await c.query('SELECT * FROM production_losses WHERE id=$1 FOR UPDATE',[req.params.id]);
+      if(!loss.rowCount||loss.rows[0].approved_by)throw Object.assign(new Error('طلب الهالك غير متاح للاعتماد أو تم ترحيله مسبقاً'),{code:'P0001'});
+      const data=await c.query(`SELECT p.id,p.warehouse_id,o.item_id,o.lot_no,b.quantity,b.average_unit_cost,b.quality_status
+        FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id
+        JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no
+        WHERE p.id=$1 FOR UPDATE OF p,b`,[loss.rows[0].production_order_id]);
+      if(!data.rowCount||data.rows[0].quality_status!=='RELEASED')throw Object.assign(new Error('التشغيلة غير متاحة للصرف؛ يجب اجتياز فحص الجودة'),{code:'P0001'});
+      const row=data.rows[0],qty=Number(loss.rows[0].quantity),available=Number(row.quantity),cost=Number(row.average_unit_cost);
+      if(qty>available+0.000001)throw Object.assign(new Error('الرصيد المتاح لا يكفي لاعتماد الهالك'),{code:'P0001'});
+      const period=await c.query('SELECT status FROM accounting_periods WHERE CURRENT_DATE BETWEEN start_date AND end_date FOR UPDATE');
+      if(period.rowCount&&period.rows.some(x=>x.status!=='OPEN'))throw Object.assign(new Error('الفترة المحاسبية مغلقة'),{code:'P0001'});
+      const accounts=await c.query("SELECT id,code FROM gl_accounts WHERE code IN ('1200','5420') AND is_active=TRUE");
+      const inventory=accounts.rows.find(x=>x.code==='1200')?.id,lossAccount=accounts.rows.find(x=>x.code==='5420')?.id;
+      if(!inventory||!lossAccount)throw Object.assign(new Error('حساب المخزون أو خسائر هالك الإنتاج غير معرف'),{code:'P0001'});
+      const amount=qty*cost,entry=await c.query(`INSERT INTO journal_entries(entry_no,entry_date,source_type,source_id,description,total_debit,total_credit,created_by)
+        VALUES($1,CURRENT_DATE,'PRODUCTION_LOSS',$2,$3,$4,$4,$5) RETURNING id`,
+        ['J-LOSS-'+req.params.id.slice(0,12),req.params.id,'إثبات هالك إنتاج لأمر '+row.id,amount,req.authUser.user_id]);
+      await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,$3,0,$4),($1,$5,0,$3,$6)',
+        [entry.rows[0].id,lossAccount,amount,'خسائر هالك الإنتاج',inventory,'تخفيض مخزون المنتج النهائي']);
+      await c.query(`UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW()
+        WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4`,[qty,row.warehouse_id,row.item_id,row.lot_no]);
+      await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
+        VALUES($1,$2,$3,$4,'PRODUCTION_LOSS',$5,$6,'PRODUCTION_LOSS',$7,$8)`,
+        ['PL-'+req.params.id,row.warehouse_id,row.item_id,row.lot_no,qty,cost,req.params.id,req.authUser.user_id]);
+      await c.query('UPDATE production_losses SET approved_by=$1,approved_at=NOW(),journal_entry_id=$2 WHERE id=$3',
+        [req.authUser.user_id,entry.rows[0].id,req.params.id]);
+      return {id:req.params.id,status:'POSTED',quantity:qty,unitCost:cost,totalCost:amount,journalEntryId:entry.rows[0].id,remainingQuantity:available-qty};
+    });return result;}catch(e){return failure(reply,e);}
+  });
+
   app.post('/api/v1/production/orders', auth(app,'PRODUCTION.MANAGE'), async(req,reply)=>{
     const b=req.body??{};
     if(!text(b.orderNo,40)||!b.feedProductId||!b.formulationId||!b.warehouseId||!positive(b.plannedQty))return invalid(reply);
