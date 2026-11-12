@@ -66,7 +66,7 @@ export async function masterDataRoutes(app, { db }) {
     get(reply, 'SELECT id,code,name_ar,category_kind,is_active FROM item_categories ORDER BY code'));
   app.post('/api/v1/master/categories', routeOptions(app, 'CATEGORIES.MANAGE'), async (req, reply) => {
     const { code, nameAr, categoryKind } = req.body ?? {};
-    const kinds = ['RAW_MATERIAL','PACKAGING','FINISHED_GOOD','SPARE_PART','OTHER'];
+    const kinds = ['RAW_MATERIAL','PACKAGING','SEMI_FINISHED','FINISHED_GOOD','SPARE_PART','OTHER'];
     if (!validText(code, 30) || !validText(nameAr, 120) || !kinds.includes(categoryKind))
       return reply.code(400).send({ error: 'VALIDATION_ERROR' });
     return post(reply, 'INSERT INTO item_categories(code,name_ar,category_kind) VALUES($1,$2,$3) RETURNING *',
