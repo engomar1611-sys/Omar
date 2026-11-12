@@ -156,6 +156,16 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.ok(lossReportRow);
     assert.equal(lossReportRow.status,'POSTED');
     assert.equal(Number(lossReportRow.posted_loss_value),8.4);
+    const yieldReport=await app.inject({method:'GET',url:'/api/v1/reports/production-yield?productionOrderId='+orderId,headers});
+    assert.equal(yieldReport.statusCode,200,yieldReport.body);
+    assert.equal(yieldReport.json().count,1);
+    assert.equal(Number(yieldReport.json().totals.inputQuantity),10);
+    assert.equal(Number(yieldReport.json().totals.outputQuantity),10);
+    assert.equal(Number(yieldReport.json().totals.yieldPercent),100);
+    assert.equal(Number(yieldReport.json().totals.massBalanceDifference),0);
+    assert.equal(Number(yieldReport.json().totals.approvedFinishedLoss),1,'post-production approved losses are reported separately');
+    const invalidYieldDates=await app.inject({method:'GET',url:'/api/v1/reports/production-yield?from=2026-12-31&to=2026-01-01',headers});
+    assert.equal(invalidYieldDates.statusCode,400);
     const detailsAfterLoss=await app.inject({method:'GET',url:'/api/v1/production/orders/'+orderId+'/details',headers});
     assert.equal(detailsAfterLoss.statusCode,200,detailsAfterLoss.body);
     assert.equal(detailsAfterLoss.json().losses.length,1);
