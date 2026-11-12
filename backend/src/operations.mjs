@@ -722,7 +722,7 @@ export async function operationsRoutes(app, { db }) {
   });
   app.post('/api/v1/production/orders/:id/quality', auth(app,'QUALITY.FINISHED_APPROVE'), async(req,reply)=>{
     const b=req.body??{};
-    if(!['PASS','FAIL','CONDITIONAL'].includes(b.result)||!b.parameters||typeof b.parameters!=='object'||Array.isArray(b.parameters)||new TextEncoder().encode(JSON.stringify(b.parameters)).length>8192||(b.notes!=null&&(typeof b.notes!=='string'||b.notes.length>2000)))return invalid(reply);
+    if(!['PASS','FAIL','CONDITIONAL'].includes(b.result)||(b.parameters!=null&&(typeof b.parameters!=='object'||Array.isArray(b.parameters)||new TextEncoder().encode(JSON.stringify(b.parameters)).length>8192))||(b.notes!=null&&(typeof b.notes!=='string'||b.notes.length>2000)))return invalid(reply);
     try{
       const result=await transaction(db,async c=>{
         const h=await c.query('SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no,o.quantity,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
