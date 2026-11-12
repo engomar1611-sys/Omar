@@ -301,7 +301,8 @@ test('commercial and accounting endpoints require authentication', async () => {
     const paths = [
       '/api/v1/customers',
       '/api/v1/sales/invoices',
-      '/api/v1/accounting/journals'
+      '/api/v1/accounting/journals',
+      '/api/v1/reports/general-ledger'
     ];
     for (const url of paths) {
       const response = await app.inject({ method: 'GET', url });
