@@ -28,7 +28,9 @@ async function openMain(){
  mainWindow=new BrowserWindow({width:1440,height:920,minWidth:1050,minHeight:700,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
  mainWindow.webContents.setWindowOpenHandler(({url})=>{if(url.startsWith('https://'))shell.openExternal(url);return {action:'deny'};});
  mainWindow.webContents.on('will-navigate',(event,url)=>{if(url!==cfg.serverUrl&&!url.startsWith(cfg.serverUrl+'/'))event.preventDefault();});
- mainWindow.on('closed',()=>mainWindow=null);await mainWindow.loadURL(cfg.serverUrl);
+ mainWindow.on('closed',()=>mainWindow=null);
+ try { await mainWindow.loadURL(cfg.serverUrl); }
+ catch { if(mainWindow&&!mainWindow.isDestroyed())mainWindow.destroy(); mainWindow=null; openSetup(); }
 }
 ipcMain.handle('erp:get-config',()=>readConfig());
 ipcMain.handle('erp:test-server',(_e,url)=>checkServer(url));
