@@ -322,7 +322,7 @@ export async function operationsRoutes(app, { db }) {
         JOIN formulations f ON f.id=p.formulation_id JOIN warehouses w ON w.id=p.warehouse_id
         WHERE p.id=$1`,[req.params.id]);
       if(!order.rowCount)return reply.code(404).send({error:'NOT_FOUND'});
-      const [consumptions,output,components,journals,materialIssue,losses]=await Promise.all([
+      const [consumptions,output,components,journals,materialIssue,losses,processLosses]=await Promise.all([
         db.query(`SELECT pc.item_id,i.code item_code,i.name_ar item_name,pc.lot_no,pc.quantity,
           pc.average_unit_cost,pc.extended_cost
           FROM production_consumptions pc JOIN items i ON i.id=pc.item_id
@@ -349,10 +349,14 @@ export async function operationsRoutes(app, { db }) {
           j.entry_no,j.total_debit loss_value,creator.display_name created_by_name,approver.display_name approved_by_name
           FROM production_losses l LEFT JOIN journal_entries j ON j.id=l.journal_entry_id
           LEFT JOIN users creator ON creator.id=l.created_by LEFT JOIN users approver ON approver.id=l.approved_by
+          WHERE l.production_order_id=$1 ORDER BY l.created_at DESC`,[req.params.id]),
+        db.query(`SELECT l.id,l.item_id,i.code item_code,i.name_ar item_name,l.lot_no,l.quantity,l.reason,l.status,l.created_at,l.approved_at,
+          creator.display_name created_by_name,approver.display_name approved_by_name FROM production_process_losses l JOIN items i ON i.id=l.item_id
+          LEFT JOIN users creator ON creator.id=l.created_by LEFT JOIN users approver ON approver.id=l.approved_by
           WHERE l.production_order_id=$1 ORDER BY l.created_at DESC`,[req.params.id])
       ]);
       return {order:order.rows[0],consumptions:consumptions.rows,output:output.rows[0]??null,
-        costComponents:components.rows,journalEntries:journals.rows,losses:losses.rows,materialIssue:materialIssue.rows[0]??null};
+        costComponents:components.rows,journalEntries:journals.rows,losses:losses.rows,processLosses:processLosses.rows,materialIssue:materialIssue.rows[0]??null};
     }catch(e){return failure(reply,e);}
   });
 
@@ -436,6 +440,36 @@ export async function operationsRoutes(app, { db }) {
       totals.yieldPercent=totals.inputQuantity>0?totals.outputQuantity*100/totals.inputQuantity:0;
       return {filters:{from:from??null,to:to??null,productionOrderId:productionOrderId??null},count:lines.length,totals,lines};
     }catch(e){return failure(reply,e);}
+  });
+  app.get('/api/v1/production/process-losses', auth(app,'PRODUCTION.READ'), async(_req,reply)=>{
+    try{return (await db.query(`SELECT l.*,p.order_no,i.code item_code,i.name_ar item_name,creator.display_name created_by_name,approver.display_name approved_by_name
+      FROM production_process_losses l JOIN production_orders p ON p.id=l.production_order_id JOIN items i ON i.id=l.item_id
+      LEFT JOIN users creator ON creator.id=l.created_by LEFT JOIN users approver ON approver.id=l.approved_by ORDER BY l.created_at DESC LIMIT 500`)).rows;}
+    catch(e){return failure(reply,e);}
+  });
+  app.post('/api/v1/production/process-losses', auth(app,'PRODUCTION.PROCESS_LOSSES.MANAGE'), async(req,reply)=>{
+    const b=req.body??{};
+    if(!b.productionOrderId||!b.itemId||!text(b.lotNo,80)||!positive(b.quantity)||!text(b.reason,1000))return invalid(reply);
+    try{const result=await transaction(db,async c=>{
+      const order=await c.query('SELECT id,status FROM production_orders WHERE id=$1 FOR UPDATE',[b.productionOrderId]);
+      if(!order.rowCount||order.rows[0].status!=='RELEASED')throw Object.assign(new Error('يسجل هالك الخامات أثناء التشغيل فقط وقبل إتمام الأمر'),{code:'P0001'});
+      const consumption=await c.query('SELECT id,quantity FROM production_consumptions WHERE production_order_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[b.productionOrderId,b.itemId,b.lotNo]);
+      if(!consumption.rowCount)throw Object.assign(new Error('الخامة والتشغيلة غير موجودتين ضمن إذن الصرف لهذا الأمر'),{code:'P0001'});
+      const recorded=await c.query('SELECT COALESCE(SUM(quantity),0) quantity FROM production_process_losses WHERE production_order_id=$1 AND item_id=$2 AND lot_no=$3',[b.productionOrderId,b.itemId,b.lotNo]);
+      if(Number(recorded.rows[0].quantity)+Number(b.quantity)>Number(consumption.rows[0].quantity)+0.000001)throw Object.assign(new Error('إجمالي هالك الخامة يتجاوز الكمية المصروفة من التشغيلة'),{code:'P0001'});
+      const created=await c.query('INSERT INTO production_process_losses(production_order_id,item_id,lot_no,quantity,reason,created_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[b.productionOrderId,b.itemId,b.lotNo,b.quantity,b.reason.trim(),req.authUser.user_id]);
+      return {...created.rows[0],status:'PENDING_APPROVAL'};
+    });return reply.code(201).send(result);}catch(e){return failure(reply,e);}
+  });
+  app.post('/api/v1/production/process-losses/:id/approve', auth(app,'PRODUCTION.PROCESS_LOSSES.APPROVE'), async(req,reply)=>{
+    try{const result=await transaction(db,async c=>{
+      const loss=await c.query('SELECT * FROM production_process_losses WHERE id=$1 FOR UPDATE',[req.params.id]);
+      if(!loss.rowCount||loss.rows[0].status!=='PENDING_APPROVAL')throw Object.assign(new Error('طلب الهالك غير موجود أو سبق اعتماده'),{code:'P0001'});
+      const order=await c.query('SELECT status FROM production_orders WHERE id=$1 FOR UPDATE',[loss.rows[0].production_order_id]);
+      if(!order.rowCount||order.rows[0].status!=='RELEASED')throw Object.assign(new Error('لا يمكن اعتماد هالك التشغيل بعد إتمام أمر الإنتاج'),{code:'P0001'});
+      const updated=await c.query("UPDATE production_process_losses SET status='APPROVED',approved_by=$1,approved_at=NOW() WHERE id=$2 RETURNING *",[req.authUser.user_id,req.params.id]);
+      return {...updated.rows[0],status:'APPROVED',inventoryAdjusted:false,accountingPosted:false};
+    });return result;}catch(e){return failure(reply,e);}
   });
   app.get('/api/v1/production/losses', auth(app,'PRODUCTION.READ'), async(_req,reply)=>{
     try{return (await db.query(`SELECT l.*,p.order_no,fp.code product_code,fp.name_ar product_name,o.lot_no,

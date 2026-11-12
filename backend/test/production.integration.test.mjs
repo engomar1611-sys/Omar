@@ -80,6 +80,15 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(issue.json().lines.length,2);
     const duplicateIssue = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/issue',headers,payload:{issueQty:10}});
     assert.equal(duplicateIssue.statusCode,409,'a production order must not be issued twice');
+    const processLoss=await app.inject({method:'POST',url:'/api/v1/production/process-losses',headers,payload:{productionOrderId:orderId,itemId:raw.id,lotNo:'EARLY',quantity:0.5,reason:'فاقد أثناء الخلط — اختبار'}});
+    assert.equal(processLoss.statusCode,201,processLoss.body);
+    assert.equal(processLoss.json().status,'PENDING_APPROVAL');
+    const overRecordedLoss=await app.inject({method:'POST',url:'/api/v1/production/process-losses',headers,payload:{productionOrderId:orderId,itemId:raw.id,lotNo:'EARLY',quantity:2.6,reason:'تجاوز الكمية المصروفة'}});
+    assert.equal(overRecordedLoss.statusCode,409);
+    const processLossApproved=await app.inject({method:'POST',url:'/api/v1/production/process-losses/'+processLoss.json().id+'/approve',headers,payload:{}});
+    assert.equal(processLossApproved.statusCode,200,processLossApproved.body);
+    assert.equal(processLossApproved.json().status,'APPROVED');
+    assert.equal(processLossApproved.json().inventoryAdjusted,false,'already-issued raw material must not be deducted twice');
     const completed = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/complete',headers,payload:{actualQty:10,outputLotNo:code('LOT')}});
     assert.equal(completed.statusCode,200,completed.body);
 
@@ -109,6 +118,8 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(productionDetails.json().materialIssue.issue_no,issue.json().issueNo);
     assert.equal(Number(productionDetails.json().materialIssue.total_cost),64);
     assert.equal(productionDetails.json().consumptions.length,2);
+    assert.equal(productionDetails.json().processLosses.length,1);
+    assert.equal(productionDetails.json().processLosses[0].status,'APPROVED');
     assert.equal(Number(productionDetails.json().consumptions.reduce((s,x)=>s+Number(x.extended_cost),0)),64);
     assert.equal(productionDetails.json().output.lot_no,completed.json().outputLotNo || (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no);
     assert.equal(productionDetails.json().costComponents.length,5);
