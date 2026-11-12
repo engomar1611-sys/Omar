@@ -502,3 +502,18 @@ test('supplier statement requires supplier code and validates date filters', asy
     assert.equal(invalidDate.statusCode, 400);
   } finally { await app.close(); }
 });
+
+
+test('production scheduling routes require authentication and validate schedule input', async () => {
+ const db=makeDb(); db.passwordHash=await bcrypt.hash(PASSWORD,4);
+ const app=buildApp({logger:false,jwtSecret:'test-secret-with-at-least-32-characters',db});
+ try {
+  const unauth=await app.inject({method:'GET',url:'/api/v1/production/schedule'});
+  assert.equal(unauth.statusCode,401);
+  const login=await app.inject({method:'POST',url:'/api/v1/auth/login',payload:{username:'admin',password:PASSWORD}});
+  assert.equal(login.statusCode,200);
+  const headers={authorization:`Bearer ${login.json().accessToken}`};
+  const invalidSchedule=await app.inject({method:'POST',url:'/api/v1/production/schedule',headers,payload:{productionOrderId:'bad',workCenterId:'bad',startAt:'bad',endAt:'bad',plannedQty:0}});
+  assert.equal(invalidSchedule.statusCode,400);
+ } finally {await app.close();}
+});
