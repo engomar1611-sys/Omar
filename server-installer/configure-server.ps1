@@ -25,7 +25,10 @@ if (-not [int]::TryParse($portText, [ref]$port) -or $port -lt 1 -or $port -gt 65
   throw 'المنفذ يجب أن يكون رقماً من 1 إلى 65535.'
 }
 
-$secret = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(48)).ToLowerInvariant()
+$randomBytes = New-Object byte[] 48
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+try { $rng.GetBytes($randomBytes) } finally { $rng.Dispose() }
+$secret = [BitConverter]::ToString($randomBytes).Replace('-', '').ToLowerInvariant()
 $escapedDb = $db.Replace('"', '\"')
 $envContent = @"
 NODE_ENV=production
