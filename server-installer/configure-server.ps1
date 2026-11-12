@@ -13,6 +13,12 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 if (-not (Test-Path $node) -or -not (Test-Path $service) -or -not (Test-Path (Join-Path $backend 'node_modules'))) {
   throw 'ملفات التثبيت غير مكتملة.'
 }
+$serviceExists = [bool](Get-Service -Name 'NewFeedERP' -ErrorAction SilentlyContinue)
+if ($serviceExists) {
+  Write-Host 'إيقاف خدمة النظام الحالية قبل التحديث...' -ForegroundColor Cyan
+  & $service stop
+  if ($LASTEXITCODE -ne 0) { throw 'تعذر إيقاف الخدمة الحالية.' }
+}
 
 Write-Host 'إعداد اتصال PostgreSQL 16' -ForegroundColor Cyan
 $db = Read-Host 'DATABASE_URL (postgresql://user:password@127.0.0.1:5432/newfeed_erp)'
@@ -82,14 +88,10 @@ try {
   Pop-Location
 }
 
-$existingService = Get-Service -Name 'NewFeedERP' -ErrorAction SilentlyContinue
-if ($existingService) {
-  & $service stop
-  & $service uninstall
-  if ($LASTEXITCODE -ne 0) { throw 'تعذر إزالة تسجيل الخدمة السابقة قبل التحديث.' }
+if (-not $serviceExists) {
+  & $service install
+  if ($LASTEXITCODE -ne 0) { throw 'فشل تسجيل خدمة Windows.' }
 }
-& $service install
-if ($LASTEXITCODE -ne 0) { throw 'فشل تسجيل خدمة Windows.' }
 & $service start
 if ($LASTEXITCODE -ne 0) { throw 'تعذر تشغيل خدمة Windows.' }
 
