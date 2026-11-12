@@ -49,3 +49,16 @@ jobs:
         run: npm test
       - name: Build Windows-testable API container
         run: docker build -t new-feed-erp-ci -f Dockerfile .
+      - name: Package Windows test bundle
+        working-directory: .
+        run: |
+          git archive --format=zip --output=NEW-FEED-ERP-Windows-Test.zip HEAD
+          sha256sum NEW-FEED-ERP-Windows-Test.zip > NEW-FEED-ERP-Windows-Test.zip.sha256
+      - name: Upload Windows test bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEW-FEED-ERP-Windows-Test
+          path: |
+            NEW-FEED-ERP-Windows-Test.zip
+            NEW-FEED-ERP-Windows-Test.zip.sha256
+          retention-days: 14
