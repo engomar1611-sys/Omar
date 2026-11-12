@@ -533,6 +533,93 @@ export async function commercialRoutes(app,{db}){
     AND ($1::date IS NULL OR invoice_date >= $1) AND ($2::date IS NULL OR invoice_date <= $2)
     GROUP BY invoice_date ORDER BY invoice_date DESC`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
  });
+
+ app.get('/api/v1/reports/customer-statement',auth(app,'REPORTS.READ'),async(req,rep)=>{
+  const customerCode=String(req.query?.customerCode??'').trim(),from=req.query?.from??null,to=req.query?.to??null;
+  if(!txt(customerCode,40))return bad(rep,'كود العميل مطلوب');
+  if((from&&!/^\d{4}-\d{2}-\d{2}$/.test(String(from)))||(to&&!/^\d{4}-\d{2}-\d{2}$/.test(String(to))))return bad(rep,'صيغة التاريخ يجب أن تكون YYYY-MM-DD');
+  if(from&&to&&String(from)>String(to))return bad(rep,'تاريخ البداية يجب ألا يتجاوز تاريخ النهاية');
+  const sql=`WITH transactions AS (
+    SELECT i.invoice_date transaction_date,'SALES_INVOICE' transaction_type,i.invoice_no document_no,
+      'فاتورة مبيعات' description,i.total_amount::numeric debit,0::numeric credit
+    FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+    WHERE c.code=$1 AND i.status IN ('POSTED','PARTIALLY_PAID','PAID')
+    UNION ALL
+    SELECT r.receipt_date,'CASH_RECEIPT',r.receipt_no,'سند قبض',0::numeric,SUM(a.amount)::numeric
+    FROM cash_receipts r JOIN receipt_allocations a ON a.receipt_id=r.id
+      JOIN sales_invoices i ON i.id=a.sales_invoice_id JOIN customers c ON c.id=i.customer_id
+    WHERE c.code=$1 AND r.status='POSTED'
+    GROUP BY r.id,r.receipt_date,r.receipt_no
+    UNION ALL
+    SELECT COALESCE(sr.accounting_approved_at::date,sr.created_at::date),'SALES_RETURN',sr.return_no,
+      'مرتجع مبيعات معتمد',0::numeric,SUM(rl.quantity*rl.unit_price)::numeric
+    FROM sales_returns sr JOIN sales_invoices i ON i.id=sr.sales_invoice_id
+      JOIN customers c ON c.id=i.customer_id JOIN sales_return_lines rl ON rl.sales_return_id=sr.id
+    WHERE c.code=$1 AND sr.status='APPROVED'
+    GROUP BY sr.id,sr.accounting_approved_at,sr.created_at,sr.return_no
+  ), opening AS (
+    SELECT COALESCE(SUM(debit-credit),0)::numeric balance FROM transactions
+    WHERE $2::date IS NOT NULL AND transaction_date<$2::date
+  ), period_rows AS (
+    SELECT * FROM transactions
+    WHERE ($2::date IS NULL OR transaction_date>=$2::date)
+      AND ($3::date IS NULL OR transaction_date<=$3::date)
+  ), running AS (
+    SELECT p.*,o.balance+SUM(p.debit-p.credit) OVER(
+      ORDER BY p.transaction_date,p.transaction_type,p.document_no
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) balance
+    FROM period_rows p CROSS JOIN opening o
+  ), closing AS (
+    SELECT o.balance+COALESCE(SUM(p.debit-p.credit),0)::numeric balance
+    FROM opening o LEFT JOIN period_rows p ON TRUE GROUP BY o.balance
+  )
+  SELECT * FROM (
+    SELECT 0 sort_order,NULL::date transaction_date,'OPENING'::text transaction_type,
+      '—'::text document_no,'رصيد افتتاحي'::text description,0::numeric debit,0::numeric credit,
+      o.balance FROM opening o
+    UNION ALL
+    SELECT 1,r.transaction_date,r.transaction_type,r.document_no,r.description,r.debit,r.credit,r.balance
+    FROM running r
+    UNION ALL
+    SELECT 2,NULL::date,'CLOSING'::text,'—'::text,'رصيد ختامي'::text,0::numeric,0::numeric,c.balance
+    FROM closing c
+  ) statement_rows
+  ORDER BY sort_order,transaction_date NULLS FIRST,document_no`;
+  try{return (await db.query(sql,[customerCode,from,to])).rows;}
+  catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/reports/customer-aging',auth(app,'REPORTS.READ'),async(req,rep)=>{
+  const asOf=req.query?.asOf??new Date().toISOString().slice(0,10),customerCode=String(req.query?.customerCode??'').trim()||null;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(asOf)))return bad(rep,'صيغة التاريخ يجب أن تكون YYYY-MM-DD');
+  if(customerCode&&!txt(customerCode,40))return bad(rep,'كود العميل غير صحيح');
+  try{return (await db.query(`WITH paid AS (
+    SELECT a.sales_invoice_id,SUM(a.amount)::numeric paid_amount
+    FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id
+    WHERE r.status='POSTED' GROUP BY a.sales_invoice_id
+  ), returned AS (
+    SELECT sr.sales_invoice_id,SUM(rl.quantity*rl.unit_price)::numeric returned_amount
+    FROM sales_returns sr JOIN sales_return_lines rl ON rl.sales_return_id=sr.id
+    WHERE sr.status='APPROVED' GROUP BY sr.sales_invoice_id
+  ), balances AS (
+    SELECT i.id invoice_id,i.invoice_no,i.invoice_date,c.code customer_code,c.name_ar customer_name,
+      i.total_amount::numeric invoice_amount,COALESCE(p.paid_amount,0)::numeric paid_amount,
+      COALESCE(r.returned_amount,0)::numeric returned_amount,
+      GREATEST(0::numeric,i.total_amount-COALESCE(p.paid_amount,0)-COALESCE(r.returned_amount,0)) outstanding,
+      GREATEST(0,($1::date-i.invoice_date))::int age_days
+    FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+    LEFT JOIN paid p ON p.sales_invoice_id=i.id LEFT JOIN returned r ON r.sales_invoice_id=i.id
+    WHERE i.status IN ('POSTED','PARTIALLY_PAID','PAID') AND i.invoice_date<=$1::date
+      AND ($2::text IS NULL OR c.code=$2::text)
+  )
+  SELECT invoice_id,invoice_no,invoice_date,customer_code,customer_name,invoice_amount,paid_amount,
+    returned_amount,outstanding,age_days,
+    CASE WHEN age_days<=30 THEN '0-30' WHEN age_days<=60 THEN '31-60'
+      WHEN age_days<=90 THEN '61-90' ELSE 'أكثر من 90' END aging_bucket
+  FROM balances WHERE outstanding>0.000001
+  ORDER BY customer_code,invoice_date,invoice_no`,[asOf,customerCode])).rows;}
+  catch(e){return fail(rep,e);}
+ });
+
  app.get('/api/v1/accounting/journals',auth(app,'ACCOUNTING.READ'),async(_q,rep)=>{
   try{return (await db.query(`SELECT j.*,COALESCE(json_agg(json_build_object('accountCode',a.code,'accountName',a.name_ar,'debit',l.debit,'credit',l.credit)) FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
    FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_entry_id=j.id LEFT JOIN gl_accounts a ON a.id=l.account_id GROUP BY j.id ORDER BY j.entry_date DESC,j.entry_no DESC`)).rows;}catch(e){return fail(rep,e);}
