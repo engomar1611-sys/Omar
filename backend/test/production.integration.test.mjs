@@ -161,6 +161,25 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(detailsAfterLoss.json().losses.length,1);
     assert.equal(detailsAfterLoss.json().losses[0].entry_no,'J-LOSS-'+productionLoss.json().id.slice(0,12));
 
+    const secondOrder=await app.inject({method:'POST',url:'/api/v1/production/orders',headers,payload:{orderNo:code('POREV'),feedProductId:product.id,formulationId,warehouseId:warehouse.id,plannedQty:5}});
+    assert.equal(secondOrder.statusCode,201,secondOrder.body);
+    const secondOrderId=secondOrder.json().id;
+    const secondRelease=await app.inject({method:'POST',url:'/api/v1/production/orders/'+secondOrderId+'/release',headers,payload:{}});
+    assert.equal(secondRelease.statusCode,200,secondRelease.body);
+    const secondIssue=await app.inject({method:'POST',url:'/api/v1/production/orders/'+secondOrderId+'/issue',headers,payload:{issueQty:5}});
+    assert.equal(secondIssue.statusCode,201,secondIssue.body);
+    const reverse=await app.inject({method:'POST',url:'/api/v1/production/material-issues/'+secondIssue.json().id+'/reverse',headers,payload:{reason:'إلغاء التشغيل قبل البدء — اختبار'}});
+    assert.equal(reverse.statusCode,200,reverse.body);
+    assert.equal(reverse.json().status,'REVERSED');
+    assert.equal(reverse.json().productionOrderStatus,'CANCELLED');
+    assert.equal(Number(reverse.json().restoredQuantity),5);
+    const duplicateReverse=await app.inject({method:'POST',url:'/api/v1/production/material-issues/'+secondIssue.json().id+'/reverse',headers,payload:{reason:'محاولة عكس مكرر'}});
+    assert.equal(duplicateReverse.statusCode,409);
+    const reversedIssue=await pool.query('SELECT status,reversal_reason FROM production_material_issues WHERE id=$1',[secondIssue.json().id]);
+    assert.equal(reversedIssue.rows[0].status,'REVERSED');
+    assert.equal(reversedIssue.rows[0].reversal_reason,'إلغاء التشغيل قبل البدء — اختبار');
+    const restoredRaw=await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,raw.id,'LATE']);
+    assert.equal(Number(restoredRaw.rows[0].quantity),13,'reversing an issue restores the exact lot quantity');
     const customer = await app.inject({method:'POST',url:'/api/v1/customers',headers,payload:{code:code('CUS'),nameAr:'عميل اختبار تكامل',creditLimit:0}});
     assert.equal(customer.statusCode,201,customer.body);
     const invoice = await app.inject({method:'POST',url:'/api/v1/sales/invoices',headers,payload:{
