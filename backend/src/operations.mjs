@@ -1,3 +1,23 @@
+export function calculateMaterialVariance(rows) {
+  return rows.map((row) => {
+    const expectedQuantity = Number(row.expected_quantity ?? 0);
+    const actualQuantity = Number(row.actual_quantity ?? 0);
+    const varianceQuantity = actualQuantity - expectedQuantity;
+    const actualCost = Number(row.actual_cost ?? 0);
+    const actualUnitCost = actualQuantity > 0 ? actualCost / actualQuantity : 0;
+    return {
+      ...row,
+      expectedQuantity,
+      actualQuantity,
+      varianceQuantity,
+      variancePercent: expectedQuantity > 0 ? (varianceQuantity / expectedQuantity) * 100 : 0,
+      actualCost,
+      expectedCostAtActualUnitCost: expectedQuantity * actualUnitCost,
+      costVarianceAtActualUnitCost: actualCost - (expectedQuantity * actualUnitCost)
+    };
+  });
+}
+
 function auth(app, permission) {
   return { preHandler: [app.authenticate, app.requirePermission(permission)] };
 }
@@ -302,6 +322,50 @@ export async function operationsRoutes(app, { db }) {
       ]);
       return {order:order.rows[0],consumptions:consumptions.rows,output:output.rows[0]??null,
         costComponents:components.rows,journalEntries:journals.rows,losses:losses.rows};
+    }catch(e){return failure(reply,e);}
+  });
+
+  app.get('/api/v1/reports/production-material-variance', auth(app,'PRODUCTION.READ'), async(req,reply)=>{
+    const {from,to,productionOrderId}=req.query??{};
+    const validDate=value=>!value||(/^\\d{4}-\\d{2}-\\d{2}$/.test(value)&&!Number.isNaN(Date.parse(value+'T00:00:00Z')));
+    if(!validDate(from)||!validDate(to)||(from&&to&&from>to))
+      return invalid(reply,'أدخل نطاق تاريخ صحيحاً');
+    try{
+      const result=await db.query(`WITH actual AS (
+        SELECT production_order_id,item_id,SUM(quantity) actual_quantity,SUM(extended_cost) actual_cost
+        FROM production_consumptions GROUP BY production_order_id,item_id
+      )
+      SELECT p.id production_order_id,p.order_no,p.completed_at::date completed_date,
+        fp.code product_code,fp.name_ar product_name,p.actual_qty,
+        i.id item_id,i.code item_code,i.name_ar item_name,u.code unit_code,u.name_ar unit_name,
+        l.percentage,
+        (p.actual_qty*l.percentage/100.0) expected_quantity,
+        COALESCE(a.actual_quantity,0) actual_quantity,
+        COALESCE(a.actual_cost,0) actual_cost,
+        CASE WHEN COALESCE(a.actual_quantity,0)>0
+          THEN COALESCE(a.actual_cost,0)/a.actual_quantity ELSE 0 END actual_unit_cost
+      FROM production_orders p
+      JOIN feed_products fp ON fp.id=p.feed_product_id
+      JOIN formulation_lines l ON l.formulation_id=p.formulation_id
+      JOIN items i ON i.id=l.item_id
+      JOIN units_of_measure u ON u.id=i.base_unit_id
+      LEFT JOIN actual a ON a.production_order_id=p.id AND a.item_id=l.item_id
+      WHERE p.status='COMPLETED'
+        AND ($1::date IS NULL OR p.completed_at::date >= $1::date)
+        AND ($2::date IS NULL OR p.completed_at::date <= $2::date)
+        AND ($3::uuid IS NULL OR p.id=$3::uuid)
+      ORDER BY p.completed_at DESC,p.order_no,i.code`,[from??null,to??null,productionOrderId??null]);
+      const lines=calculateMaterialVariance(result.rows);
+      const totals=lines.reduce((sum,line)=>{
+        sum.expectedQuantity+=line.expectedQuantity;
+        sum.actualQuantity+=line.actualQuantity;
+        sum.varianceQuantity+=line.varianceQuantity;
+        sum.actualCost+=line.actualCost;
+        sum.expectedCostAtActualUnitCost+=line.expectedCostAtActualUnitCost;
+        sum.costVarianceAtActualUnitCost+=line.costVarianceAtActualUnitCost;
+        return sum;
+      },{expectedQuantity:0,actualQuantity:0,varianceQuantity:0,actualCost:0,expectedCostAtActualUnitCost:0,costVarianceAtActualUnitCost:0});
+      return {filters:{from:from??null,to:to??null,productionOrderId:productionOrderId??null},count:lines.length,totals,lines};
     }catch(e){return failure(reply,e);}
   });
 
