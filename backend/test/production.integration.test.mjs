@@ -74,6 +74,17 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
       components:[{componentCode:'LABOR',description:'أجور اختبار',amount:10}]
     }});
     assert.equal(duplicateCosts.statusCode,409);
+    const productionDetails = await app.inject({method:'GET',url:'/api/v1/production/orders/'+orderId+'/details',headers});
+    assert.equal(productionDetails.statusCode,200,productionDetails.body);
+    assert.equal(productionDetails.json().order.id,orderId);
+    assert.equal(productionDetails.json().consumptions.length,2);
+    assert.equal(Number(productionDetails.json().consumptions.reduce((s,x)=>s+Number(x.extended_cost),0)),60);
+    assert.equal(productionDetails.json().output.lot_no,completed.json().outputLotNo || (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no);
+    assert.equal(productionDetails.json().costComponents.length,5);
+    assert.equal(productionDetails.json().journalEntries.length,1);
+    assert.equal(productionDetails.json().journalEntries[0].lines.length,5);
+    assert.equal(Number(productionDetails.json().journalEntries[0].total_debit),20);
+
     const failed = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/quality',headers,payload:{result:'FAIL',notes:'فشل اختبار'}});
     assert.equal(failed.statusCode,200,failed.body);
     assert.equal(failed.json().availableForSale,false);
