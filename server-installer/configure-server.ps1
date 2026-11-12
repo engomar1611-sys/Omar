@@ -82,6 +82,12 @@ try {
   Pop-Location
 }
 
+$existingService = Get-Service -Name 'NewFeedERP' -ErrorAction SilentlyContinue
+if ($existingService) {
+  & $service stop
+  & $service uninstall
+  if ($LASTEXITCODE -ne 0) { throw 'تعذر إزالة تسجيل الخدمة السابقة قبل التحديث.' }
+}
 & $service install
 if ($LASTEXITCODE -ne 0) { throw 'فشل تسجيل خدمة Windows.' }
 & $service start
