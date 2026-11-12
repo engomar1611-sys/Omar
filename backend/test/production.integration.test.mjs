@@ -33,6 +33,11 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     await pool.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,expiry_date,quantity,average_unit_cost,quality_status)
       VALUES($1,$2,'EARLY',$3,3,5,'RELEASED'),($1,$2,'LATE',$4,20,7,'RELEASED')`,
       [warehouse.id,raw.id,'2026-12-01','2027-01-01']);
+    const expiryAlerts=await app.inject({method:'GET',url:'/api/v1/reports/expiry-alerts?days=60',headers});
+    assert.equal(expiryAlerts.statusCode,200,expiryAlerts.body);
+    assert.ok(expiryAlerts.json().some(x=>x.lot_no==='EARLY'&&x.item_id===raw.id));
+    const invalidExpiryWindow=await app.inject({method:'GET',url:'/api/v1/reports/expiry-alerts?days=9999',headers});
+    assert.equal(invalidExpiryWindow.statusCode,400);
 
     const adjustment = await app.inject({method:'POST',url:'/api/v1/inventory/adjustments',headers,payload:{
       adjustmentNo:code('ADJ'),warehouseId:warehouse.id,reason:'مطابقة جرد اختبار',
