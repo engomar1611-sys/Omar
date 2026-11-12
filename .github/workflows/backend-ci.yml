@@ -47,3 +47,5 @@ jobs:
         run: npm run bootstrap:admin
       - name: Run unit and PostgreSQL integration tests
         run: npm test
+      - name: Build Windows-testable API container
+        run: docker build -t new-feed-erp-ci -f Dockerfile .

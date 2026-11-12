@@ -31,9 +31,11 @@
 - `docs/DATA_MODEL.md`: نموذج البيانات الأولي.
 - `docs/TEST_PLAN.md`: خطة الاختبارات ومعايير القبول.
 
-## حالة المشروع
+## حالة المشروع الحالية
 
-المستودع يحتوي حالياً على أساس API للمصادقة والبيانات الأساسية، ونواة APIs للموردين والمشتريات والاستلام وفحص الجودة والمخزون وأوامر الإنتاج. هذه ليست نسخة ERP مكتملة؛ واجهات المستخدم، التكامل المحاسبي، الهالك، الإفراج النهائي للجودة، واختبارات دورة التشغيل الكاملة ما زالت ضمن المراحل التالية.
+يوجد Backend وواجهة Web عربية تغطي المشتريات والاستلام والجودة والمخزون والتركيبات والإنتاج والهالك والمبيعات والتسليم والتحصيل والمرتجعات والحسابات والتقارير والموارد البشرية والصيانة والإعدادات. توجد اختبارات Node.js وتكامل PostgreSQL 16 في GitHub Actions.
+
+**حدود النسخة:** هذه ليست بعد نسخة إنتاج نهائية، ولا يوجد حالياً مثبت Windows مستقل EXE/MSI أو HTTPS إنتاجي أو تحديثات موقعة أو إثبات اختبار الطابعات والأجهزة الفعلية. توجد حزمة تشغيل واختبار Web/API على Windows عبر Docker في `docs/TEST_DEPLOYMENT.md`. راجع `docs/IMPLEMENTATION_STATUS.md` لقائمة المنفذ والمتبقي.
 
 
 ## تشغيل API لأول مرة (بيئة تطوير)
@@ -120,3 +122,13 @@
 - Prepare, mark ready, dispatch with driver/vehicle details, and confirm full or partial customer receipt.
 - Prevent delivery planning beyond the invoice line quantity; cancelled pre-dispatch deliveries release their reserved quantities.
 - API routes: `/api/v1/sales/deliveries`, `/:id/ready`, `/:id/dispatch`, `/:id/confirm-delivery`, and `/:id/cancel`.
+
+
+## تشغيل نسخة الاختبار على Windows
+
+راجع `docs/TEST_DEPLOYMENT.md` ثم شغّل PowerShell:
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\start-test.ps1
+```
+تستخدم الحزمة Docker Compose لتشغيل PostgreSQL 16 وواجهة Web/API، وتدعم النسخ الاحتياطي والاستعادة. لا تستخدمها على بيانات إنتاج.
