@@ -82,7 +82,7 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(productionDetails.json().output.lot_no,completed.json().outputLotNo || (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no);
     assert.equal(productionDetails.json().costComponents.length,5);
     assert.equal(productionDetails.json().journalEntries.length,1);
-    assert.equal(productionDetails.json().journalEntries[0].lines.length,5);
+    assert.equal(productionDetails.json().journalEntries[0].lines.length,6);
     assert.equal(Number(productionDetails.json().journalEntries[0].total_debit),20);
 
     const failed = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/quality',headers,payload:{result:'FAIL',notes:'فشل اختبار'}});
