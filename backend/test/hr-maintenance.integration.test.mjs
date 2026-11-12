@@ -22,6 +22,10 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
    employeeNo:code('EMP'),fullNameAr:'موظف اختبار الرواتب',hireDate:'2026-01-01',basicSalary:1000,departmentId:department.json().id
   }});
   assert.equal(employee.statusCode,201,employee.body);
+  const employeeUpdate=await app.inject({method:'PUT',url:'/api/v1/hr/employees/'+employee.json().id,headers,payload:{employeeNo:employee.json().employee_no,fullNameAr:'موظف اختبار الرواتب بعد التعديل',hireDate:'2026-01-01',basicSalary:1200,departmentId:department.json().id,employmentType:'FULL_TIME',phone:'01000000000',bankName:'بنك الاختبار',address:'عنوان الاختبار'}});
+  assert.equal(employeeUpdate.statusCode,200,employeeUpdate.body);
+  assert.equal(employeeUpdate.json().full_name_ar,'موظف اختبار الرواتب بعد التعديل');
+  assert.equal(Number(employeeUpdate.json().basic_salary),1200);
   const employee2=await app.inject({method:'POST',url:'/api/v1/hr/employees',headers,payload:{
    employeeNo:code('EMP2'),fullNameAr:'موظف اختبار سلفة ثانٍ',hireDate:'2026-01-01',basicSalary:2000,departmentId:department.json().id
   }});
@@ -63,7 +67,7 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
   assert.equal(period.statusCode,201,period.body);
   const calc=await app.inject({method:'POST',url:'/api/v1/hr/payroll-periods/'+period.json().id+'/calculate',headers,payload:{}});
   assert.equal(calc.statusCode,200,calc.body);
-  assert.equal(Number(calc.json().totalNet),2700);
+  assert.equal(Number(calc.json().totalNet),2900);
   const approved=await app.inject({method:'POST',url:'/api/v1/hr/payroll-runs/'+calc.json().runId+'/approve',headers,payload:{}});
   assert.equal(approved.statusCode,200,approved.body);
   const posted=await app.inject({method:'POST',url:'/api/v1/hr/payroll-runs/'+calc.json().runId+'/post',headers,payload:{}});
@@ -92,7 +96,7 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
   assert.equal((await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders/'+wo.json().id+'/start',headers,payload:{}})).statusCode,200);
   const workOrders=await app.inject({method:'GET',url:'/api/v1/maintenance/work-orders',headers});
   assert.equal(workOrders.statusCode,200,workOrders.body);
-  assert.equal(workOrders.json().find(x=>x.id===wo.json().id).assigned_employee,'موظف اختبار الرواتب');
+  assert.equal(workOrders.json().find(x=>x.id===wo.json().id).assigned_employee,'موظف اختبار الرواتب بعد التعديل');
   const downtime=await app.inject({method:'POST',url:'/api/v1/maintenance/work-orders/'+wo.json().id+'/downtime',headers,payload:{startedAt:'2026-01-05T09:00:00Z',endedAt:'2026-01-05T10:30:00Z',reason:'انتظار قطعة غيار'}});
   assert.equal(downtime.statusCode,201,downtime.body);
   const downtimeList=await app.inject({method:'GET',url:'/api/v1/maintenance/downtime',headers});
