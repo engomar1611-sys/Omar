@@ -50,6 +50,11 @@ test('HR, payroll posting, maintenance lifecycle and company settings', { skip: 
   assert.equal((await app.inject({method:'POST',url:'/api/v1/hr/advances/'+advance2.json().id+'/approve',headers,payload:{}})).statusCode,200);
   const shift=await app.inject({method:'POST',url:'/api/v1/hr/shifts',headers,payload:{code:code('SH'),nameAr:'وردية صباحية',startTime:'08:00',endTime:'16:00',graceMinutes:10}});
   assert.equal(shift.statusCode,201,shift.body);
+  const assignment=await app.inject({method:'POST',url:'/api/v1/hr/shift-assignments',headers,payload:{employeeId:employee.json().id,shiftId:shift.json().id,effectiveFrom:'2026-01-01'}});
+  assert.equal(assignment.statusCode,201,assignment.body);
+  const assignments=await app.inject({method:'GET',url:'/api/v1/hr/shift-assignments',headers});
+  assert.equal(assignments.statusCode,200,assignments.body);
+  assert.ok(assignments.json().some(x=>x.id===assignment.json().id&&x.shift_code===shift.json().code));
   const attendance=await app.inject({method:'POST',url:'/api/v1/hr/attendance',headers,payload:{employeeId:employee.json().id,workDate:'2026-01-05',status:'PRESENT',overtimeMinutes:0}});
   assert.equal(attendance.statusCode,201,attendance.body);
   assert.equal((await app.inject({method:'POST',url:'/api/v1/hr/attendance/'+attendance.json().id+'/approve',headers,payload:{}})).statusCode,200);
