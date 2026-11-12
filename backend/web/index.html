@@ -185,10 +185,22 @@ async function maintenanceLoad(kind){
  if(kind==='plans'&&can('MAINTENANCE.MANAGE')&&x.is_active&&String(x.next_due_date).slice(0,10)<=new Date().toISOString().slice(0,10)){const b=document.createElement('button');b.className='btn';b.textContent='إنشاء أمر الصيانة المستحق';b.onclick=async()=>{try{await apiPost('/api/v1/maintenance/plans/'+x.id+'/generate-work-order',{});maintenanceLoad(kind)}catch(e){alert(e.message)}};a.append(b)}
  if(kind==='work-orders'&&x.status==='OPEN'&&can('MAINTENANCE.MANAGE')){const b=document.createElement('button');b.className='btn secondary';b.textContent='بدء العمل';b.onclick=async()=>{try{await apiPost('/api/v1/maintenance/work-orders/'+x.id+'/start',{});maintenanceLoad(kind)}catch(e){alert(e.message)}};a.append(b)}
  if(kind==='work-orders'&&x.status==='IN_PROGRESS'&&can('MAINTENANCE.MANAGE')){const complete=document.createElement('button');complete.className='btn';complete.textContent='تسجيل إتمام العمل';complete.onclick=()=>maintenanceCompleteForm(x.id);a.append(complete);const parts=document.createElement('button');parts.className='btn secondary';parts.textContent='صرف قطع غيار';parts.onclick=()=>maintenancePartsForm(x.id);a.append(parts);const down=document.createElement('button');down.className='btn secondary';down.textContent='تسجيل توقف';down.onclick=()=>maintenanceDowntimeForm(x.id);a.append(down)}
+ if(kind==='work-orders'&&['COMPLETED','APPROVED'].includes(x.status)&&can('MAINTENANCE.READ')){const costs=document.createElement('button');costs.className='btn secondary';costs.textContent='تفاصيل التكلفة والقيد';costs.onclick=()=>maintenanceCostDetails(x.id);a.append(costs)}
  if(kind==='work-orders'&&x.status==='COMPLETED'&&can('MAINTENANCE.APPROVE')){const b=document.createElement('button');b.className='btn';b.textContent='اعتماد الإغلاق';b.onclick=async()=>{try{await apiPost('/api/v1/maintenance/work-orders/'+x.id+'/approve',{});maintenanceLoad(kind)}catch(e){alert(e.message)}};a.append(b)}
  $('#mRows').append(d)});
  if($('#mAdd'))$('#mAdd').onclick=()=>maintenanceForm(kind)
  }catch(e){host.innerHTML='<div class="notice">'+escapeHtml(e.message)+'</div>'}
+}
+async function maintenanceCostDetails(id){
+ const host=$('#mData');host.innerHTML='<div class="empty">جارٍ تحميل تفاصيل التكلفة والقيد...</div>';
+ try{
+  const d=await api('/api/v1/maintenance/work-orders/'+id+'/costs');
+  const money=v=>Number(v||0).toLocaleString('ar-EG',{minimumFractionDigits:2,maximumFractionDigits:2})+' جنيه';
+  const parts=(d.parts||[]).map(p=>'<tr><td>'+escapeHtml(p.item_code+' - '+p.item_name)+'</td><td>'+escapeHtml(p.lot_no||'—')+'</td><td>'+escapeHtml(p.quantity)+'</td><td>'+money(p.unit_cost)+'</td><td>'+money(p.total_cost)+'</td></tr>').join('');
+  const lines=(d.journal||[]).map(j=>'<tr><td>'+escapeHtml(j.account_code+' - '+j.account_name)+'</td><td>'+money(j.debit)+'</td><td>'+money(j.credit)+'</td></tr>').join('');
+  host.innerHTML='<div class="panel"><div class="toolbar"><h2>تفاصيل تكلفة أمر الصيانة '+escapeHtml(d.work_order.work_order_no)+'</h2><button class="btn secondary" id="mCostBack">عودة</button></div><div class="cards"><div class="card"><small>قطع الغيار</small><div class="metric">'+money(d.parts_cost)+'</div></div><div class="card"><small>العمالة</small><div class="metric">'+money(d.labor_cost)+'</div></div><div class="card"><small>مصروفات أخرى</small><div class="metric">'+money(d.other_cost)+'</div></div><div class="card"><small>الإجمالي</small><div class="metric">'+money(d.total_cost)+'</div></div></div><h3>قطع الغيار المصروفة</h3><div class="table-wrap"><table><thead><tr><th>الصنف</th><th>التشغيلة</th><th>الكمية</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr></thead><tbody>'+parts+'</tbody></table></div><h3>القيد المحاسبي المرتبط</h3><div class="table-wrap"><table><thead><tr><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead><tbody>'+lines+'</tbody></table></div><p class="muted">القيد '+(d.journal?.length?'موجود ومرتبط بأمر الصيانة':'لم يتم ترحيله بعد')+'</p></div>';
+  $('#mCostBack').onclick=()=>maintenanceLoad('work-orders');
+ }catch(e){host.innerHTML='<div class="notice">'+escapeHtml(e.message)+'<button class="btn secondary" id="mCostBack">عودة</button></div>';$('#mCostBack').onclick=()=>maintenanceLoad('work-orders')}
 }
 async function maintenanceCompleteForm(id){
  const host=$('#mData');
