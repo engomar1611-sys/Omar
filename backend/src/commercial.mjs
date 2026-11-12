@@ -476,6 +476,20 @@ export async function commercialRoutes(app,{db}){
     COALESCE((SELECT SUM(l.quantity) FROM production_losses l WHERE l.production_order_id=p.id),0) recorded_loss_qty
     FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id ORDER BY p.created_at DESC`)).rows;}catch(e){return fail(rep,e);}
  });
+ app.get('/api/v1/reports/production-losses',auth(app,'REPORTS.READ'),async(req,rep)=>{
+  try{return (await db.query(`SELECT l.id,p.order_no,fp.code product_code,fp.name_ar product_name,
+    o.lot_no,l.loss_type,l.quantity,o.unit_cost,l.quantity*o.unit_cost estimated_loss_value,
+    CASE WHEN l.approved_by IS NULL THEN 'PENDING_APPROVAL' ELSE 'POSTED' END status,
+    l.reason,l.created_at,l.approved_at,j.entry_no,j.total_debit posted_loss_value,
+    creator.display_name created_by_name,approver.display_name approved_by_name
+    FROM production_losses l JOIN production_orders p ON p.id=l.production_order_id
+    JOIN feed_products fp ON fp.id=p.feed_product_id JOIN production_outputs o ON o.production_order_id=p.id
+    LEFT JOIN journal_entries j ON j.id=l.journal_entry_id
+    LEFT JOIN users creator ON creator.id=l.created_by LEFT JOIN users approver ON approver.id=l.approved_by
+    WHERE ($1::date IS NULL OR l.created_at::date >= $1) AND ($2::date IS NULL OR l.created_at::date <= $2)
+    ORDER BY l.created_at DESC`,[req.query?.from??null,req.query?.to??null])).rows;}
+  catch(e){return fail(rep,e);}
+ });
  app.get('/api/v1/reports/sales-summary',auth(app,'REPORTS.READ'),async(req,rep)=>{
   try{return (await db.query(`SELECT invoice_date,COUNT(*)::int invoice_count,SUM(subtotal) subtotal,SUM(discount_amount) discounts,
     SUM(total_amount) net_sales,SUM(cost_amount) cost_of_sales,SUM(total_amount-cost_amount) gross_margin

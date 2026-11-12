@@ -204,7 +204,7 @@ export async function operationsRoutes(app, { db }) {
         JOIN formulations f ON f.id=p.formulation_id JOIN warehouses w ON w.id=p.warehouse_id
         WHERE p.id=$1`,[req.params.id]);
       if(!order.rowCount)return reply.code(404).send({error:'NOT_FOUND'});
-      const [consumptions,output,components,journals]=await Promise.all([
+      const [consumptions,output,components,journals,losses]=await Promise.all([
         db.query(`SELECT pc.item_id,i.code item_code,i.name_ar item_name,pc.lot_no,pc.quantity,
           pc.average_unit_cost,pc.extended_cost
           FROM production_consumptions pc JOIN items i ON i.id=pc.item_id
@@ -224,10 +224,16 @@ export async function operationsRoutes(app, { db }) {
           FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_entry_id=j.id
           LEFT JOIN gl_accounts a ON a.id=l.account_id
           WHERE j.source_id=$1 AND j.source_type='PRODUCTION_COST'
-          GROUP BY j.id ORDER BY j.created_at`,[req.params.id])
+          GROUP BY j.id ORDER BY j.created_at`,[req.params.id]),
+        db.query(`SELECT l.id,l.loss_type,l.quantity,l.reason,l.created_at,l.approved_at,l.journal_entry_id,
+          CASE WHEN l.approved_by IS NULL THEN 'PENDING_APPROVAL' ELSE 'POSTED' END status,
+          j.entry_no,j.total_debit loss_value,creator.display_name created_by_name,approver.display_name approved_by_name
+          FROM production_losses l LEFT JOIN journal_entries j ON j.id=l.journal_entry_id
+          LEFT JOIN users creator ON creator.id=l.created_by LEFT JOIN users approver ON approver.id=l.approved_by
+          WHERE l.production_order_id=$1 ORDER BY l.created_at DESC`,[req.params.id])
       ]);
       return {order:order.rows[0],consumptions:consumptions.rows,output:output.rows[0]??null,
-        costComponents:components.rows,journalEntries:journals.rows};
+        costComponents:components.rows,journalEntries:journals.rows,losses:losses.rows};
     }catch(e){return failure(reply,e);}
   });
 

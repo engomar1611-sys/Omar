@@ -137,6 +137,16 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(lossJournal.rowCount,1);
     assert.equal(Number(lossJournal.rows[0].total_debit),8.4);
     assert.equal(Number(lossJournal.rows[0].total_credit),8.4);
+    const lossReport=await app.inject({method:'GET',url:'/api/v1/reports/production-losses',headers});
+    assert.equal(lossReport.statusCode,200,lossReport.body);
+    const lossReportRow=lossReport.json().find(x=>x.id===productionLoss.json().id);
+    assert.ok(lossReportRow);
+    assert.equal(lossReportRow.status,'POSTED');
+    assert.equal(Number(lossReportRow.posted_loss_value),8.4);
+    const detailsAfterLoss=await app.inject({method:'GET',url:'/api/v1/production/orders/'+orderId+'/details',headers});
+    assert.equal(detailsAfterLoss.statusCode,200,detailsAfterLoss.body);
+    assert.equal(detailsAfterLoss.json().losses.length,1);
+    assert.equal(detailsAfterLoss.json().losses[0].entry_no,'J-LOSS-'+productionLoss.json().id.slice(0,12));
 
     const customer = await app.inject({method:'POST',url:'/api/v1/customers',headers,payload:{code:code('CUS'),nameAr:'عميل اختبار تكامل',creditLimit:0}});
     assert.equal(customer.statusCode,201,customer.body);
