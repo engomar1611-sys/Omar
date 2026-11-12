@@ -400,6 +400,43 @@ export async function operationsRoutes(app, { db }) {
     }catch(e){return failure(reply,e);}
   });
 
+  app.get('/api/v1/reports/production-yield', auth(app,'PRODUCTION.READ'), async(req,reply)=>{
+    const {from,to,productionOrderId}=req.query??{};
+    const validDate=value=>!value||(/^\d{4}-\d{2}-\d{2}$/.test(value)&&!Number.isNaN(Date.parse(value+'T00:00:00Z')));
+    if(!validDate(from)||!validDate(to)||(from&&to&&from>to))return invalid(reply,'أدخل نطاق تاريخ صحيحاً');
+    try{
+      const result=await db.query(`WITH consumed AS (
+        SELECT pc.production_order_id,SUM(pc.quantity) input_quantity,SUM(pc.extended_cost) material_cost
+        FROM production_consumptions pc
+        WHERE NOT EXISTS(SELECT 1 FROM production_material_issues mi WHERE mi.production_order_id=pc.production_order_id AND mi.status='REVERSED')
+        GROUP BY pc.production_order_id
+      ), output AS (
+        SELECT po.production_order_id,SUM(po.quantity) output_quantity,SUM(po.total_cost) output_cost FROM production_outputs po GROUP BY po.production_order_id
+      ), finished_losses AS (
+        SELECT production_order_id,SUM(quantity) approved_finished_loss FROM production_losses WHERE approved_by IS NOT NULL GROUP BY production_order_id
+      )
+      SELECT p.id production_order_id,p.order_no,p.completed_at::date completed_date,fp.code product_code,fp.name_ar product_name,
+        p.planned_qty,p.actual_qty,COALESCE(c.input_quantity,0) input_quantity,COALESCE(o.output_quantity,0) output_quantity,
+        COALESCE(c.input_quantity,0)-COALESCE(o.output_quantity,0) mass_balance_difference,
+        CASE WHEN COALESCE(c.input_quantity,0)>0 THEN COALESCE(o.output_quantity,0)*100.0/c.input_quantity ELSE 0 END yield_percent,
+        COALESCE(c.material_cost,0) material_cost,COALESCE(o.output_cost,0) output_cost,COALESCE(fl.approved_finished_loss,0) approved_finished_loss
+      FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id
+      LEFT JOIN consumed c ON c.production_order_id=p.id LEFT JOIN output o ON o.production_order_id=p.id
+      LEFT JOIN finished_losses fl ON fl.production_order_id=p.id
+      WHERE p.status='COMPLETED' AND ($1::date IS NULL OR p.completed_at::date >= $1::date)
+        AND ($2::date IS NULL OR p.completed_at::date <= $2::date) AND ($3::uuid IS NULL OR p.id=$3::uuid)
+      ORDER BY p.completed_at DESC,p.order_no`,[from??null,to??null,productionOrderId??null]);
+      const lines=result.rows.map(x=>({...x,plannedQuantity:Number(x.planned_qty),actualQuantity:Number(x.actual_qty),
+        inputQuantity:Number(x.input_quantity),outputQuantity:Number(x.output_quantity),massBalanceDifference:Number(x.mass_balance_difference),
+        yieldPercent:Number(x.yield_percent),materialCost:Number(x.material_cost),outputCost:Number(x.output_cost),approvedFinishedLoss:Number(x.approved_finished_loss)}));
+      const totals=lines.reduce((a,x)=>{a.orders++;a.plannedQuantity+=x.plannedQuantity;a.actualQuantity+=x.actualQuantity;
+        a.inputQuantity+=x.inputQuantity;a.outputQuantity+=x.outputQuantity;a.massBalanceDifference+=x.massBalanceDifference;
+        a.materialCost+=x.materialCost;a.outputCost+=x.outputCost;a.approvedFinishedLoss+=x.approvedFinishedLoss;return a;
+      },{orders:0,plannedQuantity:0,actualQuantity:0,inputQuantity:0,outputQuantity:0,massBalanceDifference:0,materialCost:0,outputCost:0,approvedFinishedLoss:0});
+      totals.yieldPercent=totals.inputQuantity>0?totals.outputQuantity*100/totals.inputQuantity:0;
+      return {filters:{from:from??null,to:to??null,productionOrderId:productionOrderId??null},count:lines.length,totals,lines};
+    }catch(e){return failure(reply,e);}
+  });
   app.get('/api/v1/production/losses', auth(app,'PRODUCTION.READ'), async(_req,reply)=>{
     try{return (await db.query(`SELECT l.*,p.order_no,fp.code product_code,fp.name_ar product_name,o.lot_no,
       o.quantity output_quantity,o.unit_cost,CASE WHEN l.approved_by IS NULL THEN 'PENDING_APPROVAL' ELSE 'POSTED' END status,
