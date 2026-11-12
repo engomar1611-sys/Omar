@@ -454,6 +454,29 @@ export async function commercialRoutes(app,{db}){
    return {expenseId:req.params.id,status:'REVERSED'};
   });return out;}catch(e){return fail(rep,e);}
  });
+
+ app.get('/api/v1/reports/general-ledger',auth(app,'ACCOUNTING.READ'),async(req,rep)=>{
+  const accountId=req.query?.accountId??null,from=req.query?.from??null,to=req.query?.to??null;
+  if(from&&to&&String(from)>String(to))return bad(rep,'تاريخ البداية يجب ألا يتجاوز تاريخ النهاية');
+  try{
+   return (await db.query(`WITH ledger AS (
+    SELECT a.id account_id,a.code account_code,a.name_ar account_name,a.account_type,
+      j.id journal_id,j.entry_no,j.entry_date,j.source_type,j.source_id,j.description,
+      j.created_at,l.id line_id,l.debit,l.credit,
+      SUM(l.debit-l.credit) OVER(PARTITION BY a.id ORDER BY j.entry_date,j.created_at,j.entry_no,l.id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) running_balance,
+      SUM(CASE WHEN $2::date IS NOT NULL AND j.entry_date<$2::date THEN l.debit-l.credit ELSE 0 END)
+        OVER(PARTITION BY a.id) opening_balance
+    FROM gl_accounts a JOIN journal_lines l ON l.account_id=a.id
+    JOIN journal_entries j ON j.id=l.journal_entry_id AND j.status='POSTED'
+    WHERE ($1::uuid IS NULL OR a.id=$1::uuid) AND ($3::date IS NULL OR j.entry_date<=$3::date)
+   )
+   SELECT account_id,account_code,account_name,account_type,journal_id,entry_no,entry_date,
+     source_type,source_id,description,debit,credit,opening_balance,running_balance
+   FROM ledger WHERE ($2::date IS NULL OR entry_date>=$2::date)
+   ORDER BY account_code,entry_date,created_at,entry_no,line_id`,
+   [accountId,from,to])).rows;
+  }catch(e){return fail(rep,e);}
+ });
  app.get('/api/v1/reports/trial-balance',auth(app,'REPORTS.READ'),async(req,rep)=>{
   try{return (await db.query(`SELECT a.code,a.name_ar,a.account_type,
     COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit ELSE 0 END),0) total_debit,
