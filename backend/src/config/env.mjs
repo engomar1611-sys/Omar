@@ -14,6 +14,8 @@ export const config = Object.freeze({
   port: positiveInteger(process.env.PORT, 3000, 'PORT'),
   databaseUrl: process.env.DATABASE_URL,
   authJwtSecret: process.env.AUTH_JWT_SECRET,
+  tlsCertFile: process.env.TLS_CERT_FILE || null,
+  tlsKeyFile: process.env.TLS_KEY_FILE || null,
   logLevel: process.env.LOG_LEVEL ?? 'info'
 });
 
@@ -21,6 +23,9 @@ export function validateConfig(value = config) {
   if (!value.databaseUrl) throw new Error('DATABASE_URL is required');
   if (!value.authJwtSecret || value.authJwtSecret.length < 32) {
     throw new Error('AUTH_JWT_SECRET must contain at least 32 characters');
+  }
+  if (Boolean(value.tlsCertFile) !== Boolean(value.tlsKeyFile)) {
+    throw new Error('TLS_CERT_FILE and TLS_KEY_FILE must be configured together');
   }
   return value;
 }
