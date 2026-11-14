@@ -21,7 +21,7 @@ test('PostgreSQL inventory transfer: approval, lot/expiry preservation, weighted
   const unit=(await pool.query('INSERT INTO units_of_measure(code,name_ar) VALUES($1,$2) RETURNING id',[code('TRKG'),'كيلوجرام'])).rows[0];
   const category=(await pool.query("INSERT INTO item_categories(code,name_ar,category_kind) VALUES($1,$2,'RAW_MATERIAL') RETURNING id",[code('TRCAT'),'خامة تحويل'])).rows[0];
   const item=(await pool.query('INSERT INTO items(code,name_ar,category_id,base_unit_id,tracks_lot,tracks_expiry) VALUES($1,$2,$3,$4,TRUE,TRUE) RETURNING id',[code('TRITEM'),'ذرة تحويل',category.id,unit.id])).rows[0];
-  await pool.query("INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,expiry_date,quantity,average_unit_cost,quality_status) VALUES($1,$3,$5,'2027-12-31',10,5,'RELEASED'),($2,$3,$5,'2027-12-31',2,10,'RELEASED')",[source.id,dest.id,item.id,lot,lot]);
+  await pool.query("INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,expiry_date,quantity,average_unit_cost,quality_status) VALUES($1,$3,$4,'2027-12-31',10,5,'RELEASED'),($2,$3,$4,'2027-12-31',2,10,'RELEASED')",[source.id,dest.id,item.id,lot]);
   const draft=await app.inject({method:'POST',url:'/api/v1/inventory/transfers',headers,payload:{transferNo:code('TRF'),sourceWarehouseId:source.id,destinationWarehouseId:dest.id,reason:'نقل مخزون بين المخازن',lines:[{itemId:item.id,lotNo:lot,quantity:4}]}});
   assert.equal(draft.statusCode,201,draft.body);
   const id=draft.json().id;
