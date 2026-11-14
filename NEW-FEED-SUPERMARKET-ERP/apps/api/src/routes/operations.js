@@ -32,6 +32,20 @@ router.patch("/delivery/orders/:id/status",async(req,res,next)=>{const {status,c
 router.post("/ecommerce/orders",async(req,res,next)=>{const {reference_no,customer_id=null,customer_name,phone,address,lines}=req.body??{};if(!txt(reference_no,50)||!txt(customer_name)||!txt(phone,40)||!txt(address,1000)||(customer_id&&!uuid.test(customer_id))||!Array.isArray(lines)||!lines.length||lines.length>100||lines.some(x=>!uuid.test(x.product_id||"")||!num(x.quantity,0.000001)))return fail(res,"Invalid ecommerce order");const c=await pool.connect();try{await c.query("BEGIN");const o=await c.query("INSERT INTO ecommerce_orders(reference_no,customer_id,customer_name,phone,address) VALUES($1,$2,$3,$4,$5) RETURNING *",[reference_no,customer_id,customer_name,phone,address]);for(const l of lines)await c.query("INSERT INTO ecommerce_order_lines(order_id,product_id,quantity) VALUES($1,$2,$3)",[o.rows[0].id,l.product_id,l.quantity]);await c.query("COMMIT");res.status(201).json({order:o.rows[0],lines:lines.length});}catch(e){await c.query("ROLLBACK");next(e);}finally{c.release();}});
 router.get("/ecommerce/orders",async(_q,res,next)=>{try{const r=await pool.query("SELECT * FROM ecommerce_orders ORDER BY created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 
+// General ledger journal entries posted by integrated operational workflows.
+router.get("/accounting/journals",async(_req,res,next)=>{try{
+ const r=await pool.query(`SELECT je.id,je.reference_no,je.source_type,je.source_id,je.entry_date,je.status,
+   COALESCE(SUM(jl.debit),0) total_debit,COALESCE(SUM(jl.credit),0) total_credit
+   FROM journal_entries je LEFT JOIN journal_lines jl ON jl.journal_entry_id=je.id
+   GROUP BY je.id ORDER BY je.entry_date DESC,je.created_at DESC LIMIT 500`);
+ res.json({items:r.rows});
+}catch(e){next(e);}});
+router.get("/accounting/journals/:id",async(req,res,next)=>{if(!uuid.test(req.params.id))return fail(res,"Invalid journal entry id");try{
+ const entry=await pool.query("SELECT * FROM journal_entries WHERE id=$1",[req.params.id]);
+ if(!entry.rowCount)return res.status(404).json({error:"Journal entry not found"});
+ const lines=await pool.query("SELECT jl.*,a.code account_code,a.name_ar account_name FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE jl.journal_entry_id=$1 ORDER BY a.code",[req.params.id]);
+ res.json({entry:entry.rows[0],lines:lines.rows});
+}catch(e){next(e);}});
 // Accounting periods: closing a period prevents posting dates in that range in later posting workflows.
 router.get("/accounting/periods",async(_q,res,next)=>{try{const r=await pool.query("SELECT * FROM accounting_periods ORDER BY starts_on DESC");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/accounting/periods",async(req,res,next)=>{const {period_name,starts_on,ends_on}=req.body??{};if(!txt(period_name,40)||!/^\d{4}-\d{2}-\d{2}$/.test(starts_on||"")||!/^\d{4}-\d{2}-\d{2}$/.test(ends_on||"")||ends_on<starts_on)return fail(res,"Invalid accounting period");try{const r=await pool.query("INSERT INTO accounting_periods(period_name,starts_on,ends_on) VALUES($1,$2,$3) RETURNING *",[period_name,starts_on,ends_on]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
