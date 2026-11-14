@@ -1,14 +1,22 @@
 import { buildApp } from './app.mjs';
 import { config, validateConfig } from './config/env.mjs';
+import { loadHttpsOptions } from './config/tls.mjs';
 import { pool } from './db/pool.mjs';
 
 validateConfig();
 
-const app = buildApp({ logger: { level: config.logLevel } });
+const https = loadHttpsOptions(config);
+const app = buildApp({
+  logger: { level: config.logLevel },
+  ...(https ? { https } : {})
+});
 
 try {
   await app.listen({ host: config.host, port: config.port });
-  app.log.info({ host: config.host, port: config.port }, 'NEW FEED ERP API started');
+  app.log.info(
+    { host: config.host, port: config.port, protocol: https ? 'https' : 'http' },
+    'NEW FEED ERP API started'
+  );
 } catch (error) {
   app.log.error(error);
   await pool.end();
