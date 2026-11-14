@@ -4,7 +4,10 @@ window.fetch=(input,init={})=>{
   const url=typeof input==="string"?input:input.url;
   const headers=new Headers(init.headers||(typeof input!=="string"?input.headers:undefined));
   if(url&&url.startsWith("/api/")&&!url.startsWith("/api/auth/")&&storedToken)headers.set("Authorization","Bearer "+storedToken);
-  return originalFetch(input,{...init,headers});
+  return originalFetch(input,{...init,headers}).then(response=>{
+    if(response.status===401&&storedToken){sessionStorage.removeItem("nf_access_token");sessionStorage.removeItem("nf_user_name");location.reload();}
+    return response;
+  });
 };
 const authMessage=(message)=>{const el=document.getElementById("authMessage");if(el)el.textContent=message||"";};
 const saveSession=(data)=>{sessionStorage.setItem("nf_access_token",data.access_token);sessionStorage.setItem("nf_user_name",data.user.display_name);location.reload();};
@@ -16,7 +19,7 @@ document.getElementById("bootstrapForm").addEventListener("submit",async e=>{
   e.preventDefault();authMessage("جارٍ إنشاء المدير الأول...");
   try{const r=await originalFetch("/api/auth/bootstrap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bootstrap_secret:document.getElementById("bootstrapSecret").value,username:document.getElementById("bootstrapUsername").value,display_name:document.getElementById("bootstrapDisplayName").value,password:document.getElementById("bootstrapPassword").value})});const d=await r.json();if(!r.ok)throw new Error(d.error||"تعذر إنشاء المدير");saveSession(d);}catch(err){authMessage(err.message);}
 });
-if(storedToken)document.getElementById("authGate").style.display="none";
+if(storedToken){document.getElementById("authGate").style.display="none";const name=sessionStorage.getItem("nf_user_name");const userLabel=document.querySelector(".user b");if(name&&userLabel)userLabel.textContent=name;}
 const sampleProducts=[
 {id:1,name:"مياه معدنية 1.5 لتر",price:8,cat:"مشروبات",icon:"💧"},{id:2,name:"عصير برتقال",price:18,cat:"مشروبات",icon:"🧃"},{id:3,name:"حليب كامل الدسم",price:24,cat:"ألبان ومنتجاتها",icon:"🥛"},{id:4,name:"كوكاكولا عادي",price:15,cat:"مشروبات",icon:"🥤"},{id:5,name:"شيبسي",price:12,cat:"مواد غذائية",icon:"🥔"},{id:6,name:"بسكويت",price:14,cat:"مواد غذائية",icon:"🍪"},{id:7,name:"شوكولاتة",price:20,cat:"مواد غذائية",icon:"🍫"},{id:8,name:"جبنة كريمي",price:32,cat:"ألبان ومنتجاتها",icon:"🧀"},{id:9,name:"مسحوق غسيل",price:75,cat:"منظفات",icon:"🧺"},{id:10,name:"منعم أقمشة",price:60,cat:"منظفات",icon:"🧴"},{id:11,name:"سائل غسيل صحون",price:25,cat:"منظفات",icon:"🧼"},{id:12,name:"مناديل ورقية",price:20,cat:"مستلزمات منزلية",icon:"🧻"}];
 const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["customers","♙","العملاء والولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات والخزينة"],["hr","♙","الموارد البشرية"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["ecommerce","▧","المتجر الإلكتروني"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
