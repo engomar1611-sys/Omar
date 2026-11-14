@@ -52,7 +52,7 @@ async function readErpContext(db, request, intent) {
 
   // Fixed read-only SQL only; user text is never interpolated into a query.
   const statements = {
-    inventory: `SELECT i.code item_code,i.name_ar item_name,w.code warehouse_code,
+    inventory: `SELECT i.code item_code,i.name_ar item_name,w.code warehouse_code,b.quality_status,
        SUM(b.quantity)::numeric quantity,
        CASE WHEN SUM(b.quantity)>0
          THEN SUM(b.quantity*b.average_unit_cost)/SUM(b.quantity) ELSE 0 END::numeric average_unit_cost,
@@ -60,7 +60,7 @@ async function readErpContext(db, request, intent) {
        FROM inventory_balances b JOIN items i ON i.id=b.item_id
        JOIN warehouses w ON w.id=b.warehouse_id
        WHERE b.quantity<>0
-       GROUP BY i.code,i.name_ar,w.code ORDER BY i.code,w.code LIMIT ${MAX_CONTEXT_ROWS}`,
+       GROUP BY i.code,i.name_ar,w.code,b.quality_status ORDER BY i.code,w.code,b.quality_status LIMIT ${MAX_CONTEXT_ROWS}`,
     production: `SELECT p.order_no,p.status,fp.code product_code,fp.name_ar product_name,
        p.planned_qty,p.actual_qty,p.total_material_cost,p.unit_production_cost,p.created_at
        FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id
