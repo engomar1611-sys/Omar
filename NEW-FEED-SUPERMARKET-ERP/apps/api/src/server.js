@@ -4,6 +4,7 @@ import helmet from "helmet";
 import cors from "cors";
 import { pool } from "./db.js";
 import catalogRoutes from "./routes/catalog.js";
+import purchasingRoutes from "./routes/purchasing.js";
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -34,6 +35,7 @@ app.get("/api/health/database", async (_req, res) => {
 });
 
 app.use("/api", catalogRoutes);
+app.use("/api", purchasingRoutes);
 app.use("/api", (_req, res) => res.status(404).json({ error: "API route not found" }));
 
 app.use((error, _req, res, _next) => {
