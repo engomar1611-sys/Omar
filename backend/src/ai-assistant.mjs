@@ -21,9 +21,9 @@ export function detectDataIntent(message) {
   const value = message.toLowerCase();
   if (/مخزون|رصيد|أرصدة|خامات|اصناف|أصناف|inventory|stock|items/.test(value)) return 'inventory';
   if (/إنتاج|انتاج|تشغيلات|أوامر الإنتاج|امر انتاج|production|manufacturing/.test(value)) return 'production';
-  if (/مبيعات|فواتير بيع|عملاء|sales|invoices/.test(value)) return 'sales';
   if (/مستحقات العملاء|أعمار الديون للعملاء|مديونية العملاء|ذمم العملاء|receivables|customer aging/.test(value)) return 'receivables';
   if (/مستحقات الموردين|أعمار الديون للموردين|مديونية الموردين|ذمم الموردين|payables|supplier aging/.test(value)) return 'payables';
+  if (/مبيعات|فواتير بيع|عملاء|sales|invoices/.test(value)) return 'sales';
   if (/ميزان مراجعة|ميزان|قيود محاسبية|الحسابات|حسابات|دفتر الأستاذ|trial balance|general ledger|accounting/.test(value)) return 'accounting';
   if (/مشتريات|أوامر شراء|موردين|purchase|suppliers/.test(value)) return 'purchases';
   return null;
