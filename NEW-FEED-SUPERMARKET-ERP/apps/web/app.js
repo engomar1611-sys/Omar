@@ -42,20 +42,24 @@ function renderProducts(){
  }).join("")||'<div class="empty-state">لا توجد أصناف مطابقة في كتالوج قاعدة البيانات</div>';
  document.querySelectorAll(".product-card:not(:disabled)").forEach(b=>b.onclick=()=>addProduct(b.dataset.id));
 }
+function quantityStep(item){if(!item.weighted)return 1;return ["KG","L"].includes(item.base_unit_code)?0.1:["G","ML"].includes(item.base_unit_code)?100:0.1;}
 function addProduct(id){
  const p=posProducts.find(x=>x.id===id);
  if(!p)return;
  if(p.retail_price===null||p.retail_price===undefined)return toast("لا يمكن البيع قبل تسجيل سعر تجزئة معتمد للصنف");
+ let amount=1;
+ if(p.is_weighted){const entered=prompt("أدخل الكمية بوحدة "+(p.base_unit_code||"الصنف"),"0.5");if(entered===null)return;amount=Number(entered);if(!Number.isFinite(amount)||amount<=0)return toast("الكمية غير صحيحة");}
  const found=cart.find(x=>x.id===id);
- if(found)found.qty++;else cart.push({id:p.id,product_id:p.id,unit_id:p.base_unit_id,name:p.name_ar,price:Number(p.retail_price),cat:p.category_name||"",qty:1,weighted:p.is_weighted});
+ if(found)found.qty=Number((found.qty+amount).toFixed(6));
+ else cart.push({id:p.id,product_id:p.id,unit_id:p.base_unit_id,name:p.name_ar,price:Number(p.retail_price),cat:p.category_name||"",qty:amount,weighted:p.is_weighted,base_unit_code:p.base_unit_code});
  renderCart();
 }
 function renderCart(){
  const sub=cart.reduce((s,x)=>s+x.price*x.qty,0),pct=Math.min(100,Math.max(0,Number($("discountInput").value)||0)),disc=sub*pct/100;
  $("cartLines").innerHTML=cart.map((x,i)=>'<div class="cart-line"><span>'+(i+1)+'</span><b>'+escapeHtml(x.name)+'</b><span class="qty-control"><button data-dec="'+x.id+'">−</button>'+x.qty+'<button data-inc="'+x.id+'">+</button></span><span>'+money(x.price)+'</span><b>'+money(x.price*x.qty)+'</b><button class="remove-line" data-del="'+x.id+'">×</button></div>').join("")||'<div class="empty-state">أضف الأصناف إلى فاتورة البيع</div>';
  $("itemCount").textContent=cart.reduce((s,x)=>s+x.qty,0);$("subtotal").textContent=money(sub);$("discountValue").textContent=money(disc);$("grandTotal").textContent=money(sub-disc)+" ج.م";
- document.querySelectorAll("[data-inc]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.inc);if(x){x.qty++;renderCart();}});
- document.querySelectorAll("[data-dec]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.dec);if(x){x.qty--;if(x.qty<=0)cart=cart.filter(y=>y.id!==x.id);renderCart();}});
+ document.querySelectorAll("[data-inc]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.inc);if(x){x.qty=Number((x.qty+quantityStep(x)).toFixed(6));renderCart();}});
+ document.querySelectorAll("[data-dec]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.dec);if(x){x.qty=Number((x.qty-quantityStep(x)).toFixed(6));if(x.qty<=0)cart=cart.filter(y=>y.id!==x.id);renderCart();}});
  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{cart=cart.filter(x=>x.id!==b.dataset.del);renderCart();});
 }
 async function loadPosData(){
@@ -111,7 +115,7 @@ $("completeSale").onclick=async()=>{
  if(!payment_method_id)return toast("اختر طريقة الدفع");
  const lines=cart.map(x=>({product_id:x.product_id,unit_id:x.unit_id,quantity:x.qty,unit_price:x.price,discount_amount:Number((x.price*x.qty*pct/100).toFixed(6))}));
  try{
-  const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,cashier_id:posContext.user.id,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],idempotency_key:crypto.randomUUID()})});
+  const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,cashier_id:posContext.user.id,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],idempotency_key:(crypto.randomUUID?crypto.randomUUID():"NF-"+Date.now()+"-"+Math.random().toString(36).slice(2))})});
   toast("تم حفظ الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+" ج.م");
   cart=[];$("discountInput").value="0";renderCart();
  }catch(e){toast(e.message);}
