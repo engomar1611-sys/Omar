@@ -10,7 +10,8 @@
 | CI-HR-01 | الموارد البشرية والصيانة | تكامل موارد بشرية وصيانة | backend/test/hr-maintenance.integration.test.mjs | CI سابق ناجح |
 | CI-PROC-01 | المشتريات والجودة | طلب شراء → اعتماد → أمر شراء → استلام → عزل قبل الجودة → قبول جزئي → متوسط تكلفة → قيد مزدوج | backend/test/procurement.integration.test.mjs | مضاف في PR #49؛ ينتظر CI |
 | CI-SALES-01 | المبيعات والحسابات والتسليم | فاتورة بخصم → قيد مبيعات وتكلفة → تحصيل جزئي وتخصيص → تجهيز وشحن وتسليم جزئي ونهائي → مرتجع باعتماد المخزن والحسابات → عزل مرتجع حتى الجودة → كشف عميل وأعمار مديونية | backend/test/sales.integration.test.mjs على PostgreSQL 16 | PR #50 مدمج؛ Backend CI وWindows Installers ناجحان |
-| CI-INV-01 | المخزون | تحويل معتمد بين مخزنين يحافظ على التشغيلة والصلاحية ومتوسط التكلفة، ويكتب حركتي خروج/دخول، ويرفض السالب والتكرار | backend/test/inventory-transfer.integration.test.mjs على PostgreSQL 16 | مضاف في فرع feature/inventory-transfer-acceptance؛ ينتظر CI |
+| CI-INV-01 | المخزون | تحويل معتمد بين مخزنين يحافظ على التشغيلة والصلاحية ومتوسط التكلفة، ويكتب حركتي خروج/دخول، ويرفض السالب والتكرار | backend/test/inventory-transfer.integration.test.mjs على PostgreSQL 16 | PR #51 مدمج؛ Backend CI وWindows Installers ناجحان |
+| CI-COUNT-01 | الجرد | لقطة أرصدة، تسجيل فعلي أعمى، إضافة صنف غير موجود بالرصيد، اعتماد ذري، حركات مخزون وقيد متوازن ومنع التكرار | backend/test/inventory-counts.integration.test.mjs على PostgreSQL 16 | أضيف في فرع feature/inventory-counts-accounting-acceptance؛ ينتظر CI |
 | CI-SEC-01 | Windows/HTTPS | API loopback وعدم فتح منفذ API وقالب reverse proxy | server-installer/configuration.test.cjs | CI ناجح في PR #48 |
 | CI-DESK-01 | تطبيق Windows | فحص الصياغة واختبارات عميل Electron وبناء EXE | Windows Installers workflow | CI ناجح في PR #31 وPR #48 |
 
@@ -26,7 +27,7 @@
 | UAT-INV-01 | المخزون | جرد وتسوية، منع السالب، تتبع lot/expiry، مطابقة الحركات مع الرصيد | كشف حركة ورصيد معتمد |
 | UAT-PROD-01 | الإنتاج | تشغيل فعلي، وزن خامات، صرف FEFO، فاقد، إنتاج، تكلفة فعلية، جودة نهائية | تقرير تشغيلة وتكلفة وجودة |
 | UAT-SALES-01 | المبيعات | فاتورة وخصم وتسليم جزئي ونهائي وتحصيل متعدد ومرتجع بموافقات | مستندات البيع والتسليم والتحصيل والمرتجع |
-| CI-GL-01 | الحسابات | إغلاق الفترة بعد فحص اكتمال القيود وتوازن تفاصيلها، منع تداخل الفترات، ثم قفل الفترة المغلقة | backend/test/accounting-periods.integration.test.mjs على PostgreSQL 16 | أضيف في فرع feature/accounting-period-close-controls؛ ينتظر CI |
+| CI-GL-01 | الحسابات | إغلاق الفترة بعد فحص اكتمال القيود وتوازن تفاصيلها، منع تداخل الفترات، ثم قفل الفترة المغلقة | backend/test/accounting-periods.integration.test.mjs على PostgreSQL 16 | أضيف في PR #53؛ ينتظر CI |
 | UAT-GL-01 | الحسابات | ميزان مراجعة، دفتر أستاذ، إقفال فترة، عكس مستند، مطابقة العملاء والموردين | ميزان متوازن وتقرير مطابقة |
 | UAT-HR-01 | الموارد البشرية | حضور وانصراف وإجازة ورواتب وسلفة وتسوية | مسير رواتب وسجل موافقات |
 | UAT-MNT-01 | الصيانة | خطة وقائية وأمر طارئ وقطع غيار وتكلفة وتوقف | سجل أمر عمل وتقرير توقف |
