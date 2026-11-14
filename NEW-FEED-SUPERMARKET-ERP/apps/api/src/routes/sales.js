@@ -22,12 +22,12 @@ router.post("/sales/complete",async(req,res,next)=>{
   const sale=await client.query("INSERT INTO sales(reference_no,branch_id,customer_id,cashier_id,status,channel,idempotency_key) VALUES($1,$2,$3,$4,'open','pos',$5) RETURNING *",[reference_no.trim(),branch_id,customer_id,cashier_id,idempotency_key]);
   let subtotal=0,discountTotal=0,cogs=0;
   for(const line of lines){
-   const product=await client.query("SELECT p.id,p.base_unit_id,p.tracks_expiry,COALESCE(pu.conversion_to_base,1) conversion,
+   const product=await client.query(`SELECT p.id,p.base_unit_id,p.tracks_expiry,COALESCE(pu.conversion_to_base,1) conversion,
       (SELECT pp.amount FROM product_prices pp WHERE pp.product_id=p.id AND pp.price_type='retail'
        AND pp.valid_from<=now() AND (pp.valid_to IS NULL OR pp.valid_to>now())
        ORDER BY pp.observed_at DESC,pp.created_at DESC LIMIT 1) retail_price
       FROM products p LEFT JOIN product_units pu ON pu.product_id=p.id AND pu.unit_id=$2
-      WHERE p.id=$1 AND p.is_active=true AND (p.base_unit_id=$2 OR pu.unit_id IS NOT NULL) FOR UPDATE OF p",[line.product_id,line.unit_id]);
+      WHERE p.id=$1 AND p.is_active=true AND (p.base_unit_id=$2 OR pu.unit_id IS NOT NULL) FOR UPDATE OF p`,[line.product_id,line.unit_id]);
    if(!product.rowCount)throw Object.assign(new Error("Product or sale unit is not active or configured"),{statusCode:400});
    const qty=Number(line.quantity),baseQty=qty*Number(product.rows[0].conversion),unitPrice=Number(line.unit_price),discount=Number(line.discount_amount||0);
    const approvedPrice=product.rows[0].retail_price===null?null:Number(product.rows[0].retail_price);
