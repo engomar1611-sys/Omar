@@ -25,6 +25,7 @@ router.post("/bootstrap",async(req,res,next)=>{
   const {bootstrap_secret,username,display_name,password}=req.body??{};
   const configured=process.env.BOOTSTRAP_SECRET||"";
   if(configured.length<24)return res.status(503).json({error:"Set BOOTSTRAP_SECRET to at least 24 characters before first setup"});
+  if((process.env.JWT_SECRET||"").length<32)return res.status(503).json({error:"Set JWT_SECRET to at least 32 characters before first setup"});
   const a=Buffer.from(configured),b=Buffer.from(typeof bootstrap_secret==="string"?bootstrap_secret:"");
   if(a.length!==b.length||!timingSafeEqual(a,b))return res.status(403).json({error:"Invalid bootstrap secret"});
   if(typeof username!=="string"||username.trim().length<3||username.trim().length>80||
