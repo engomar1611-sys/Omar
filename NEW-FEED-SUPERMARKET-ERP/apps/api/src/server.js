@@ -15,6 +15,7 @@ import operationsRoutes from "./routes/operations.js";
 import salesRoutes from "./routes/sales.js";
 import returnsRoutes from "./routes/returns.js";
 import posRoutes from "./routes/pos.js";
+import usersRoutes from "./routes/users.js";
 
 const app = express();
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -58,6 +59,7 @@ app.use("/api", operationsRoutes);
 app.use("/api", salesRoutes);
 app.use("/api", returnsRoutes);
 app.use("/api", posRoutes);
+app.use("/api", usersRoutes);
 app.use("/api", (_req, res) => res.status(404).json({ error: "API route not found" }));
 
 app.use((error, _req, res, _next) => {
