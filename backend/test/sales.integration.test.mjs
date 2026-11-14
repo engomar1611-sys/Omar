@@ -81,6 +81,7 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
       [warehouse.id, item.id, lotNo]
     );
 
+    const dueDate = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     const invoice = await app.inject({
       method: 'POST',
       url: '/api/v1/sales/invoices',
@@ -89,6 +90,7 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
         invoiceNo: code('INV-SAL'),
         customerId: customer.id,
         warehouseId: warehouse.id,
+        dueDate,
         discountAmount: 10,
         lines: [{ itemId: item.id, lotNo, quantity: 10, unitPrice: 12 }]
       }
@@ -289,6 +291,8 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.equal(aging.statusCode, 200, aging.body);
     assert.equal(aging.json().length, 1);
     assert.equal(Number(aging.json()[0].outstanding), 46);
+    assert.equal(String(aging.json()[0].due_date).slice(0, 10), dueDate);
+    assert.equal(aging.json()[0].aging_bucket, 'غير مستحق');
 
     const movements = await pool.query(
       "SELECT quantity_in,quantity_out FROM stock_movements WHERE reference_type='SALES_RETURN' AND reference_id=$1",
