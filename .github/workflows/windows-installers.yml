@@ -24,7 +24,7 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm test
       - name: Verify Windows server network hardening
-        run: node --test server-installer/configuration.test.cjs
+        run: node --test ../server-installer/configuration.test.cjs
   build-windows:
     runs-on: windows-latest
     needs: desktop-tests
