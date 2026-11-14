@@ -62,8 +62,8 @@ export async function commercialRoutes(app,{db}){
    const out=await tx(db,async c=>{
     const cust=await c.query('SELECT id,credit_limit FROM customers WHERE id=$1 AND is_active=TRUE FOR UPDATE',[b.customerId]);
     if(!cust.rowCount)throw Object.assign(new Error('العميل غير موجود أو غير نشط'),{code:'P0001'});
-    const h=await c.query(`INSERT INTO sales_invoices(invoice_no,customer_id,warehouse_id,invoice_date,discount_amount,created_by)
-     VALUES($1,$2,$3,COALESCE($4::date,CURRENT_DATE),$5,$6) RETURNING *`,[b.invoiceNo.trim(),b.customerId,b.warehouseId,b.invoiceDate??null,discount,req.authUser.user_id]);
+    const h=await c.query(`INSERT INTO sales_invoices(invoice_no,customer_id,warehouse_id,invoice_date,subtotal,discount_amount,total_amount,created_by)
+     VALUES($1,$2,$3,COALESCE($4::date,CURRENT_DATE),$5,$5,0,$6) RETURNING *`,[b.invoiceNo.trim(),b.customerId,b.warehouseId,b.invoiceDate??null,discount,req.authUser.user_id]);
     let subtotal=0,costTotal=0;
     for(let i=0;i<b.lines.length;i++){
      const l=b.lines[i];let remaining=Number(l.quantity),lineCost=0,weightedQty=0,chosenLot=l.lotNo??'';
