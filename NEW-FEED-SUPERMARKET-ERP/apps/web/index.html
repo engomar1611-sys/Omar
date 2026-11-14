@@ -8,6 +8,28 @@
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  <section id="authGate" class="auth-gate">
+    <div class="auth-card">
+      <div class="auth-brand">NEW FEED <span>SUPERMARKET ERP</span></div>
+      <h1>تسجيل الدخول</h1>
+      <form id="loginForm" class="auth-form">
+        <label>اسم المستخدم<input id="loginUsername" autocomplete="username" required></label>
+        <label>كلمة المرور<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+        <button type="submit">دخول النظام</button>
+      </form>
+      <details class="bootstrap-details">
+        <summary>إعداد أول مدير للنظام</summary>
+        <form id="bootstrapForm" class="auth-form">
+          <label>مفتاح التهيئة من ملف الخادم<input id="bootstrapSecret" type="password" required></label>
+          <label>اسم المستخدم<input id="bootstrapUsername" autocomplete="username" required></label>
+          <label>الاسم الظاهر<input id="bootstrapDisplayName" required></label>
+          <label>كلمة المرور (12 حرفًا على الأقل)<input id="bootstrapPassword" type="password" minlength="12" required></label>
+          <button type="submit">إنشاء المدير الأول</button>
+        </form>
+      </details>
+      <p id="authMessage" role="status"></p>
+    </div>
+  </section>
   <header class="topbar">
     <div class="brand"><div class="brand-mark">🛒</div><div><b>New Feed</b><strong>Supermarket</strong></div></div>
     <div class="screen-title"><span class="screen-icon">▣</span><span id="screenTitle">نقطة البيع - كاشير رقم 1</span></div>
