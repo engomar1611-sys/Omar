@@ -30,7 +30,7 @@ export async function procurementRoutes(app,{db}){
    WHERE id=$2 AND status='PENDING_APPROVAL' RETURNING *`,[req.authUser.user_id,req.params.id]);if(!x.rowCount)return r.code(409).send({error:'INVALID_STATUS'});return x.rows[0];}catch(e){return fail(r,e);}
  });
  app.post('/api/v1/purchase-requests/:id/convert',auth(app,'PURCHASE_REQUESTS.CONVERT'),async(req,r)=>{
-  const b=req.body??{};if(!textOk(b.orderNo,40)||!b.supplierId||!Array.isArray(b.lines))return bad(r);
+  const b=req.body??{};if(!textOk(b.orderNo,40)||!b.supplierId||!Array.isArray(b.lines)||(b.paymentDueDate&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(b.paymentDueDate))))return bad(r);
   try{const out=await tx(db,async c=>{
    const h=await c.query("SELECT * FROM purchase_requests WHERE id=$1 FOR UPDATE",[req.params.id]);
    if(!h.rowCount||h.rows[0].status!=='APPROVED'||h.rows[0].purchase_order_id)throw Object.assign(new Error('يجب اعتماد الطلب ولم يسبق تحويله'),{code:'P0001'});
