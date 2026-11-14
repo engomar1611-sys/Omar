@@ -58,4 +58,57 @@ router.get("/product-imports/:id",async(req,res,next)=>{
     res.json({batch:batch.rows[0],rows:rows.rows});
   }catch(e){next(e);}
 });
+
+router.post("/product-imports/:id/approve",async(req,res,next)=>{
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const batch=await client.query("SELECT * FROM product_import_batches WHERE id=$1 FOR UPDATE",[req.params.id]);
+    if(!batch.rowCount){await client.query("ROLLBACK");return res.status(404).json({error:"Import batch not found"});}
+    if(batch.rows[0].status!=="review"){await client.query("ROLLBACK");return res.status(409).json({error:"Batch is not awaiting review"});}
+    const staged=await client.query("SELECT * FROM product_import_rows WHERE batch_id=$1 AND status='pending' ORDER BY row_number FOR UPDATE",[req.params.id]);
+    const created=[];
+    for(const row of staged.rows){
+      const r=row.raw_data;
+      const category=await client.query("SELECT id FROM categories WHERE code=$1 AND is_active=true",[r.category_code]);
+      const unit=await client.query("SELECT id,dimension FROM units WHERE code=$1",[r.base_unit_code]);
+      const packUnit=r.pack_unit_code?await client.query("SELECT id,dimension FROM units WHERE code=$1",[r.pack_unit_code]):null;
+      const brand=r.brand_code?await client.query("SELECT id FROM brands WHERE code=$1 AND is_active=true",[r.brand_code]):null;
+      if(!category.rowCount||!unit.rowCount||(r.pack_unit_code&&!packUnit.rowCount)||(r.brand_code&&(!brand||!brand.rowCount))){
+        await client.query("UPDATE product_import_rows SET status='rejected',validation_errors=validation_errors || '[\"Reference code not found during approval\"]'::jsonb WHERE id=$1",[row.id]);
+        continue;
+      }
+      const sku=r.sku&&String(r.sku).trim()?String(r.sku).trim():(await client.query("SELECT 'NF-'||lpad(nextval('product_sku_seq')::text,8,'0') AS sku")).rows[0].sku;
+      const product=await client.query(
+        `INSERT INTO products(sku,name_ar,name_en,category_id,brand_id,base_unit_id,is_weighted,tracks_expiry,pack_size,pack_unit_id,variant_description)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,sku,name_ar`,
+        [sku,r.name_ar,r.name_en||null,category.rows[0].id,brand?.rows[0]?.id||null,unit.rows[0].id,!!r.is_weighted,!!r.tracks_expiry,r.pack_size||null,packUnit?.rows[0]?.id||null,r.variant_description||null]
+      );
+      if(r.manufacturer_barcode){
+        await client.query("INSERT INTO product_barcodes(product_id,barcode,barcode_type) VALUES($1,$2,'standard')",[product.rows[0].id,String(r.manufacturer_barcode)]);
+      }
+      const priceSourceName=r.price_source||batch.rows[0].source_name;
+      const source=await client.query(
+        "INSERT INTO price_sources(name,source_type,source_url,region) VALUES($1,$2,$3,$4) RETURNING id",
+        [priceSourceName,r.price_source_type||"manual",r.source_url||batch.rows[0].source_url||null,r.price_region||null]
+      );
+      for(const [field,type] of [["purchase_price","purchase"],["retail_price","retail"],["wholesale_price","wholesale"]]){
+        if(r[field]!==undefined&&r[field]!==""&&Number.isFinite(Number(r[field]))&&Number(r[field])>=0){
+          await client.query(
+            "INSERT INTO product_prices(product_id,price_type,amount,source_id,observed_at) VALUES($1,$2,$3,$4,COALESCE($5::timestamptz,now()))",
+            [product.rows[0].id,type,Number(r[field]),source.rows[0].id,r.price_observed_at||null]
+          );
+        }
+      }
+      await client.query("UPDATE product_import_rows SET status='accepted',product_id=$2 WHERE id=$1",[row.id,product.rows[0].id]);
+      created.push(product.rows[0]);
+    }
+    const counts=await client.query("SELECT count(*) FILTER(WHERE status='accepted')::int AS accepted,count(*) FILTER(WHERE status='rejected')::int AS rejected FROM product_import_rows WHERE batch_id=$1",[req.params.id]);
+    await client.query("UPDATE product_import_batches SET status='approved',accepted_count=$2,rejected_count=$3 WHERE id=$1",[req.params.id,counts.rows[0].accepted,counts.rows[0].rejected]);
+    await client.query("COMMIT");
+    res.json({batch_id:req.params.id,status:"approved",created_count:created.length,accepted_count:counts.rows[0].accepted,rejected_count:counts.rows[0].rejected,products:created});
+  }catch(e){await client.query("ROLLBACK");next(e);}
+  finally{client.release();}
+});
+
 export default router;
