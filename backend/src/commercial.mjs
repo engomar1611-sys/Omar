@@ -56,14 +56,14 @@ export async function commercialRoutes(app,{db}){
  });
  app.post('/api/v1/sales/invoices',auth(app,'SALES.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.invoiceNo,40)||!b.customerId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||
-   b.lines.some(l=>!l.itemId||!pos(l.quantity)||!Number.isFinite(Number(l.unitPrice))||Number(l.unitPrice)<0))return bad(rep);
+   b.lines.some(l=>!l.itemId||!pos(l.quantity)||!Number.isFinite(Number(l.unitPrice))||Number(l.unitPrice)<0)||(b.dueDate&&!/^\d{4}-\d{2}-\d{2}$/.test(String(b.dueDate))))return bad(rep);
   const discount=Number(b.discountAmount??0);if(!Number.isFinite(discount)||discount<0)return bad(rep);
   try{
    const out=await tx(db,async c=>{
     const cust=await c.query('SELECT id,credit_limit FROM customers WHERE id=$1 AND is_active=TRUE FOR UPDATE',[b.customerId]);
     if(!cust.rowCount)throw Object.assign(new Error('العميل غير موجود أو غير نشط'),{code:'P0001'});
-    const h=await c.query(`INSERT INTO sales_invoices(invoice_no,customer_id,warehouse_id,invoice_date,subtotal,discount_amount,total_amount,created_by)
-     VALUES($1,$2,$3,COALESCE($4::date,CURRENT_DATE),$5,$5,0,$6) RETURNING *`,[b.invoiceNo.trim(),b.customerId,b.warehouseId,b.invoiceDate??null,discount,req.authUser.user_id]);
+    const h=await c.query(`INSERT INTO sales_invoices(invoice_no,customer_id,warehouse_id,invoice_date,due_date,subtotal,discount_amount,total_amount,created_by)
+     VALUES($1,$2,$3,COALESCE($4::date,CURRENT_DATE),$5,$6,$6,0,$7) RETURNING *`,[b.invoiceNo.trim(),b.customerId,b.warehouseId,b.invoiceDate??null,b.dueDate??null,discount,req.authUser.user_id]);
     let subtotal=0,costTotal=0;
     for(let i=0;i<b.lines.length;i++){
      const l=b.lines[i];let remaining=Number(l.quantity),lineCost=0,weightedQty=0,chosenLot=l.lotNo??'';
@@ -732,19 +732,19 @@ export async function commercialRoutes(app,{db}){
     FROM sales_returns sr JOIN sales_return_lines rl ON rl.sales_return_id=sr.id
     WHERE sr.status='APPROVED' GROUP BY sr.sales_invoice_id
   ), balances AS (
-    SELECT i.id invoice_id,i.invoice_no,i.invoice_date,c.code customer_code,c.name_ar customer_name,
+    SELECT i.id invoice_id,i.invoice_no,i.invoice_date,COALESCE(i.due_date,i.invoice_date) due_date,c.code customer_code,c.name_ar customer_name,
       i.total_amount::numeric invoice_amount,COALESCE(p.paid_amount,0)::numeric paid_amount,
       COALESCE(r.returned_amount,0)::numeric returned_amount,
       GREATEST(0::numeric,i.total_amount-COALESCE(p.paid_amount,0)-COALESCE(r.returned_amount,0)) outstanding,
-      GREATEST(0,($1::date-i.invoice_date))::int age_days
+      ($1::date-COALESCE(i.due_date,i.invoice_date))::int age_days
     FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
     LEFT JOIN paid p ON p.sales_invoice_id=i.id LEFT JOIN returned r ON r.sales_invoice_id=i.id
     WHERE i.status IN ('POSTED','PARTIALLY_PAID','PAID') AND i.invoice_date<=$1::date
       AND ($2::text IS NULL OR c.code=$2::text)
   )
-  SELECT invoice_id,invoice_no,invoice_date,customer_code,customer_name,invoice_amount,paid_amount,
+  SELECT invoice_id,invoice_no,invoice_date,due_date,customer_code,customer_name,invoice_amount,paid_amount,
     returned_amount,outstanding,age_days,
-    CASE WHEN age_days<=30 THEN '0-30' WHEN age_days<=60 THEN '31-60'
+    CASE WHEN age_days<0 THEN 'غير مستحق' WHEN age_days<=30 THEN '0-30' WHEN age_days<=60 THEN '31-60'
       WHEN age_days<=90 THEN '61-90' ELSE 'أكثر من 90' END aging_bucket
   FROM balances WHERE outstanding>0.000001
   ORDER BY customer_code,invoice_date,invoice_no`,[asOf,customerCode])).rows;}
