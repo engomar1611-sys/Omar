@@ -243,8 +243,10 @@ export async function commercialRoutes(app,{db}){
      if(!po.rowCount)throw Object.assign(new Error('أمر الشراء غير تابع للمورد'),{code:'P0001'});
      const received=await c.query(`SELECT COALESCE(SUM(l.accepted_qty*l.unit_cost),0) amount FROM goods_receipts g
        JOIN goods_receipt_lines l ON l.goods_receipt_id=g.id WHERE g.purchase_order_id=$1 AND g.status IN ('ACCEPTED','PARTIAL')`,[a.purchaseOrderId]);
-     const paid=await c.query('SELECT COALESCE(SUM(a.amount),0) amount FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.supplier_payment_id WHERE a.purchase_order_id=$1 AND p.status=\'POSTED\'',[a.purchaseOrderId]);
-     if(Number(paid.rows[0].amount)+Number(a.amount)>Number(received.rows[0].amount)+0.000001)throw Object.assign(new Error('السداد يتجاوز قيمة الكميات المقبولة المستلمة'),{code:'P0001'});
+     const paid=await c.query("SELECT COALESCE(SUM(a.amount),0) amount FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.supplier_payment_id WHERE a.purchase_order_id=$1 AND p.status='POSTED'",[a.purchaseOrderId]);
+     const returned=await c.query("SELECT COALESCE(SUM(l.quantity*l.unit_cost),0) amount FROM purchase_returns r JOIN purchase_return_lines l ON l.purchase_return_id=r.id WHERE r.purchase_order_id=$1 AND r.status='POSTED'",[a.purchaseOrderId]);
+     const payable=Math.max(0,Number(received.rows[0].amount)-Number(returned.rows[0].amount));
+     if(Number(paid.rows[0].amount)+Number(a.amount)>payable+0.000001)throw Object.assign(new Error('السداد يتجاوز صافي قيمة المستلم بعد مرتجعات المشتريات'),{code:'P0001'});
      await c.query('INSERT INTO supplier_payment_allocations(supplier_payment_id,purchase_order_id,amount) VALUES($1,$2,$3)',[h.rows[0].id,a.purchaseOrderId,a.amount]);allocated+=Number(a.amount);
     }
     if(Math.abs(allocated-Number(b.amount))>0.000001)throw Object.assign(new Error('يجب توزيع كامل مبلغ سند الصرف على أوامر الشراء'),{code:'P0001'});
@@ -255,10 +257,20 @@ export async function commercialRoutes(app,{db}){
   }catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/purchases/returns',auth(app,'PURCHASE_RETURNS.MANAGE'),async(req,rep)=>{
-  const b=req.body??{};if(!txt(b.returnNo,40)||!b.supplierId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||b.lines.some(x=>!x.itemId||typeof (x.lotNo??'')!=='string'||(x.lotNo??'').trim().length>80||!pos(x.quantity)))return bad(rep);
+  const b=req.body??{};if(!txt(b.returnNo,40)||!b.supplierId||!b.purchaseOrderId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||b.lines.some(x=>!x.itemId||typeof (x.lotNo??'')!=='string'||(x.lotNo??'').trim().length>80||!pos(x.quantity)))return bad(rep);
   try{const out=await tx(db,async c=>{
-   const h=await c.query(`INSERT INTO purchase_returns(return_no,supplier_id,warehouse_id,reason,created_by,status) VALUES($1,$2,$3,$4,$5,'PENDING_WAREHOUSE') RETURNING *`,[b.returnNo,b.supplierId,b.warehouseId,b.reason??null,req.authUser.user_id]);
+   const po=await c.query('SELECT id,supplier_id,warehouse_id FROM purchase_orders WHERE id=$1 AND supplier_id=$2 FOR UPDATE',[b.purchaseOrderId,b.supplierId]);
+   if(!po.rowCount||po.rows[0].warehouse_id!==b.warehouseId)throw Object.assign(new Error('أمر الشراء لا يطابق المورد أو المخزن'),{code:'P0001'});
+   const h=await c.query(`INSERT INTO purchase_returns(return_no,supplier_id,warehouse_id,purchase_order_id,reason,created_by,status) VALUES($1,$2,$3,$4,$5,$6,'PENDING_WAREHOUSE') RETURNING *`,[b.returnNo,b.supplierId,b.warehouseId,b.purchaseOrderId,b.reason??null,req.authUser.user_id]);
    for(const l of b.lines){
+    const accepted=await c.query(`SELECT COALESCE(SUM(gl.accepted_qty),0) received FROM goods_receipts gr
+      JOIN goods_receipt_lines gl ON gl.goods_receipt_id=gr.id
+      WHERE gr.purchase_order_id=$1 AND gr.status IN ('ACCEPTED','PARTIAL') AND gl.item_id=$2 AND COALESCE(gl.lot_no,'')=$3`,[b.purchaseOrderId,l.itemId,l.lotNo??'']);
+    const already=await c.query(`SELECT COALESCE(SUM(rl.quantity),0) returned FROM purchase_returns pr
+      JOIN purchase_return_lines rl ON rl.purchase_return_id=pr.id
+      WHERE pr.purchase_order_id=$1 AND pr.status<>'CANCELLED' AND rl.item_id=$2 AND rl.lot_no=$3`,[b.purchaseOrderId,l.itemId,l.lotNo??'']);
+    if(Number(already.rows[0].returned)+Number(l.quantity)>Number(accepted.rows[0].received)+0.000001)
+     throw Object.assign(new Error('كمية المرتجع تتجاوز الكمية المقبولة لهذا الصنف والتشغيلة في أمر الشراء'),{code:'P0001'});
     const bal=await c.query("SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND quality_status='RELEASED' FOR UPDATE",[b.warehouseId,l.itemId,l.lotNo??'']);
     if(!bal.rowCount||Number(bal.rows[0].quantity)<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لمرتجع المشتريات'),{code:'P0001'});
     await c.query('INSERT INTO purchase_return_lines(purchase_return_id,item_id,lot_no,quantity,unit_cost) VALUES($1,$2,$3,$4,$5)',[h.rows[0].id,l.itemId,l.lotNo??'',l.quantity,bal.rows[0].average_unit_cost]);
@@ -560,6 +572,42 @@ export async function commercialRoutes(app,{db}){
     GROUP BY invoice_date ORDER BY invoice_date DESC`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
  });
 
+ app.get('/api/v1/reports/supplier-aging',auth(app,'REPORTS.READ'),async(req,rep)=>{
+  const asOf=req.query?.asOf??new Date().toISOString().slice(0,10),supplierCode=String(req.query?.supplierCode??'').trim()||null;
+  if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(asOf)))return bad(rep,'صيغة التاريخ يجب أن تكون YYYY-MM-DD');
+  if(supplierCode&&!txt(supplierCode,40))return bad(rep,'كود المورد غير صحيح');
+  try{return (await db.query(`WITH received AS (
+    SELECT po.id purchase_order_id,po.order_no,po.supplier_id,po.payment_due_date,
+      COALESCE(po.payment_due_date,MIN(gr.received_at::date)) aging_date,
+      SUM(gl.accepted_qty*gl.unit_cost)::numeric received_amount
+    FROM purchase_orders po JOIN goods_receipts gr ON gr.purchase_order_id=po.id
+      JOIN goods_receipt_lines gl ON gl.goods_receipt_id=gr.id
+    WHERE gr.status IN ('ACCEPTED','PARTIAL') AND gr.received_at::date<=$1::date
+    GROUP BY po.id,po.order_no,po.supplier_id,po.payment_due_date
+   ), paid AS (
+    SELECT a.purchase_order_id,SUM(a.amount)::numeric paid_amount
+    FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.supplier_payment_id
+    WHERE p.status='POSTED' AND p.payment_date<=$1::date GROUP BY a.purchase_order_id
+   ), returned AS (
+    SELECT r.purchase_order_id,SUM(l.quantity*l.unit_cost)::numeric returned_amount
+    FROM purchase_returns r JOIN purchase_return_lines l ON l.purchase_return_id=r.id
+    WHERE r.status='POSTED' AND r.accounting_approved_at::date<=$1::date AND r.purchase_order_id IS NOT NULL
+    GROUP BY r.purchase_order_id
+   )
+   SELECT s.code supplier_code,s.name_ar supplier_name,r.purchase_order_id,r.order_no,r.aging_date,
+    r.received_amount,COALESCE(p.paid_amount,0) paid_amount,COALESCE(x.returned_amount,0) returned_amount,
+    GREATEST(0::numeric,r.received_amount-COALESCE(p.paid_amount,0)-COALESCE(x.returned_amount,0)) outstanding,
+    GREATEST(0,($1::date-r.aging_date))::int age_days,
+    CASE WHEN GREATEST(0,($1::date-r.aging_date))<=30 THEN '0-30'
+      WHEN GREATEST(0,($1::date-r.aging_date))<=60 THEN '31-60'
+      WHEN GREATEST(0,($1::date-r.aging_date))<=90 THEN '61-90' ELSE 'أكثر من 90' END aging_bucket
+   FROM received r JOIN suppliers s ON s.id=r.supplier_id
+   LEFT JOIN paid p ON p.purchase_order_id=r.purchase_order_id LEFT JOIN returned x ON x.purchase_order_id=r.purchase_order_id
+   WHERE GREATEST(0::numeric,r.received_amount-COALESCE(p.paid_amount,0)-COALESCE(x.returned_amount,0))>0
+    AND ($2::text IS NULL OR s.code=$2::text)
+   ORDER BY s.code,r.aging_date,r.order_no`,[asOf,supplierCode])).rows;}
+  catch(e){return fail(rep,e);}
+ });
  app.get('/api/v1/reports/supplier-statement',auth(app,'REPORTS.READ'),async(req,rep)=>{
   const supplierCode=String(req.query?.supplierCode??'').trim(),from=req.query?.from??null,to=req.query?.to??null;
   if(!txt(supplierCode,40))return bad(rep,'كود المورد مطلوب');
