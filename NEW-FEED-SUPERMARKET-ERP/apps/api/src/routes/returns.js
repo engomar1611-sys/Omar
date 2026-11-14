@@ -21,7 +21,8 @@ router.get("/sales/returns",async(_req,res,next)=>{
 });
 
 router.post("/sales/:saleId/returns",async(req,res,next)=>{
-  const {reference_no,reason,requested_by=null,lines}=req.body??{};
+  const {reference_no,reason,lines}=req.body??{};
+  const requested_by=req.user.id;
   if(!uuid.test(req.params.saleId)||!text(reference_no,50)||!text(reason,1000)||
      (requested_by&&!uuid.test(requested_by))||!Array.isArray(lines)||!lines.length||lines.length>100||
      lines.some(x=>!uuid.test(x.sale_line_id||"")||!Number.isFinite(Number(x.quantity))||Number(x.quantity)<=0))
@@ -70,7 +71,8 @@ router.post("/sales/:saleId/returns",async(req,res,next)=>{
 });
 
 router.post("/sales/returns/:id/inspect",async(req,res,next)=>{
-  const {inspected_by=null,warehouse_id,inspection_note=null,lines}=req.body??{};
+  const {warehouse_id,inspection_note=null,lines}=req.body??{};
+  const inspected_by=req.user.id;
   if(!uuid.test(req.params.id)||!uuid.test(warehouse_id||"")||(inspected_by&&!uuid.test(inspected_by))||
      !Array.isArray(lines)||!lines.length||lines.length>100||
      lines.some(x=>!uuid.test(x.return_line_id||"")||!["sellable","damaged","expired"].includes(x.condition)||
@@ -113,7 +115,7 @@ router.post("/sales/returns/:id/inspect",async(req,res,next)=>{
 });
 
 router.post("/sales/returns/:id/approve",async(req,res,next)=>{
-  const {financially_approved_by=null}=req.body??{};
+  const financially_approved_by=req.user.id;
   if(!uuid.test(req.params.id)||(financially_approved_by&&!uuid.test(financially_approved_by)))
     return fail(res,400,"Invalid financial approval fields");
   const client=await pool.connect();
@@ -157,7 +159,8 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
 });
 
 router.post("/sales/returns/:id/refund",async(req,res,next)=>{
-  const {payment_method_id,amount,reference_text=null,processed_by=null}=req.body??{};
+  const {payment_method_id,amount,reference_text=null}=req.body??{};
+  const processed_by=req.user.id;
   if(!uuid.test(req.params.id)||!uuid.test(payment_method_id||"")||
      !Number.isFinite(Number(amount))||Number(amount)<=0||(processed_by&&!uuid.test(processed_by)))
     return fail(res,400,"Invalid refund fields");
