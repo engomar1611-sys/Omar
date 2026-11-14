@@ -15,7 +15,7 @@ try{
     migration_name VARCHAR(255) PRIMARY KEY,
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
-  const files=["schema.sql",...(await readdir(path.join(root,"database"))).filter(x=>/^\\d{3}_.+\\.sql$/.test(x)).sort()];
+  const files=["schema.sql",...(await readdir(path.join(root,"database"))).filter(x=>/^\d{3}_.+\.sql$/.test(x)).sort()];
   for(const file of files){
     const applied=await client.query("SELECT 1 FROM schema_migrations WHERE migration_name=$1",[file]);
     if(applied.rowCount){console.log("SKIP",file);continue;}
