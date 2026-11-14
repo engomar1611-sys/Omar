@@ -4,7 +4,7 @@
 INSERT INTO units_of_measure(code,name_ar,decimal_places) VALUES
  ('SET','طقم',0),('BOX','علبة',0),('ROLL','لفة',2),('M','متر',3),('M2','متر مربع',3),
  ('M3','متر مكعب',3),('PAIR','زوج',0),('CAN','جركن',0),('DRUM','برميل',0),('HOUR','ساعة',2),
- ('DAY','يوم',2),('KWH','كيلووات ساعة',3),('PACK','عبوة',0)
+ ('DAY','يوم',2),('KWH','كيلووات ساعة',3),('PACK','عبوة',0),('REAM','رزمة ورق',0)
 ON CONFLICT(code) DO UPDATE SET name_ar=EXCLUDED.name_ar,decimal_places=EXCLUDED.decimal_places;
 
 INSERT INTO item_categories(code,name_ar,category_kind) VALUES
