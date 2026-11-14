@@ -87,11 +87,11 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
     for(const line of lines){
       const ordered=await client.query(
         `SELECT COALESCE(SUM(pol.quantity),0) AS ordered,
-                COALESCE((SELECT SUM(prl.quantity)
+                COALESCE((SELECT SUM(CASE WHEN pr.inspection_status='pending_inspection' THEN prl.quantity ELSE prl.accepted_quantity END)
                           FROM purchase_receipt_lines prl
                           JOIN purchase_receipts pr ON pr.id=prl.receipt_id
                           WHERE pr.purchase_order_id=pol.purchase_order_id
-                            AND pr.inspection_status='accepted'
+                            AND pr.inspection_status IN ('pending_inspection','accepted')
                             AND prl.product_id=pol.product_id),0) AS received
          FROM purchase_order_lines pol
          WHERE pol.purchase_order_id=$1 AND pol.product_id=$2
@@ -107,35 +107,17 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
       if(product.rows[0].tracks_expiry&&!line.expiry_date) throw Object.assign(new Error("Expiry date is required for this product"),{statusCode:400});
       const lot=await client.query(
         `INSERT INTO stock_lots(product_id,warehouse_id,lot_number,expiry_date,quantity_on_hand,unit_cost,is_saleable)
-         VALUES($1,$2,$3,$4,0,$6,FALSE) RETURNING id`,
-        [line.product_id,warehouse_id,line.lot_number||null,line.expiry_date||null,line.quantity,line.unit_cost]
+         VALUES($1,$2,$3,$4,0,$5,FALSE) RETURNING id`,
+        [line.product_id,warehouse_id,line.lot_number||null,line.expiry_date||null,line.unit_cost]
       );
       await client.query(
         `INSERT INTO purchase_receipt_lines(receipt_id,product_id,quantity,unit_cost,lot_number,expiry_date,stock_lot_id)
          VALUES($1,$2,$3,$4,$5,$6,$7)`,
         [receipt.rows[0].id,line.product_id,line.quantity,line.unit_cost,line.lot_number||null,line.expiry_date||null,lot.rows[0].id]
       );
-      await client.query(
-        `-- Stock movement is posted only after warehouse inspection accepts the goods.`,
-        [reference_no.trim(),line.product_id,warehouse_id,lot.rows[0].id,line.quantity,line.unit_cost,receipt.rows[0].id,received_by]
-      );
     }
-    const balance=await client.query(
-      `SELECT EXISTS(
-         SELECT 1 FROM purchase_order_lines pol
-         WHERE pol.purchase_order_id=$1
-           AND pol.quantity > COALESCE((
-             SELECT SUM(prl.quantity) FROM purchase_receipt_lines prl
-             JOIN purchase_receipts pr ON pr.id=prl.receipt_id
-             WHERE pr.purchase_order_id=pol.purchase_order_id
-               AND pr.inspection_status='accepted' AND prl.product_id=pol.product_id
-           ),0) + 0.000001
-       ) AS has_remaining`,[req.params.id]
-    );
-    await client.query(
-      "UPDATE purchase_orders SET status=$2 WHERE id=$1",
-      [req.params.id,balance.rows[0].has_remaining?"part_received":"received"]
-    );
+    // Receipt remains in progress until warehouse inspection accepts quantities.
+    await client.query("UPDATE purchase_orders SET status='part_received' WHERE id=$1",[req.params.id]);
     await client.query("COMMIT");
     res.status(201).json({receipt:receipt.rows[0],accepted_lines:lines.length});
   }catch(e){await client.query("ROLLBACK");next(e);}
