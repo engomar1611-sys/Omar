@@ -45,10 +45,30 @@ router.post("/sales/complete",async(req,res,next)=>{
   }
   const total=subtotal-discountTotal,paymentTotal=payments.reduce((s,x)=>s+Number(x.amount),0);
   if(Math.abs(paymentTotal-total)>0.01)throw Object.assign(new Error("Payment total must equal the sale total"),{statusCode:400});
-  for(const p of payments)await client.query("INSERT INTO sale_payments(sale_id,payment_method_id,amount,reference_text) VALUES($1,$2,$3,$4)",[sale.rows[0].id,p.payment_method_id,p.amount,p.reference_text||null]);
+  const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const mappings=await client.query("SELECT mapping_key,account_id FROM system_account_mappings WHERE mapping_key=ANY($1::varchar[])",[["sales_revenue","cogs","inventory"]]);
+  const accountMap=Object.fromEntries(mappings.rows.map(x=>[x.mapping_key,x.account_id]));
+  if(!accountMap.sales_revenue||!accountMap.cogs||!accountMap.inventory)
+    throw Object.assign(new Error("Required sales accounting mappings are missing; apply migration 012"),{statusCode:409});
+  const journal=await client.query(
+    "INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'sale',$2,CURRENT_DATE,'posted') RETURNING id",
+    ["JE-"+sale.rows[0].id,sale.rows[0].id]);
+  for(const p of payments){
+    const method=await client.query("SELECT id,account_id FROM payment_methods WHERE id=$1 AND is_active=true",[p.payment_method_id]);
+    if(!method.rowCount||!method.rows[0].account_id)
+      throw Object.assign(new Error("Payment method has no mapped ledger account"),{statusCode:409});
+    await client.query("INSERT INTO sale_payments(sale_id,payment_method_id,amount,reference_text) VALUES($1,$2,$3,$4)",[sale.rows[0].id,p.payment_method_id,p.amount,p.reference_text||null]);
+    await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journal.rows[0].id,method.rows[0].account_id,p.amount]);
+  }
+  if(total>0)await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.sales_revenue,total]);
+  if(cogs>0){
+    await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journal.rows[0].id,accountMap.cogs,cogs]);
+    await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.inventory,cogs]);
+  }
   const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,grand_total=$4,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal,total]);
   await client.query("COMMIT");
-  res.status(201).json({sale:done.rows[0],cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal});
+  res.status(201).json({sale:done.rows[0],cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,journal_entry_id:journal.rows[0].id});
  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
 });
 export default router;
