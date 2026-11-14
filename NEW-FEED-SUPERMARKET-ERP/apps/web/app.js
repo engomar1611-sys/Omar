@@ -20,18 +20,52 @@ document.getElementById("bootstrapForm").addEventListener("submit",async e=>{
   try{const r=await originalFetch("/api/auth/bootstrap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({bootstrap_secret:document.getElementById("bootstrapSecret").value,username:document.getElementById("bootstrapUsername").value,display_name:document.getElementById("bootstrapDisplayName").value,password:document.getElementById("bootstrapPassword").value})});const d=await r.json();if(!r.ok)throw new Error(d.error||"تعذر إنشاء المدير");saveSession(d);}catch(err){authMessage(err.message);}
 });
 if(storedToken){document.getElementById("authGate").style.display="none";const name=sessionStorage.getItem("nf_user_name");const userLabel=document.querySelector(".user b");if(name&&userLabel)userLabel.textContent=name;}
-const sampleProducts=[
-{id:1,name:"مياه معدنية 1.5 لتر",price:8,cat:"مشروبات",icon:"💧"},{id:2,name:"عصير برتقال",price:18,cat:"مشروبات",icon:"🧃"},{id:3,name:"حليب كامل الدسم",price:24,cat:"ألبان ومنتجاتها",icon:"🥛"},{id:4,name:"كوكاكولا عادي",price:15,cat:"مشروبات",icon:"🥤"},{id:5,name:"شيبسي",price:12,cat:"مواد غذائية",icon:"🥔"},{id:6,name:"بسكويت",price:14,cat:"مواد غذائية",icon:"🍪"},{id:7,name:"شوكولاتة",price:20,cat:"مواد غذائية",icon:"🍫"},{id:8,name:"جبنة كريمي",price:32,cat:"ألبان ومنتجاتها",icon:"🧀"},{id:9,name:"مسحوق غسيل",price:75,cat:"منظفات",icon:"🧺"},{id:10,name:"منعم أقمشة",price:60,cat:"منظفات",icon:"🧴"},{id:11,name:"سائل غسيل صحون",price:25,cat:"منظفات",icon:"🧼"},{id:12,name:"مناديل ورقية",price:20,cat:"مستلزمات منزلية",icon:"🧻"}];
+let posProducts=[],posContext=null;
 const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["customers","♙","العملاء والولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات والخزينة"],["hr","♙","الموارد البشرية"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["ecommerce","▧","المتجر الإلكتروني"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
 const moduleData={catalog:["الأصناف والباركود",["كود الصنف","اسم الصنف","التصنيف","الوحدة الأساسية","باركود","حالة الوزن","الصلاحية"],"لا توجد أصناف مسجلة بعد. أضف بيانات الأصناف المعتمدة أو استوردها من ملف موثوق."],inventory:["المخازن والمخزون",["كود الصنف","الصنف","المخزن","التشغيلة","الصلاحية","الكمية","متوسط التكلفة"],"ستظهر أرصدة المخزون وحركاته بعد تهيئة المخازن وإدخال أرصدة افتتاحية معتمدة."],purchasing:["المشتريات وطلبات الشراء",["الرقم المرجعي","المورد","التاريخ","الحالة","القيمة"],"أنشئ طلب شراء، ثم اعتمده وأصدر أمر الشراء وسجل الاستلام وفحص الجودة."],sales:["المبيعات والفواتير",["الرقم المرجعي","التاريخ","الكاشير","العميل","الإجمالي","الحالة"],"تظهر فواتير البيع المكتملة والمرتجعات بعد ربط نقاط البيع بقاعدة البيانات."],customers:["العملاء والولاء",["كود العميل","اسم العميل","الهاتف","نقاط الولاء","الحالة"],"سجل العملاء وربطهم بالمبيعات ونظام الولاء."],suppliers:["الموردون",["كود المورد","اسم المورد","الهاتف","الرصيد","الحالة"],"سجل الموردين وربطهم بطلبات الشراء والاستلام والمستحقات."],accounting:["الحسابات والخزينة",["كود الحساب","اسم الحساب","نوع الحساب","الحالة"],"دليل الحسابات والقيود اليومية والخزائن والبنوك والتسويات."],hr:["الموارد البشرية",["كود الموظف","اسم الموظف","الوظيفة","الفرع","الحالة"],"ملفات الموظفين والورديات والحضور والإجازات والصلاحيات الوظيفية."],assets:["الأصول والصيانة",["كود الأصل","اسم الأصل","التصنيف","الموقع","الحالة"],"سجل الأصول والترقيم وطباعة ملصقات الباركود والصيانة."],delivery:["التوصيل",["رقم الطلب","العميل","العنوان","مندوب التوصيل","الحالة"],"إدارة طلبات التوصيل وتخصيص المندوب ومتابعة التسليم."],ecommerce:["المتجر الإلكتروني",["رقم الطلب","العميل","قناة الطلب","الدفع","الحالة"],"إدارة كتالوج المتجر والطلبات ومزامنتها مع المخزون ونقاط البيع."],users:["المستخدمون والصلاحيات",["اسم المستخدم","الاسم","الدور","الصلاحيات","الحالة"],"إدارة المستخدمين والأدوار والصلاحيات على مستوى الموديول والإجراء."],settings:["إعدادات النظام",["الإعداد","القيمة","الوصف"],"إعدادات الشركة والفروع والضرائب والترقيم والطباعة والنسخ الاحتياطي والاتصال."]};
 let cart=[],activeCategory="الكل";
 const $=id=>document.getElementById(id),money=n=>Number(n).toFixed(2);
 function toast(msg){const t=document.createElement("div");t.className="toast";t.textContent=msg;document.body.append(t);setTimeout(()=>t.remove(),2600)}
 function renderNav(){ $("moduleNav").innerHTML=modules.map(([id,ic,name])=>'<button class="nav-item '+(id==="pos"?"active":"")+'" data-module="'+id+'"><span class="nav-icon">'+ic+'</span>'+name+'</button>').join("");document.querySelectorAll(".nav-item").forEach(b=>b.onclick=()=>openModule(b.dataset.module));}
-function renderCategories(){const cats=["الكل","مواد غذائية","مشروبات","ألبان ومنتجاتها","مخبوزات","منظفات","عناية شخصية","مستلزمات منزلية","مجمدات"];$("categories").innerHTML=cats.map(c=>'<button class="category '+(c===activeCategory?"active":"")+'" data-cat="'+c+'">'+c+'</button>').join("");document.querySelectorAll(".category").forEach(b=>b.onclick=()=>{activeCategory=b.dataset.cat;renderCategories();renderProducts();});}
-function renderProducts(){const q=$("productSearch").value.trim().toLowerCase();const list=sampleProducts.filter(p=>(activeCategory==="الكل"||p.cat===activeCategory)&&(!q||p.name.toLowerCase().includes(q)||String(p.id)===q));$("productGrid").innerHTML=list.map(p=>'<button class="product-card" data-id="'+p.id+'"><span class="product-visual">'+p.icon+'</span><b>'+p.name+'</b><strong>'+money(p.price)+' ج.م</strong></button>').join("")||'<div class="empty-state">لا توجد نتائج مطابقة</div>';document.querySelectorAll(".product-card").forEach(b=>b.onclick=()=>addProduct(Number(b.dataset.id)));}
-function addProduct(id){const p=sampleProducts.find(x=>x.id===id);if(!p)return;const found=cart.find(x=>x.id===id);if(found)found.qty++;else cart.push({...p,qty:1});renderCart();}
-function renderCart(){const sub=cart.reduce((s,x)=>s+x.price*x.qty,0),pct=Math.min(100,Math.max(0,Number($("discountInput").value)||0)),disc=sub*pct/100;$("cartLines").innerHTML=cart.map((x,i)=>'<div class="cart-line"><span>'+(i+1)+'</span><b>'+x.name+'</b><span class="qty-control"><button data-dec="'+x.id+'">−</button>'+x.qty+'<button data-inc="'+x.id+'">+</button></span><span>'+money(x.price)+'</span><b>'+money(x.price*x.qty)+'</b><button class="remove-line" data-del="'+x.id+'">×</button></div>').join("")||'<div class="empty-state">أضف الأصناف إلى فاتورة البيع</div>';$("itemCount").textContent=cart.reduce((s,x)=>s+x.qty,0);$("subtotal").textContent=money(sub);$("discountValue").textContent=money(disc);$("grandTotal").textContent=money(sub-disc)+" ج.م";document.querySelectorAll("[data-inc]").forEach(b=>b.onclick=()=>{cart.find(x=>x.id===Number(b.dataset.inc)).qty++;renderCart()});document.querySelectorAll("[data-dec]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===Number(b.dataset.dec));x.qty--;if(x.qty<=0)cart=cart.filter(y=>y.id!==x.id);renderCart()});document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{cart=cart.filter(x=>x.id!==Number(b.dataset.del));renderCart()});}
+function renderCategories(){
+ const cats=["الكل",...new Set(posProducts.map(p=>p.category_name).filter(Boolean))];
+ if(activeCategory!=="الكل"&&!cats.includes(activeCategory))activeCategory="الكل";
+ $("categories").innerHTML=cats.map(x=>'<button class="category '+(x===activeCategory?"active":"")+'" data-cat="'+escapeHtml(x)+'">'+escapeHtml(x)+'</button>').join("");
+ document.querySelectorAll(".category").forEach(b=>b.onclick=()=>{activeCategory=b.dataset.cat;renderCategories();renderProducts();});
+}
+function renderProducts(){
+ const q=$("productSearch").value.trim().toLowerCase();
+ const list=posProducts.filter(p=>(activeCategory==="الكل"||p.category_name===activeCategory)&&(!q||p.name_ar.toLowerCase().includes(q)||p.sku.toLowerCase().includes(q)||(p.barcodes||[]).some(x=>String(x).includes(q))));
+ $("productGrid").innerHTML=list.map(p=>{
+  const price=p.retail_price===null||p.retail_price===undefined?null:Number(p.retail_price);
+  return '<button class="product-card" data-id="'+p.id+'" '+(price===null?'disabled':'')+'><span class="product-visual">▦</span><b>'+escapeHtml(p.name_ar)+'</b><small>'+escapeHtml(p.sku)+'</small><strong>'+(price===null?'السعر غير محدد':money(price)+' ج.م')+'</strong></button>';
+ }).join("")||'<div class="empty-state">لا توجد أصناف مطابقة في كتالوج قاعدة البيانات</div>';
+ document.querySelectorAll(".product-card:not(:disabled)").forEach(b=>b.onclick=()=>addProduct(b.dataset.id));
+}
+function addProduct(id){
+ const p=posProducts.find(x=>x.id===id);
+ if(!p)return;
+ if(p.retail_price===null||p.retail_price===undefined)return toast("لا يمكن البيع قبل تسجيل سعر تجزئة معتمد للصنف");
+ const found=cart.find(x=>x.id===id);
+ if(found)found.qty++;else cart.push({id:p.id,product_id:p.id,unit_id:p.base_unit_id,name:p.name_ar,price:Number(p.retail_price),cat:p.category_name||"",qty:1,weighted:p.is_weighted});
+ renderCart();
+}
+function renderCart(){
+ const sub=cart.reduce((s,x)=>s+x.price*x.qty,0),pct=Math.min(100,Math.max(0,Number($("discountInput").value)||0)),disc=sub*pct/100;
+ $("cartLines").innerHTML=cart.map((x,i)=>'<div class="cart-line"><span>'+(i+1)+'</span><b>'+escapeHtml(x.name)+'</b><span class="qty-control"><button data-dec="'+x.id+'">−</button>'+x.qty+'<button data-inc="'+x.id+'">+</button></span><span>'+money(x.price)+'</span><b>'+money(x.price*x.qty)+'</b><button class="remove-line" data-del="'+x.id+'">×</button></div>').join("")||'<div class="empty-state">أضف الأصناف إلى فاتورة البيع</div>';
+ $("itemCount").textContent=cart.reduce((s,x)=>s+x.qty,0);$("subtotal").textContent=money(sub);$("discountValue").textContent=money(disc);$("grandTotal").textContent=money(sub-disc)+" ج.م";
+ document.querySelectorAll("[data-inc]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.inc);if(x){x.qty++;renderCart();}});
+ document.querySelectorAll("[data-dec]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.dec);if(x){x.qty--;if(x.qty<=0)cart=cart.filter(y=>y.id!==x.id);renderCart();}});
+ document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{cart=cart.filter(x=>x.id!==b.dataset.del);renderCart();});
+}
+async function loadPosData(){
+ try{
+  const [context,catalog]=await Promise.all([api("/api/pos/context"),api("/api/products?limit=200")]);
+  posContext=context;posProducts=catalog.items||[];
+  $("paymentMethod").innerHTML=context.payment_methods.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name_ar)+'</option>').join("");
+  renderCategories();renderProducts();
+ }catch(e){$("productGrid").innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'<br>تحقق من تهيئة الفرع والصلاحيات والأسعار.</div>';}
+}
 async function api(url,options={}){const r=await fetch(url,{...options,headers:{"Content-Type":"application/json",...(options.headers||{})}});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||"تعذر تنفيذ الطلب");return data;}
 function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[x]));}
 async function openCatalog(){
@@ -67,7 +101,20 @@ $("holdSale").onclick=()=>toast("التعليق المحلي للفاتورة: �
 $("returnSale").onclick=()=>toast("المرتجعات تتطلب فاتورة أصلية وفحص مخزن واعتمادًا ماليًا");
 $("printReceipt").onclick=()=>toast("الطباعة الفعلية تتطلب ربط طابعة الإيصالات");
 $("noteSale").onclick=()=>{const n=prompt("ملاحظة الفاتورة");if(n)toast("تم إدخال الملاحظة لهذه الجلسة")};
-$("scanButton").onclick=()=>{const code=prompt("أدخل أو امسح الباركود");if(code){const p=sampleProducts.find(x=>String(x.id)===code);if(p)addProduct(p.id);else toast("الباركود غير موجود في بيانات العرض التجريبية")}};
-$("completeSale").onclick=()=>{if(!cart.length)return toast("السلة فارغة");toast("هذه بيانات عرض تجريبية؛ لم يتم ترحيل فاتورة أو خصم مخزون");};
+$("scanButton").onclick=()=>{const code=prompt("أدخل أو امسح الباركود");if(code){const p=posProducts.find(x=>String(x.sku)===code||(x.barcodes||[]).includes(code));if(p)addProduct(p.id);else toast("الباركود غير مسجل في كتالوج قاعدة البيانات")}};
+$("completeSale").onclick=async()=>{
+ if(!cart.length)return toast("السلة فارغة");
+ if(!posContext)return toast("بيانات نقطة البيع غير جاهزة");
+ const pct=Math.min(100,Math.max(0,Number($("discountInput").value)||0));
+ const total=cart.reduce((s,x)=>s+x.price*x.qty,0)*(1-pct/100);
+ const payment_method_id=$("paymentMethod").value;
+ if(!payment_method_id)return toast("اختر طريقة الدفع");
+ const lines=cart.map(x=>({product_id:x.product_id,unit_id:x.unit_id,quantity:x.qty,unit_price:x.price,discount_amount:Number((x.price*x.qty*pct/100).toFixed(6))}));
+ try{
+  const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,cashier_id:posContext.user.id,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],idempotency_key:crypto.randomUUID()})});
+  toast("تم حفظ الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+" ج.م");
+  cart=[];$("discountInput").value="0";renderCart();
+ }catch(e){toast(e.message);}
+};
 function tick(){const d=new Date();$("dateText").textContent=d.toLocaleDateString("ar-EG",{weekday:"long",year:"numeric",month:"long",day:"numeric"});$("timeText").textContent=d.toLocaleTimeString("ar-EG",{hour:"2-digit",minute:"2-digit"});}
-renderNav();renderCategories();renderProducts();renderCart();tick();setInterval(tick,30000);
+renderNav();renderCart();if(storedToken)loadPosData();tick();setInterval(tick,30000);
