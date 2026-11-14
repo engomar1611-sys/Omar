@@ -112,7 +112,7 @@ function formatModuleValue(value){
  if(value===null||value===undefined||value==="")return "—";
  if(typeof value==="boolean")return value?"نعم":"لا";
  if(typeof value==="number")return money(value);
- if(typeof value==="string"&&/^\\d{4}-\\d{2}-\\d{2}T/.test(value))return new Date(value).toLocaleString("ar-EG");
+ if(typeof value==="string"&&/^\d{4}-\d{2}-\d{2}T/.test(value))return new Date(value).toLocaleString("ar-EG");
  return String(value);
 }
 async function loadOperationalModule(id){
