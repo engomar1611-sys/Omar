@@ -15,12 +15,24 @@ router.post("/sales/complete",async(req,res,next)=>{
  try{
   await client.query("BEGIN");
   if(idempotency_key){const prior=await client.query("SELECT * FROM sales WHERE idempotency_key=$1",[idempotency_key]);if(prior.rowCount){await client.query("ROLLBACK");return res.json({sale:prior.rows[0],duplicate:true});}}
+  if(lines.some(x=>Number(x.discount_amount||0)>0)){
+   const allowed=await client.query("SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id JOIN permissions p ON p.id=rp.permission_id WHERE ur.user_id=$1 AND p.code='sales.discount' LIMIT 1",[req.user.id]);
+   if(!allowed.rowCount)throw Object.assign(new Error("User is not authorized to apply sales discounts"),{statusCode:403});
+  }
   const sale=await client.query("INSERT INTO sales(reference_no,branch_id,customer_id,cashier_id,status,channel,idempotency_key) VALUES($1,$2,$3,$4,'open','pos',$5) RETURNING *",[reference_no.trim(),branch_id,customer_id,cashier_id,idempotency_key]);
   let subtotal=0,discountTotal=0,cogs=0;
   for(const line of lines){
-   const product=await client.query("SELECT p.id,p.base_unit_id,p.tracks_expiry,COALESCE(pu.conversion_to_base,1) conversion FROM products p LEFT JOIN product_units pu ON pu.product_id=p.id AND pu.unit_id=$2 WHERE p.id=$1 AND p.is_active=true AND (p.base_unit_id=$2 OR pu.unit_id IS NOT NULL) FOR UPDATE OF p",[line.product_id,line.unit_id]);
+   const product=await client.query("SELECT p.id,p.base_unit_id,p.tracks_expiry,COALESCE(pu.conversion_to_base,1) conversion,
+      (SELECT pp.amount FROM product_prices pp WHERE pp.product_id=p.id AND pp.price_type='retail'
+       AND pp.valid_from<=now() AND (pp.valid_to IS NULL OR pp.valid_to>now())
+       ORDER BY pp.observed_at DESC,pp.created_at DESC LIMIT 1) retail_price
+      FROM products p LEFT JOIN product_units pu ON pu.product_id=p.id AND pu.unit_id=$2
+      WHERE p.id=$1 AND p.is_active=true AND (p.base_unit_id=$2 OR pu.unit_id IS NOT NULL) FOR UPDATE OF p",[line.product_id,line.unit_id]);
    if(!product.rowCount)throw Object.assign(new Error("Product or sale unit is not active or configured"),{statusCode:400});
    const qty=Number(line.quantity),baseQty=qty*Number(product.rows[0].conversion),unitPrice=Number(line.unit_price),discount=Number(line.discount_amount||0);
+   const approvedPrice=product.rows[0].retail_price===null?null:Number(product.rows[0].retail_price);
+   if(approvedPrice===null||Math.abs(unitPrice-approvedPrice)>0.000001)
+     throw Object.assign(new Error("Sale price does not match the active approved retail price"),{statusCode:409});
    const gross=qty*unitPrice;if(discount>gross+0.000001)throw Object.assign(new Error("Line discount exceeds line amount"),{statusCode:400});
    const lots=await client.query("SELECT id,quantity_on_hand,unit_cost,expiry_date FROM stock_lots WHERE product_id=$1 AND warehouse_id IN (SELECT id FROM warehouses WHERE branch_id=$2 AND is_active=true) AND is_saleable=true AND quantity_on_hand>0 AND (expiry_date IS NULL OR expiry_date>=CURRENT_DATE) ORDER BY expiry_date NULLS LAST,received_at,id FOR UPDATE",[line.product_id,branch_id]);
    const available=lots.rows.reduce((s,x)=>s+Number(x.quantity_on_hand),0);
