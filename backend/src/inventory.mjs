@@ -136,4 +136,117 @@ export async function inventoryRoutes(app,{db}){
   }catch(e){return fail(rep,e);}
  });
 
+ app.get('/api/v1/inventory/counts',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.READ')]},async(req,rep)=>{
+  try{return (await db.query(`SELECT c.*,w.code warehouse_code,
+   COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'itemCode',i.code,'itemName',i.name_ar,
+    'lotNo',l.lot_no,'expectedQty',l.expected_qty,'countedQty',l.counted_qty,'unitCost',l.unit_cost)
+    ORDER BY i.code,l.lot_no) FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
+   FROM inventory_counts c JOIN warehouses w ON w.id=c.warehouse_id
+   LEFT JOIN inventory_count_lines l ON l.count_id=c.id LEFT JOIN items i ON i.id=l.item_id
+   GROUP BY c.id,w.code ORDER BY c.created_at DESC LIMIT 300`)).rows;}
+  catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/inventory/counts',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.COUNT')]},async(req,rep)=>{
+  const b=req.body??{};
+  if(typeof b.countNo!=='string'||!b.countNo.trim()||!b.warehouseId)return rep.code(400).send({error:'VALIDATION_ERROR'});
+  try{
+   const out=await tx(db,async c=>{
+    const h=await c.query(`INSERT INTO inventory_counts(count_no,warehouse_id,count_date,reason,created_by)
+     VALUES($1,$2,COALESCE($3::date,CURRENT_DATE),$4,$5) RETURNING *`,
+     [b.countNo.trim(),b.warehouseId,b.countDate??null,String(b.reason??''),req.authUser.user_id]);
+    await c.query(`INSERT INTO inventory_count_lines(count_id,item_id,lot_no,expected_qty,unit_cost)
+     SELECT $1,item_id,lot_no,quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$2
+     ON CONFLICT(count_id,item_id,lot_no) DO NOTHING`,[h.rows[0].id,b.warehouseId]);
+    return h.rows[0];
+   });
+   return rep.code(201).send(out);
+  }catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/inventory/counts/:id/lines',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.COUNT')]},async(req,rep)=>{
+  const b=req.body??{};
+  if(!b.itemId||!Number.isFinite(Number(b.unitCost))||Number(b.unitCost)<0||!Number.isFinite(Number(b.countedQty))||Number(b.countedQty)<0)
+   return rep.code(400).send({error:'VALIDATION_ERROR'});
+  try{
+   const out=await tx(db,async c=>{
+    const h=await c.query("SELECT * FROM inventory_counts WHERE id=$1 FOR UPDATE",[req.params.id]);
+    if(!h.rowCount||h.rows[0].status!=='DRAFT')throw Object.assign(new Error('الجرد غير قابل للتعديل'),{code:'P0001'});
+    const existing=await c.query('SELECT 1 FROM inventory_count_lines WHERE count_id=$1 AND item_id=$2 AND lot_no=$3',[req.params.id,b.itemId,b.lotNo??'']);
+    if(existing.rowCount)throw Object.assign(new Error('الصنف والتشغيلة موجودان بالفعل في الجرد'),{code:'P0001'});
+    const r=await c.query(`INSERT INTO inventory_count_lines(count_id,item_id,lot_no,expected_qty,counted_qty,unit_cost)
+     VALUES($1,$2,$3,0,$4,$5) RETURNING *`,[req.params.id,b.itemId,b.lotNo??'',b.countedQty,b.unitCost]);
+    return r.rows[0];
+   });return rep.code(201).send(out);
+  }catch(e){return fail(rep,e);}
+ });
+ app.put('/api/v1/inventory/counts/:id/lines/:lineId',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.COUNT')]},async(req,rep)=>{
+  const qty=Number(req.body?.countedQty);
+  if(!Number.isFinite(qty)||qty<0)return rep.code(400).send({error:'VALIDATION_ERROR'});
+  try{
+   const out=await tx(db,async c=>{
+    const h=await c.query("SELECT status FROM inventory_counts WHERE id=$1 FOR UPDATE",[req.params.id]);
+    if(!h.rowCount||h.rows[0].status!=='DRAFT')throw Object.assign(new Error('الجرد غير قابل للتعديل'),{code:'P0001'});
+    const r=await c.query('UPDATE inventory_count_lines SET counted_qty=$1 WHERE id=$2 AND count_id=$3 RETURNING *',[qty,req.params.lineId,req.params.id]);
+    if(!r.rowCount)throw Object.assign(new Error('بند الجرد غير موجود'),{code:'P0001'});
+    return r.rows[0];
+   });return out;
+  }catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/inventory/counts/:id/submit',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.COUNT')]},async(req,rep)=>{
+  try{
+   const out=await tx(db,async c=>{
+    const h=await c.query("SELECT status FROM inventory_counts WHERE id=$1 FOR UPDATE",[req.params.id]);
+    if(!h.rowCount||h.rows[0].status!=='DRAFT')throw Object.assign(new Error('الجرد غير قابل للإرسال'),{code:'P0001'});
+    const missing=await c.query('SELECT COUNT(*)::int n FROM inventory_count_lines WHERE count_id=$1 AND counted_qty IS NULL',[req.params.id]);
+    if(missing.rows[0].n)throw Object.assign(new Error('يجب تسجيل الكمية الفعلية لكل بنود الجرد'),{code:'P0001'});
+    await c.query("UPDATE inventory_counts SET status='COUNTED',submitted_by=$1,submitted_at=NOW() WHERE id=$2",[req.authUser.user_id,req.params.id]);
+    return {id:req.params.id,status:'COUNTED'};
+   });return out;
+  }catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/inventory/counts/:id/approve',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.COUNT.APPROVE')]},async(req,rep)=>{
+  try{
+   const out=await tx(db,async c=>{
+    const h=await c.query("SELECT * FROM inventory_counts WHERE id=$1 FOR UPDATE",[req.params.id]);
+    if(!h.rowCount||h.rows[0].status!=='COUNTED')throw Object.assign(new Error('الجرد غير جاهز للاعتماد'),{code:'P0001'});
+    const lines=await c.query('SELECT * FROM inventory_count_lines WHERE count_id=$1 ORDER BY item_id,lot_no FOR UPDATE',[req.params.id]);
+    const period=await c.query('SELECT status FROM accounting_periods WHERE $1::date BETWEEN start_date AND end_date FOR UPDATE',[h.rows[0].count_date]);
+    if(period.rowCount&&period.rows.some(x=>x.status!=='OPEN'))throw Object.assign(new Error('الفترة المحاسبية مغلقة'),{code:'P0001'});
+    const accounts=await c.query("SELECT code,id FROM gl_accounts WHERE code IN ('1200','5400') AND is_active=TRUE");
+    const inventoryAccount=accounts.rows.find(x=>x.code==='1200')?.id,varianceAccount=accounts.rows.find(x=>x.code==='5400')?.id;
+    let gain=0,loss=0,changed=0;
+    for(const l of lines.rows){
+     const bal=await c.query('SELECT quantity,average_unit_cost,expiry_date,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+     const current=bal.rowCount?Number(bal.rows[0].quantity):0,expected=Number(l.expected_qty),counted=Number(l.counted_qty);
+     if(Math.abs(current-expected)>0.000001)throw Object.assign(new Error('تغير رصيد الصنف بعد أخذ لقطة الجرد؛ أعد الجرد لهذا المخزن'),{code:'P0001'});
+     const delta=counted-expected;if(Math.abs(delta)<0.000001)continue;
+     const cost=bal.rowCount?Number(bal.rows[0].average_unit_cost):Number(l.unit_cost);
+     const expiry=bal.rowCount?bal.rows[0].expiry_date:null;
+     const quality=bal.rowCount?bal.rows[0].quality_status:'PENDING_QC';
+     const newQty=counted,newAvg=delta>0&&newQty>0?((current*cost)+(delta*Number(l.unit_cost)))/newQty:cost;
+     await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,expiry_date,quantity,average_unit_cost,quality_status)
+      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE
+      SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
+      [h.rows[0].warehouse_id,l.item_id,l.lot_no,expiry,newQty,newAvg,quality]);
+     const movement=delta>0?'ADJUSTMENT_IN':'ADJUSTMENT_OUT';
+     await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,quantity_out,unit_cost,reference_type,reference_id,created_by)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'INVENTORY_COUNT',$9,$10)`,
+      [`CNT-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,movement,Math.max(delta,0),Math.max(-delta,0),cost,req.params.id,req.authUser.user_id]);
+     if(delta>0)gain+=delta*Number(l.unit_cost);else loss+=(-delta)*cost;
+     changed++;
+    }
+    if((gain>0||loss>0)&&(!inventoryAccount||!varianceAccount))throw Object.assign(new Error('حساب المخزون أو فروق الجرد غير معرف'),{code:'P0001'});
+    const net=gain-loss;
+    if(Math.abs(net)>0.000001){
+     const debit=net>0?inventoryAccount:varianceAccount,credit=net>0?varianceAccount:inventoryAccount,amount=Math.abs(net);
+     const je=await c.query(`INSERT INTO journal_entries(entry_no,entry_date,source_type,source_id,description,total_debit,total_credit,created_by)
+      VALUES($1,$2,'INVENTORY_COUNT',$3,'فروق جرد مخزون',$4,$4,$5) RETURNING id`,
+      [`J-CNT-${req.params.id.slice(0,12)}`,h.rows[0].count_date,req.params.id,amount,req.authUser.user_id]);
+     await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0),($1,$4,0,$3)',[je.rows[0].id,debit,amount,credit]);
+    }
+    await c.query("UPDATE inventory_counts SET status='POSTED',approved_by=$1,approved_at=NOW() WHERE id=$2",[req.authUser.user_id,req.params.id]);
+    return {id:req.params.id,status:'POSTED',changedLines:changed,inventoryGain:gain,inventoryLoss:loss};
+   });return out;
+  }catch(e){return fail(rep,e);}
+ });
+
 }
