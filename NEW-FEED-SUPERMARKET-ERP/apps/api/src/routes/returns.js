@@ -128,11 +128,12 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
     for(const line of lines.rows){
       if(line.condition!=="sellable")continue;
       const cost=await client.query(
-        `SELECT COALESCE(SUM(quantity_out*unit_cost)/NULLIF(SUM(quantity_out),0),0) unit_cost
+        `SELECT COALESCE(SUM(quantity_out*unit_cost)/NULLIF(SUM(quantity_out),0),0) unit_cost,
+                COALESCE(SUM(quantity_out),0) issued_quantity
          FROM stock_movements WHERE source_type='sale' AND source_id=$1 AND product_id=$2 AND movement_type='sale_issue'`,
         [line.sale_id,line.product_id]);
       const unitCost=Number(cost.rows[0].unit_cost);
-      if(!Number.isFinite(unitCost)||unitCost<=0)
+      if(!Number.isFinite(unitCost)||Number(cost.rows[0].issued_quantity)<=0)
         throw Object.assign(new Error("Cannot determine original inventory cost for returned product "+line.product_id),{statusCode:409});
       const lot=await client.query(
         "INSERT INTO stock_lots(product_id,warehouse_id,lot_number,expiry_date,quantity_on_hand,unit_cost,is_saleable) VALUES($1,$2,$3,$4,$5,$6,true) RETURNING id",
