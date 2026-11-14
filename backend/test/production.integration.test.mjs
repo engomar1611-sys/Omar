@@ -339,7 +339,7 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(supplierPaymentList.statusCode,200,supplierPaymentList.body);
     assert.ok(supplierPaymentList.json().some(x=>x.id===supplierPayment.json().id));
     const purchaseReturn = await app.inject({method:'POST',url:'/api/v1/purchases/returns',headers,payload:{
-      returnNo:code('PR'),supplierId:supplier.json().id,warehouseId:warehouse.id,reason:'اختبار مردود مشتريات',
+      returnNo:code('PR'),supplierId:supplier.json().id,purchaseOrderId:purchase.json().id,warehouseId:warehouse.id,reason:'اختبار مردود مشتريات',
       lines:[{itemId:raw.id,lotNo:'BUYLOT-'+suffix,quantity:1}]
     }});
     assert.equal(purchaseReturn.statusCode,201,purchaseReturn.body);
