@@ -35,6 +35,7 @@ router.post("/bootstrap",async(req,res,next)=>{
   const client=await pool.connect();
   try{
     await client.query("BEGIN");
+    await client.query("LOCK TABLE users IN EXCLUSIVE MODE");
     const count=await client.query("SELECT COUNT(*)::int count FROM users");
     if(count.rows[0].count!==0)throw Object.assign(new Error("Initial administrator has already been created"),{statusCode:409});
     const user=await client.query(
