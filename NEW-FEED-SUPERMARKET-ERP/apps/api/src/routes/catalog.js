@@ -55,9 +55,18 @@ router.get("/products", async (req,res,next) => {
   const offset = Math.max(Number(req.query.offset)||0,0);
   try {
     const { rows } = await pool.query(
-      `SELECT p.*, c.name_ar AS category_name, u.code AS base_unit_code
+      `SELECT p.*, c.name_ar AS category_name, u.code AS base_unit_code,
+              rp.amount AS retail_price,
+              COALESCE((SELECT json_agg(pb.barcode ORDER BY pb.barcode)
+                        FROM product_barcodes pb WHERE pb.product_id=p.id),'[]'::json) AS barcodes
        FROM products p LEFT JOIN categories c ON c.id=p.category_id
        JOIN units u ON u.id=p.base_unit_id
+       LEFT JOIN LATERAL (
+         SELECT amount FROM product_prices
+         WHERE product_id=p.id AND price_type='retail'
+           AND valid_from<=now() AND (valid_to IS NULL OR valid_to>now())
+         ORDER BY observed_at DESC,created_at DESC LIMIT 1
+       ) rp ON TRUE
        WHERE ($1::boolean OR p.is_active)
        ORDER BY p.name_ar LIMIT $2 OFFSET $3`,
       [req.query.include_inactive === "true",limit,offset]
