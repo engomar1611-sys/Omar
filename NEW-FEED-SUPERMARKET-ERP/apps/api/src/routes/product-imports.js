@@ -88,9 +88,10 @@ router.post("/product-imports/:id/approve",async(req,res,next)=>{
         await client.query("INSERT INTO product_barcodes(product_id,barcode,barcode_type) VALUES($1,$2,'standard')",[product.rows[0].id,String(r.manufacturer_barcode)]);
       }
       const priceSourceName=r.price_source||batch.rows[0].source_name;
+      const sourceType=["supplier_quote","retail_observation","official_feed","manual"].includes(r.price_source_type)?r.price_source_type:"manual";
       const source=await client.query(
         "INSERT INTO price_sources(name,source_type,source_url,region) VALUES($1,$2,$3,$4) RETURNING id",
-        [priceSourceName,r.price_source_type||"manual",r.source_url||batch.rows[0].source_url||null,r.price_region||null]
+        [priceSourceName,sourceType,r.source_url||batch.rows[0].source_url||null,r.price_region||null]
       );
       for(const [field,type] of [["purchase_price","purchase"],["retail_price","retail"],["wholesale_price","wholesale"]]){
         if(r[field]!==undefined&&r[field]!==""&&Number.isFinite(Number(r[field]))&&Number(r[field])>=0){
