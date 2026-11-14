@@ -38,7 +38,7 @@ $secret = [BitConverter]::ToString($randomBytes).Replace('-', '').ToLowerInvaria
 $escapedDb = $db.Replace('"', '\"')
 $envContent = @"
 NODE_ENV=production
-HOST=0.0.0.0
+HOST=127.0.0.1
 PORT=$port
 DATABASE_URL="$escapedDb"
 AUTH_JWT_SECRET=$secret
@@ -95,15 +95,9 @@ if (-not $serviceExists) {
 & $service start
 if ($LASTEXITCODE -ne 0) { throw 'تعذر تشغيل خدمة Windows.' }
 
-try {
-  New-NetFirewallRule -DisplayName 'NEW FEED ERP API' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -Profile Domain,Private -ErrorAction Stop | Out-Null
-} catch {
-  Write-Warning 'أضف المنفذ يدوياً في Windows Firewall إذا لزم.'
-}
-
 Write-Host ''
 Write-Host 'تم إعداد خدمة NEW FEED ERP Server.' -ForegroundColor Green
-Write-Host "العنوان المحلي الحالي: http://localhost:$port"
-Write-Host 'تنبيه: يلزم Reverse Proxy وشهادة HTTPS موثوقة قبل اتصال الموظفين عبر الشبكة.'
+Write-Host "عنوان API الداخلي: http://127.0.0.1:$port (محلي فقط)"
+Write-Host 'لم يتم فتح منفذ API على الشبكة. انشر Caddy/Reverse Proxy على 80 و443 مع شهادة موثوقة قبل ربط أجهزة الموظفين.'
 Write-Host 'إدارة الخدمة من services.msc أو NewFeedERPService.exe status'
 Read-Host 'اضغط Enter للإغلاق'

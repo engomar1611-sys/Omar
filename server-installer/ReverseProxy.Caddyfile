@@ -1,0 +1,14 @@
+# استبدل erp.example.com باسم DNS حقيقي يشير إلى عنوان السيرفر العام.
+# Caddy يصدر ويجدد شهادة HTTPS تلقائياً عند صحة DNS وإتاحة المنافذ 80 و443.
+erp.example.com {
+    encode zstd gzip
+
+    header {
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Frame-Options "SAMEORIGIN"
+        -Server
+    }
+
+    reverse_proxy 127.0.0.1:3000
+}
