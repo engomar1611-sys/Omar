@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import bcrypt from 'bcryptjs';
 import { buildApp } from '../src/app.mjs';
+import { detectDataIntent } from '../src/ai-assistant.mjs';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const PASSWORD = 'ValidPassword!234';
@@ -100,4 +101,13 @@ test('AI chat validates empty and oversized messages', async () => {
     assert.equal((await app.inject({ method: 'POST', url: '/api/v1/ai/chat', headers, payload: { message: '' } })).statusCode, 400);
     assert.equal((await app.inject({ method: 'POST', url: '/api/v1/ai/chat', headers, payload: { message: 'x'.repeat(4001) } })).statusCode, 400);
   } finally { await app.close(); }
+});
+
+
+test('AI assistant maps ERP questions to only supported read-only data sections', () => {
+  assert.equal(detectDataIntent('ما هو رصيد المخزون من الخامات؟'), 'inventory');
+  assert.equal(detectDataIntent('اعرض أوامر الإنتاج والتشغيلات'), 'production');
+  assert.equal(detectDataIntent('ملخص فواتير المبيعات والعملاء'), 'sales');
+  assert.equal(detectDataIntent('ما هي أوامر الشراء والموردين؟'), 'purchases');
+  assert.equal(detectDataIntent('عرفني بالنظام'), null);
 });
