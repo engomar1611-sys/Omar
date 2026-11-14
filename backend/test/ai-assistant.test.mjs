@@ -110,5 +110,7 @@ test('AI assistant maps ERP questions to only supported read-only data sections'
   assert.equal(detectDataIntent('ملخص فواتير المبيعات والعملاء'), 'sales');
   assert.equal(detectDataIntent('ما هي أوامر الشراء والموردين؟'), 'purchases');
   assert.equal(detectDataIntent('اعرض ميزان المراجعة والقيود المحاسبية'), 'accounting');
+  assert.equal(detectDataIntent('ما هي مستحقات العملاء وأعمار الديون؟'), 'receivables');
+  assert.equal(detectDataIntent('ما هي مستحقات الموردين وأعمار الديون؟'), 'payables');
   assert.equal(detectDataIntent('عرفني بالنظام'), null);
 });
