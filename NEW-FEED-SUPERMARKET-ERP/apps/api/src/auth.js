@@ -31,6 +31,32 @@ export function createAccessToken(userId){
   return payload+"."+sign(payload);
 }
 
+
+export async function authorizeModule(req,res,next){
+  const rules=[
+    [/^\\/(categories|units|products|brands|product-prices|product-imports)(\\/|$)/,"catalog.manage"],
+    [/^\\/(purchase-orders|purchase-receipts)(\\/|$)/,"purchasing.manage"],
+    [/^\\/sales\\/returns\\/[^/]+\\/inspect$/,"returns.inspect"],
+    [/^\\/sales\\/returns\\/[^/]+\\/(approve|refund)$/,"returns.approve"],
+    [/^\\/sales(\\/|$)/,"sales.manage"],
+    [/^\\/(inventory|warehouses)(\\/|$)/,"inventory.manage"],
+    [/^\\/suppliers(\\/|$)/,"purchasing.manage"],
+    [/^\\/customers(\\/|$)/,"sales.manage"],
+    [/^\\/employees(\\/|$)/,"hr.manage"],
+    [/^\\/assets(\\/|$)/,"assets.manage"],
+    [/^\\/delivery(\\/|$)/,"delivery.manage"],
+    [/^\\/ecommerce(\\/|$)/,"ecommerce.manage"],
+    [/^\\/accounting(\\/|$)/,"accounting.manage"]
+  ];
+  const rule=rules.find(([pattern])=>pattern.test(req.path));
+  if(!rule)return next();
+  try{
+    const r=await pool.query("SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id JOIN permissions p ON p.id=rp.permission_id WHERE ur.user_id=$1 AND p.code=$2 LIMIT 1",[req.user.id,rule[1]]);
+    if(!r.rowCount)return res.status(403).json({error:"Permission denied",required_permission:rule[1]});
+    next();
+  }catch(e){next(e);}
+}
+
 export function requirePermission(code){
   return async(req,res,next)=>{
     try{
