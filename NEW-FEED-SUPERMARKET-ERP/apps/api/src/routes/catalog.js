@@ -67,9 +67,10 @@ router.get("/products", async (req,res,next) => {
 });
 
 router.post("/products", async (req,res,next) => {
-  const { sku,name_ar,name_en=null,category_id=null,base_unit_id,is_weighted=false,tracks_expiry=false,barcodes=[] } = req.body ?? {};
-  if (!text(sku,80) || !text(name_ar,240) || !uuid.test(base_unit_id||"") ||
-      (category_id && !uuid.test(category_id)) || typeof is_weighted !== "boolean" ||
+  const { sku=null,name_ar,name_en=null,category_id=null,brand_id=null,base_unit_id,is_weighted=false,tracks_expiry=false,pack_size=null,pack_unit_id=null,variant_description=null,barcodes=[] } = req.body ?? {};
+  if ((sku!==null && !text(sku,80)) || !text(name_ar,240) || !uuid.test(base_unit_id||"") ||
+      (category_id && !uuid.test(category_id)) || (brand_id && !uuid.test(brand_id)) ||
+      (pack_unit_id && !uuid.test(pack_unit_id)) || (pack_size!==null && !positive(pack_size)) || typeof is_weighted !== "boolean" ||
       typeof tracks_expiry !== "boolean" || !Array.isArray(barcodes) || barcodes.length>20 ||
       barcodes.some(b => !text(b,80))) {
     return res.status(400).json({ error: "Invalid product fields or barcode list" });
@@ -77,10 +78,14 @@ router.post("/products", async (req,res,next) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const skuResult = sku
+      ? { rows: [{ sku: sku.trim() }] }
+      : await client.query("SELECT 'NF-' || lpad(nextval('product_sku_seq')::text,8,'0') AS sku");
+    const finalSku = skuResult.rows[0].sku;
     const inserted = await client.query(
-      `INSERT INTO products(sku,name_ar,name_en,category_id,base_unit_id,is_weighted,tracks_expiry)
-       VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [sku.trim(),name_ar.trim(),name_en,category_id,base_unit_id,is_weighted,tracks_expiry]
+      `INSERT INTO products(sku,name_ar,name_en,category_id,brand_id,base_unit_id,is_weighted,tracks_expiry,pack_size,pack_unit_id,variant_description)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [finalSku,name_ar.trim(),name_en,category_id,brand_id,base_unit_id,is_weighted,tracks_expiry,pack_size,pack_unit_id,variant_description]
     );
     for (const barcode of [...new Set(barcodes.map(b=>b.trim()))]) {
       await client.query(
