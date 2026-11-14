@@ -2,11 +2,15 @@ import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { pool } from "./db.js";
 import catalogRoutes from "./routes/catalog.js";
 import purchasingRoutes from "./routes/purchasing.js";
 
 const app = express();
+const here = path.dirname(fileURLToPath(import.meta.url));
+const webRoot = path.resolve(here, "../../web");
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "0.0.0.0";
 
@@ -17,6 +21,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json({ limit: "1mb" }));
+app.use(express.static(webRoot));
 
 app.get("/api/health", (_req, res) => res.json({
   application: "NEW FEED SUPERMARKET ERP",
