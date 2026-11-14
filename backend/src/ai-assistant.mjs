@@ -134,13 +134,14 @@ async function readErpContext(db, request, intent) {
      ), balances AS (
        SELECT s.code supplier_code,s.name_ar supplier_name,
          GREATEST(0::numeric,r.received_amount-COALESCE(p.paid_amount,0)-COALESCE(x.returned_amount,0)) outstanding,
-         GREATEST(0,(CURRENT_DATE-r.aging_date))::int age_days
+         (CURRENT_DATE-r.aging_date)::int age_days
        FROM received r JOIN suppliers s ON s.id=r.supplier_id
        LEFT JOIN paid p ON p.purchase_order_id=r.purchase_order_id
        LEFT JOIN returned x ON x.purchase_order_id=r.purchase_order_id
      )
      SELECT supplier_code,supplier_name,COUNT(*)::int open_order_count,SUM(outstanding)::numeric outstanding,
-       SUM(CASE WHEN age_days<=30 THEN outstanding ELSE 0 END)::numeric bucket_0_30,
+       SUM(CASE WHEN age_days<0 THEN outstanding ELSE 0 END)::numeric not_due,
+       SUM(CASE WHEN age_days BETWEEN 0 AND 30 THEN outstanding ELSE 0 END)::numeric bucket_0_30,
        SUM(CASE WHEN age_days BETWEEN 31 AND 60 THEN outstanding ELSE 0 END)::numeric bucket_31_60,
        SUM(CASE WHEN age_days BETWEEN 61 AND 90 THEN outstanding ELSE 0 END)::numeric bucket_61_90,
        SUM(CASE WHEN age_days>90 THEN outstanding ELSE 0 END)::numeric bucket_over_90

@@ -114,3 +114,12 @@ test('AI assistant maps ERP questions to only supported read-only data sections'
   assert.equal(detectDataIntent('ما هي مستحقات الموردين وأعمار الديون؟'), 'payables');
   assert.equal(detectDataIntent('عرفني بالنظام'), null);
 });
+
+
+test('supplier payables aging separates future-due balances from overdue buckets', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('../src/ai-assistant.mjs', import.meta.url), 'utf8');
+  assert.match(source, /\(CURRENT_DATE-r\.aging_date\)::int age_days/);
+  assert.match(source, /CASE WHEN age_days<0 THEN outstanding ELSE 0 END\)::numeric not_due/);
+  assert.match(source, /CASE WHEN age_days BETWEEN 0 AND 30 THEN outstanding ELSE 0 END\)::numeric bucket_0_30/);
+  assert.doesNotMatch(source, /GREATEST\(0,\(CURRENT_DATE-r\.aging_date\)\)/);
+});
