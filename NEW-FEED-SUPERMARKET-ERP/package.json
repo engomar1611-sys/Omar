@@ -7,9 +7,11 @@
   "scripts": {
     "start": "node apps/api/src/server.js",
     "dev": "node --watch apps/api/src/server.js",
-    "check": "node --check apps/api/src/server.js"
+    "check": "node --check apps/api/src/server.js && node --check apps/api/src/db.js && node --check apps/api/src/auth.js && node --check apps/api/src/routes/auth.js && node --check apps/api/src/routes/catalog.js && node --check apps/api/src/routes/purchasing.js && node --check apps/api/src/routes/product-master.js && node --check apps/api/src/routes/product-imports.js && node --check apps/api/src/routes/operations.js && node --check apps/api/src/routes/sales.js && node --check apps/api/src/routes/returns.js && node --check apps/web/app.js"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
