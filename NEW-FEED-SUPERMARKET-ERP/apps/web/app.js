@@ -126,9 +126,13 @@ async function loadOperationalModule(id){
   content.innerHTML=rows.length?'<table class="module-table">'+header+'<tbody>'+renderRows(rows)+'</tbody></table>':'<div class="empty-state">لا توجد بيانات مسجلة حتى الآن.</div>';
   $("moduleSearch").oninput=()=>{
    const q=$("moduleSearch").value.toLowerCase();
-   const filtered=rows.filter(row=>cfg.columns.some(([key])=>String(formatModuleValue(row[key])).toLowerCase().includes(q)));
-   content.innerHTML=filtered.length?'<table class="module-table">'+header+'<tbody>'+renderRows(filtered)+'</tbody></table>':'<div class="empty-state">لا توجد نتائج مطابقة.</div>';
+   content.querySelectorAll("tbody tr").forEach(tr=>tr.hidden=!tr.textContent.toLowerCase().includes(q));
   };
+  if(id==="accounting"){
+   const journals=await api("/api/accounting/journals");
+   const items=journals.items||[];
+   content.innerHTML+='<h2 class="module-title">قيود الأستاذ العام</h2>'+(items.length?'<table class="module-table"><thead><tr><th>المرجع</th><th>المصدر</th><th>التاريخ</th><th>الحالة</th><th>مدين</th><th>دائن</th></tr></thead><tbody>'+items.map(x=>'<tr><td>'+escapeHtml(x.reference_no)+'</td><td>'+escapeHtml(x.source_type)+'</td><td>'+escapeHtml(formatModuleValue(x.entry_date))+'</td><td>'+escapeHtml(x.status)+'</td><td>'+money(x.total_debit)+'</td><td>'+money(x.total_credit)+'</td></tr>').join("")+'</tbody></table>':'<div class="empty-state">لا توجد قيود مرحّلة حتى الآن.</div>');
+  }
   if(id==="sales"){
    const returns=await api("/api/sales/returns");
    const extra=returns.items||[];
