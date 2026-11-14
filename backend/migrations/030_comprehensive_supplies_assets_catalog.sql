@@ -165,3 +165,5 @@ INSERT INTO permissions(code,name_ar,module_code) VALUES
  ('ASSET_CATEGORIES.MANAGE','إدارة تصنيفات الأصول','ASSETS'),
  ('ASSETS.BARCODE.MANAGE','إدارة باركود الأصول','ASSETS')
 ON CONFLICT(code) DO NOTHING;
+
+UPDATE asset_categories SET is_depreciable=FALSE,depreciation_method='UNDEPRECIATED' WHERE code='AST-LAND';
