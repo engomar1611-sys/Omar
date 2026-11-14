@@ -574,7 +574,7 @@ export async function commercialRoutes(app,{db}){
 
  app.get('/api/v1/reports/supplier-aging',auth(app,'REPORTS.READ'),async(req,rep)=>{
   const asOf=req.query?.asOf??new Date().toISOString().slice(0,10),supplierCode=String(req.query?.supplierCode??'').trim()||null;
-  if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(asOf)))return bad(rep,'صيغة التاريخ يجب أن تكون YYYY-MM-DD');
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(asOf)))return bad(rep,'صيغة التاريخ يجب أن تكون YYYY-MM-DD');
   if(supplierCode&&!txt(supplierCode,40))return bad(rep,'كود المورد غير صحيح');
   try{return (await db.query(`WITH received AS (
     SELECT po.id purchase_order_id,po.order_no,po.supplier_id,po.payment_due_date,
