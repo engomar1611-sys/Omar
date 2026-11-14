@@ -5,7 +5,7 @@ import cors from "cors";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool } from "./db.js";
-import { authenticate } from "./auth.js";
+import { authenticate, authorizeModule } from "./auth.js";
 import authRoutes from "./routes/auth.js";
 import catalogRoutes from "./routes/catalog.js";
 import purchasingRoutes from "./routes/purchasing.js";
@@ -48,6 +48,7 @@ app.get("/api/health/database", async (_req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api", authenticate);
+app.use("/api", authorizeModule);
 app.use("/api", catalogRoutes);
 app.use("/api", purchasingRoutes);
 app.use("/api", productMasterRoutes);
