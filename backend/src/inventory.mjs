@@ -68,7 +68,7 @@ export async function inventoryRoutes(app,{db}){
  app.get('/api/v1/inventory/transfers',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.READ')]},async(req,rep)=>{
   try{return (await db.query(`SELECT t.*,sw.code source_warehouse_code,dw.code destination_warehouse_code,
     COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'itemCode',i.code,'itemName',i.name_ar,
-      'lotNo',l.lot_no,'quantity',l.quantity,'unitCost',l.unit_cost,'expiryDate',l.expiry_date)
+      'lotNo',l.lot_no,'quantity',l.quantity)
       ORDER BY i.code,l.lot_no) FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
     FROM inventory_transfers t JOIN warehouses sw ON sw.id=t.source_warehouse_id
     JOIN warehouses dw ON dw.id=t.destination_warehouse_id
