@@ -39,3 +39,31 @@
 
 ### مصادر بيانات السوق
 يمكن تجهيز الاستيراد والتحقق من قوائم متاجر مصرية مثل Carrefour Egypt وSpinneys Egypt، ومقارنة الأسعار من Fattuta. لا يعني ذلك أن قاعدة بيانات جميع منتجات مصر أو تغطية كل الفروع والأسعار اللحظية قد تم استيرادها. الأسعار يجب أن تحتفظ بالمصدر والمنطقة وتاريخ الرصد، وأن تتم مراجعتها قبل اعتمادها كسعر بيع في الفرع.
+
+### استيراد كتالوج المنتجات - API
+- `POST /api/product-imports`: يستقبل دفعة JSON بحد أقصى 1000 صف، ويتحقق من التصنيفات والوحدات والحقول الأساسية، ثم يحفظها في منطقة مراجعة دون إنشاء منتجات تشغيلية أو اعتماد أسعار.
+- `GET /api/product-imports/:id`: يعرض تفاصيل الدفعة والأخطاء لكل صف.
+- يجب أن يحتوي كل صف على `name_ar` و`category_code` و`base_unit_code`. الحقول الاختيارية تشمل `brand_code` و`pack_size` و`pack_unit_code` و`is_weighted` و`tracks_expiry` و`manufacturer_barcode` و`retail_price` و`purchase_price` ومصدر السعر وتاريخ رصده.
+- الاستيراد الحالي مرحلة تجهيز ومراجعة فقط؛ لا توجد بعد عملية اعتماد نهائي أو استيراد جماعي إلى كتالوج البيع، ولا يوجد ربط آلي حي بواجهات المتاجر.
+- مثال جسم الطلب:
+```json
+{
+  "source_name": "Supplier catalog - sample",
+  "source_url": null,
+  "rows": [
+    {
+      "name_ar": "اسم منتج موثق",
+      "category_code": "BEVERAGES",
+      "base_unit_code": "PCS",
+      "brand_code": "BRAND-CODE",
+      "pack_size": 1.5,
+      "pack_unit_code": "L",
+      "is_weighted": false,
+      "tracks_expiry": true,
+      "manufacturer_barcode": "barcode-from-package",
+      "retail_price": 0,
+      "purchase_price": 0
+    }
+  ]
+}
+```
