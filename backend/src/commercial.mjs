@@ -744,7 +744,7 @@ export async function commercialRoutes(app,{db}){
   )
   SELECT invoice_id,invoice_no,invoice_date,due_date,customer_code,customer_name,invoice_amount,paid_amount,
     returned_amount,outstanding,age_days,
-    CASE WHEN age_days<=30 THEN '0-30' WHEN age_days<=60 THEN '31-60'
+    CASE WHEN age_days<0 THEN 'غير مستحق' WHEN age_days<=30 THEN '0-30' WHEN age_days<=60 THEN '31-60'
       WHEN age_days<=90 THEN '61-90' ELSE 'أكثر من 90' END aging_bucket
   FROM balances WHERE outstanding>0.000001
   ORDER BY customer_code,invoice_date,invoice_no`,[asOf,customerCode])).rows;}
