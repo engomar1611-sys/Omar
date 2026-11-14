@@ -145,6 +145,7 @@ router.post("/purchase-receipts/:id/inspect", async (req,res,next) => {
     const expected=await client.query("SELECT id,product_id,quantity,unit_cost,stock_lot_id FROM purchase_receipt_lines WHERE receipt_id=$1 FOR UPDATE",[req.params.id]);
     if(expected.rowCount!==lines.length) throw Object.assign(new Error("Inspection must include every receipt line exactly once"),{statusCode:400});
     const seen=new Set();
+    let acceptedValue=0;
     for(const x of lines){
       if(seen.has(x.receipt_line_id)) throw Object.assign(new Error("Duplicate receipt line"),{statusCode:400});
       seen.add(x.receipt_line_id);
@@ -155,13 +156,26 @@ router.post("/purchase-receipts/:id/inspect", async (req,res,next) => {
         throw Object.assign(new Error("Accepted plus rejected quantity must equal received quantity"),{statusCode:400});
       await client.query("UPDATE purchase_receipt_lines SET accepted_quantity=$2,rejected_quantity=$3 WHERE id=$1",[row.id,accepted,rejected]);
       await client.query("UPDATE stock_lots SET quantity_on_hand=$2,is_saleable=($2>0) WHERE id=$1",[row.stock_lot_id,accepted]);
-      if(accepted>0) await client.query(
-        "INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_in,unit_cost,source_type,source_id,created_by) SELECT $1,'purchase_receipt',$2,warehouse_id,$3,$4,$5,'purchase_receipt',$6,$7 FROM stock_lots WHERE id=$3",
-        [receipt.rows[0].reference_no,row.product_id,row.stock_lot_id,accepted,row.unit_cost,req.params.id,inspected_by]
-      );
+      if(accepted>0){
+        acceptedValue+=accepted*Number(row.unit_cost);
+        await client.query(
+          "INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_in,unit_cost,source_type,source_id,created_by) SELECT $1,'purchase_receipt',$2,warehouse_id,$3,$4,$5,'purchase_receipt',$6,$7 FROM stock_lots WHERE id=$3",
+          [receipt.rows[0].reference_no,row.product_id,row.stock_lot_id,accepted,row.unit_cost,req.params.id,inspected_by]
+        );
+      }
     }
     const anyAccepted=lines.some(x=>Number(x.accepted_quantity)>0);
     await client.query("UPDATE purchase_receipts SET inspection_status=$2 WHERE id=$1",[req.params.id,anyAccepted?"accepted":"rejected"]);
+    if(acceptedValue>0){
+      const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+      if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+      const mappings=await client.query("SELECT mapping_key,account_id FROM system_account_mappings WHERE mapping_key=ANY($1::varchar[])",[["inventory","grni"]]);
+      const map=Object.fromEntries(mappings.rows.map(x=>[x.mapping_key,x.account_id]));
+      if(!map.inventory||!map.grni)throw Object.assign(new Error("Inventory/GRNI account mappings are missing; apply migration 012"),{statusCode:409});
+      const je=await client.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'purchase_receipt',$2,CURRENT_DATE,'posted') RETURNING id",["JE-"+req.params.id,req.params.id]);
+      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.inventory,acceptedValue]);
+      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.grni,acceptedValue]);
+    }
     const orderId=receipt.rows[0].purchase_order_id;
     const remaining=await client.query(
       "SELECT EXISTS(SELECT 1 FROM purchase_order_lines pol WHERE pol.purchase_order_id=$1 AND pol.quantity > COALESCE((SELECT SUM(prl.accepted_quantity) FROM purchase_receipt_lines prl JOIN purchase_receipts pr ON pr.id=prl.receipt_id WHERE pr.purchase_order_id=pol.purchase_order_id AND pr.inspection_status='accepted' AND prl.product_id=pol.product_id),0)+0.000001) AS has_remaining",
