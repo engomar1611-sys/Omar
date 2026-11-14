@@ -35,6 +35,7 @@ export function createAccessToken(userId){
 export async function authorizeModule(req,res,next){
   const rules=[
     [/^\/(categories|units|products|brands|product-prices|product-imports)(\/|$)/,"catalog.manage"],
+    [/^\/pos(\/|$)/,"sales.manage"],
     [/^\/(purchase-orders|purchase-receipts)(\/|$)/,"purchasing.manage"],
     [/^\/sales\/returns\/[^/]+\/inspect$/,"returns.inspect"],
     [/^\/sales\/returns\/[^/]+\/(approve|refund)$/,"returns.approve"],
