@@ -417,4 +417,4 @@ async function settingsLoad(kind){
 $('#loginForm').addEventListener('submit',async e=>{e.preventDefault();$('#loginError').textContent='';try{await login($('#username').value,$('#password').value)}catch(err){$('#loginError').textContent=err.message}});
 $('#logout').onclick=logout;
 (async()=>{if(!token){showLogin();return}try{currentUser=await api('/api/v1/auth/me');showApp()}catch{showLogin()}})();
-</script></body></html>
+</script><script src="/assets/finance-extras.js"></script></body></html>

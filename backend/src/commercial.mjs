@@ -19,8 +19,8 @@ async function journal(c,{no,date,sourceType,sourceId,description,actor,lines}){
  const h=await c.query(`INSERT INTO journal_entries(entry_no,entry_date,source_type,source_id,description,total_debit,total_credit,created_by)
  VALUES($1,COALESCE($2::date,CURRENT_DATE),$3,$4,$5,$6,$7,$8) RETURNING id`,
  [no,date??null,sourceType,sourceId,description,debit,credit,actor]);
- for(const l of lines)await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,$3,$4,$5)',
- [h.rows[0].id,l.account,Number(l.debit||0),Number(l.credit||0),l.description??null]);
+ for(const l of lines)await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description,cost_center_id) VALUES($1,$2,$3,$4,$5,$6)',
+ [h.rows[0].id,l.account,Number(l.debit||0),Number(l.credit||0),l.description??null,l.costCenter??null]);
  return h.rows[0].id;
 }
 
@@ -29,12 +29,12 @@ async function reverseJournal(c,{sourceType,sourceId,reversalType,reversalNo,act
  if(period.rowCount&&period.rows[0].status!=='OPEN')throw Object.assign(new Error('لا يمكن عكس مستند في فترة محاسبية مغلقة'),{code:'P0001'});
  const original=await c.query("SELECT * FROM journal_entries WHERE source_type=$1 AND source_id=$2 AND status='POSTED' FOR UPDATE",[sourceType,sourceId]);
  if(!original.rowCount)throw Object.assign(new Error('القيد الأصلي غير موجود أو سبق عكسه'),{code:'P0001'});
- const lines=await c.query('SELECT account_id,debit,credit,description FROM journal_lines WHERE journal_entry_id=$1',[original.rows[0].id]);
+ const lines=await c.query('SELECT account_id,debit,credit,description,cost_center_id FROM journal_lines WHERE journal_entry_id=$1',[original.rows[0].id]);
  const reversal=await c.query(`INSERT INTO journal_entries(entry_no,source_type,source_id,description,total_debit,total_credit,created_by)
   VALUES($1,$2,$3,$4,$5,$5,$6) RETURNING id`,
   [reversalNo,reversalType,sourceId,'عكس: '+(reason||original.rows[0].description||sourceType),Number(original.rows[0].total_debit),actor]);
- for(const l of lines.rows)await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,$3,$4,$5)',
-  [reversal.rows[0].id,l.account_id,l.credit,l.debit,'عكس القيد الأصلي']);
+ for(const l of lines.rows)await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description,cost_center_id) VALUES($1,$2,$3,$4,$5,$6)',
+  [reversal.rows[0].id,l.account_id,l.credit,l.debit,'عكس القيد الأصلي',l.cost_center_id]);
  await c.query("UPDATE journal_entries SET status='REVERSED' WHERE id=$1",[original.rows[0].id]);
  await c.query('INSERT INTO document_reversals(source_type,source_id,reversal_entry_id,reason,reversed_by) VALUES($1,$2,$3,$4,$5)',
   [sourceType,sourceId,reversal.rows[0].id,reason,actor]);
@@ -121,7 +121,7 @@ export async function commercialRoutes(app,{db}){
    GROUP BY r.id,i.invoice_no,c.name_ar ORDER BY r.created_at DESC`)).rows;}catch(e){return fail(rep,e);}
  });
  app.get('/api/v1/accounting/expenses',auth(app,'ACCOUNTING.READ'),async(_q,rep)=>{
-  try{return (await db.query(`SELECT e.*,a.code account_code,a.name_ar account_name FROM expenses e JOIN gl_accounts a ON a.id=e.account_id ORDER BY e.expense_date DESC,e.expense_no DESC`)).rows;}catch(e){return fail(rep,e);}
+  try{return (await db.query(`SELECT e.*,a.code account_code,a.name_ar account_name,cc.code cost_center_code,cc.name_ar cost_center_name FROM expenses e JOIN gl_accounts a ON a.id=e.account_id LEFT JOIN cost_centers cc ON cc.id=e.cost_center_id ORDER BY e.expense_date DESC,e.expense_no DESC`)).rows;}catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/accounting/receipts',auth(app,'RECEIPTS.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.receiptNo,40)||!b.customerId||!pos(b.amount)||!['CASH','BANK','TRANSFER','CHEQUE'].includes(b.paymentMethod)||!Array.isArray(b.allocations))return bad(rep);
@@ -324,7 +324,7 @@ export async function commercialRoutes(app,{db}){
         OR ABS(COALESCE(l.debit,0)-COALESCE(l.credit,0))>0.00001)`,[b.startDate,b.endDate]);
     if(integrity.rows[0].n)throw Object.assign(new Error('توجد قيود غير مكتملة أو غير متطابقة؛ لا يمكن إغلاق الفترة'),{code:'P0001'});
     const totals=await c.query(`SELECT COALESCE(SUM(total_debit),0) debit,COALESCE(SUM(total_credit),0) credit
-      FROM journal_entries WHERE entry_date BETWEEN $1::date AND $2::date AND status='POSTED'`,[b.startDate,b.endDate]);
+      FROM journal_entries WHERE entry_date BETWEEN $1::date AND $2::date`,[b.startDate,b.endDate]);
     if(Math.abs(Number(totals.rows[0].debit)-Number(totals.rows[0].credit))>0.00001)
      throw Object.assign(new Error('ميزان الفترة غير متوازن؛ لا يمكن إغلاقها'),{code:'P0001'});
     const result=await c.query(`INSERT INTO accounting_periods(period_code,start_date,end_date,status,closed_by,closed_at)
@@ -359,10 +359,11 @@ export async function commercialRoutes(app,{db}){
   const b=req.body??{};if(!txt(b.expenseNo,40)||!b.accountId||!pos(b.amount)||!['CASH','BANK'].includes(b.paymentMethod)||!txt(b.description,500))return bad(rep);
   try{
    const out=await tx(db,async c=>{
-    const h=await c.query(`INSERT INTO expenses(expense_no,expense_date,account_id,amount,payment_method,description,created_by)
-     VALUES($1,COALESCE($2::date,CURRENT_DATE),$3,$4,$5,$6,$7) RETURNING *`,[b.expenseNo,b.expenseDate??null,b.accountId,b.amount,b.paymentMethod,b.description,req.authUser.user_id]);
+    if(b.costCenterId){const cc=await c.query('SELECT 1 FROM cost_centers WHERE id=$1 AND is_active=TRUE',[b.costCenterId]);if(!cc.rowCount)throw Object.assign(new Error('مركز التكلفة غير موجود أو غير نشط'),{code:'P0001'});}
+    const h=await c.query(`INSERT INTO expenses(expense_no,expense_date,account_id,amount,payment_method,description,created_by,cost_center_id)
+     VALUES($1,COALESCE($2::date,CURRENT_DATE),$3,$4,$5,$6,$7,$8) RETURNING *`,[b.expenseNo,b.expenseDate??null,b.accountId,b.amount,b.paymentMethod,b.description,req.authUser.user_id,b.costCenterId??null]);
     const cash=await account(c,b.paymentMethod==='CASH'?'1000':'1010');
-    await journal(c,{no:'J-EX-'+b.expenseNo,date:b.expenseDate,sourceType:'EXPENSE',sourceId:h.rows[0].id,description:b.description,actor:req.authUser.user_id,lines:[{account:b.accountId,debit:Number(b.amount)},{account:cash,credit:Number(b.amount)}]});
+    await journal(c,{no:'J-EX-'+b.expenseNo,date:b.expenseDate,sourceType:'EXPENSE',sourceId:h.rows[0].id,description:b.description,actor:req.authUser.user_id,lines:[{account:b.accountId,debit:Number(b.amount),costCenter:b.costCenterId??null},{account:cash,credit:Number(b.amount)}]});
     return h.rows[0];
    });return rep.code(201).send(out);
   }catch(e){return fail(rep,e);}
@@ -505,7 +506,7 @@ export async function commercialRoutes(app,{db}){
       SUM(CASE WHEN $2::date IS NOT NULL AND j.entry_date<$2::date THEN l.debit-l.credit ELSE 0 END)
         OVER(PARTITION BY a.id) opening_balance
     FROM gl_accounts a JOIN journal_lines l ON l.account_id=a.id
-    JOIN journal_entries j ON j.id=l.journal_entry_id AND j.status='POSTED'
+    JOIN journal_entries j ON j.id=l.journal_entry_id
     WHERE ($1::uuid IS NULL OR a.id=$1::uuid) AND ($3::date IS NULL OR j.entry_date<=$3::date)
    )
    SELECT account_id,account_code,account_name,account_type,journal_id,entry_no,entry_date,
@@ -521,7 +522,7 @@ export async function commercialRoutes(app,{db}){
     COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.credit ELSE 0 END),0) total_credit,
     COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit-l.credit ELSE 0 END),0) balance
     FROM gl_accounts a LEFT JOIN journal_lines l ON l.account_id=a.id
-    LEFT JOIN journal_entries j ON j.id=l.journal_entry_id AND j.status='POSTED'
+    LEFT JOIN journal_entries j ON j.id=l.journal_entry_id
       AND ($1::date IS NULL OR j.entry_date >= $1) AND ($2::date IS NULL OR j.entry_date <= $2)
     GROUP BY a.id ORDER BY a.code`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
  });

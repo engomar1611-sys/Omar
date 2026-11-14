@@ -3,6 +3,10 @@ import { config } from '../config/env.mjs';
 
 const { Pool } = pg;
 
+// أعمدة DATE تُرجع كنص YYYY-MM-DD كما هي. بدون ذلك يحوّلها pg إلى منتصف الليل بالتوقيت المحلي
+// فتظهر قبل يوم واحد في JSON على أي خادم توقيته قبل UTC (مثل توقيت القاهرة على Windows).
+pg.types.setTypeParser(1082, (value) => value);
+
 export const pool = new Pool({
   connectionString: config.databaseUrl,
   max: 15,

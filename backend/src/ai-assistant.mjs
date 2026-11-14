@@ -95,7 +95,7 @@ async function readErpContext(db, request, intent) {
        COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.credit ELSE 0 END),0)::numeric total_credit,
        COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit-l.credit ELSE 0 END),0)::numeric balance
        FROM gl_accounts a LEFT JOIN journal_lines l ON l.account_id=a.id
-       LEFT JOIN journal_entries j ON j.id=l.journal_entry_id AND j.status='POSTED'
+       LEFT JOIN journal_entries j ON j.id=l.journal_entry_id
        GROUP BY a.id ORDER BY a.code LIMIT ${MAX_CONTEXT_ROWS}`,
     receivables: `WITH paid AS (
        SELECT a.sales_invoice_id,SUM(a.amount)::numeric paid_amount
