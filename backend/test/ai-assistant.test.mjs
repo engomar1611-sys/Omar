@@ -123,3 +123,15 @@ test('supplier payables aging separates future-due balances from overdue buckets
   assert.match(source, /CASE WHEN age_days BETWEEN 0 AND 30 THEN outstanding ELSE 0 END\)::numeric bucket_0_30/);
   assert.doesNotMatch(source, /GREATEST\(0,\(CURRENT_DATE-r\.aging_date\)\)/);
 });
+
+
+test('AI assistant routes expiry questions to inventory and exposes lot expiry status', async () => {
+  const source = await (await import('node:fs/promises')).readFile(new URL('../src/ai-assistant.mjs', import.meta.url), 'utf8');
+  assert.equal(detectDataIntent('ما هي التشغيلات القريبة من انتهاء الصلاحية؟'), 'inventory');
+  assert.equal(detectDataIntent('اعرض الأصناف منتهية الصلاحية'), 'inventory');
+  assert.match(source, /b\.expiry_date/);
+  assert.match(source, /'EXPIRED'/);
+  assert.match(source, /'EXPIRING_SOON'/);
+  assert.match(source, /days_to_expiry/);
+  assert.match(source, /PENDING_QC أو QUARANTINED/);
+});
