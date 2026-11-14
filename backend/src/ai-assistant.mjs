@@ -14,7 +14,7 @@ function extractText(payload) {
       if (content.type === 'output_text' && typeof content.text === 'string') parts.push(content.text);
     }
   }
-  return parts.join('\\n').trim();
+  return parts.join('\n').trim();
 }
 
 export function detectDataIntent(message) {
@@ -158,7 +158,7 @@ export async function aiAssistantRoutes(app, { db }) {
             'إذا كانت نتيجة الاستعلام فارغة فقل ذلك بوضوح.'
           ].join(' '),
           input: erpContext
-            ? `سؤال المستخدم: ${message}\\nبيانات ERP المسموح بها (JSON): ${JSON.stringify(erpContext)}`
+            ? `سؤال المستخدم: ${message}\nبيانات ERP المسموح بها (JSON): ${JSON.stringify(erpContext)}`
             : message,
           max_output_tokens: 900,
           store: false
