@@ -21,6 +21,8 @@ export function detectDataIntent(message) {
   const value = message.toLowerCase();
   if (/مخزون|رصيد|أرصدة|خامات|اصناف|أصناف|inventory|stock|items/.test(value)) return 'inventory';
   if (/إنتاج|انتاج|تشغيلات|أوامر الإنتاج|امر انتاج|production|manufacturing/.test(value)) return 'production';
+  if (/مستحقات العملاء|أعمار الديون للعملاء|مديونية العملاء|ذمم العملاء|receivables|customer aging/.test(value)) return 'receivables';
+  if (/مستحقات الموردين|أعمار الديون للموردين|مديونية الموردين|ذمم الموردين|payables|supplier aging/.test(value)) return 'payables';
   if (/مبيعات|فواتير بيع|عملاء|sales|invoices/.test(value)) return 'sales';
   if (/ميزان مراجعة|ميزان|قيود محاسبية|الحسابات|حسابات|دفتر الأستاذ|trial balance|general ledger|accounting/.test(value)) return 'accounting';
   if (/مشتريات|أوامر شراء|موردين|purchase|suppliers/.test(value)) return 'purchases';
@@ -32,7 +34,9 @@ const permissionByIntent = {
   production: ['PRODUCTION.READ'],
   sales: ['SALES.READ'],
   purchases: ['PURCHASES.READ'],
-  accounting: ['ACCOUNTING.READ', 'REPORTS.READ']
+  accounting: ['ACCOUNTING.READ', 'REPORTS.READ'],
+  receivables: ['REPORTS.READ'],
+  payables: ['REPORTS.READ']
 };
 
 async function readErpContext(db, request, intent) {
@@ -85,7 +89,63 @@ async function readErpContext(db, request, intent) {
        COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit-l.credit ELSE 0 END),0)::numeric balance
        FROM gl_accounts a LEFT JOIN journal_lines l ON l.account_id=a.id
        LEFT JOIN journal_entries j ON j.id=l.journal_entry_id AND j.status='POSTED'
-       GROUP BY a.id ORDER BY a.code LIMIT ${MAX_CONTEXT_ROWS}`
+       GROUP BY a.id ORDER BY a.code LIMIT ${MAX_CONTEXT_ROWS}`,
+    receivables: `WITH paid AS (
+       SELECT a.sales_invoice_id,SUM(a.amount)::numeric paid_amount
+       FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id
+       WHERE r.status='POSTED' GROUP BY a.sales_invoice_id
+     ), returned AS (
+       SELECT sr.sales_invoice_id,SUM(rl.quantity*rl.unit_price)::numeric returned_amount
+       FROM sales_returns sr JOIN sales_return_lines rl ON rl.sales_return_id=sr.id
+       WHERE sr.status='APPROVED' GROUP BY sr.sales_invoice_id
+     ), balances AS (
+       SELECT c.code customer_code,c.name_ar customer_name,
+         GREATEST(0::numeric,i.total_amount-COALESCE(p.paid_amount,0)-COALESCE(x.returned_amount,0)) outstanding,
+         (CURRENT_DATE-COALESCE(i.due_date,i.invoice_date))::int age_days
+       FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+       LEFT JOIN paid p ON p.sales_invoice_id=i.id LEFT JOIN returned x ON x.sales_invoice_id=i.id
+       WHERE i.status IN ('POSTED','PARTIALLY_PAID','PAID') AND i.invoice_date<=CURRENT_DATE
+     )
+     SELECT customer_code,customer_name,COUNT(*)::int open_invoice_count,SUM(outstanding)::numeric outstanding,
+       SUM(CASE WHEN age_days<0 THEN outstanding ELSE 0 END)::numeric not_due,
+       SUM(CASE WHEN age_days BETWEEN 0 AND 30 THEN outstanding ELSE 0 END)::numeric bucket_0_30,
+       SUM(CASE WHEN age_days BETWEEN 31 AND 60 THEN outstanding ELSE 0 END)::numeric bucket_31_60,
+       SUM(CASE WHEN age_days BETWEEN 61 AND 90 THEN outstanding ELSE 0 END)::numeric bucket_61_90,
+       SUM(CASE WHEN age_days>90 THEN outstanding ELSE 0 END)::numeric bucket_over_90
+     FROM balances WHERE outstanding>0.000001 GROUP BY customer_code,customer_name
+     ORDER BY outstanding DESC LIMIT ${MAX_CONTEXT_ROWS}`,
+    payables: `WITH received AS (
+       SELECT po.id purchase_order_id,po.supplier_id,
+         COALESCE(po.payment_due_date,MIN(gr.received_at::date)) aging_date,
+         SUM(gl.accepted_qty*gl.unit_cost)::numeric received_amount
+       FROM purchase_orders po JOIN goods_receipts gr ON gr.purchase_order_id=po.id
+       JOIN goods_receipt_lines gl ON gl.goods_receipt_id=gr.id
+       WHERE gr.status IN ('ACCEPTED','PARTIAL') AND gr.received_at::date<=CURRENT_DATE
+       GROUP BY po.id,po.supplier_id,po.payment_due_date
+     ), paid AS (
+       SELECT a.purchase_order_id,SUM(a.amount)::numeric paid_amount
+       FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.supplier_payment_id
+       WHERE p.status='POSTED' AND p.payment_date<=CURRENT_DATE GROUP BY a.purchase_order_id
+     ), returned AS (
+       SELECT r.purchase_order_id,SUM(l.quantity*l.unit_cost)::numeric returned_amount
+       FROM purchase_returns r JOIN purchase_return_lines l ON l.purchase_return_id=r.id
+       WHERE r.status='POSTED' AND r.accounting_approved_at::date<=CURRENT_DATE AND r.purchase_order_id IS NOT NULL
+       GROUP BY r.purchase_order_id
+     ), balances AS (
+       SELECT s.code supplier_code,s.name_ar supplier_name,
+         GREATEST(0::numeric,r.received_amount-COALESCE(p.paid_amount,0)-COALESCE(x.returned_amount,0)) outstanding,
+         GREATEST(0,(CURRENT_DATE-r.aging_date))::int age_days
+       FROM received r JOIN suppliers s ON s.id=r.supplier_id
+       LEFT JOIN paid p ON p.purchase_order_id=r.purchase_order_id
+       LEFT JOIN returned x ON x.purchase_order_id=r.purchase_order_id
+     )
+     SELECT supplier_code,supplier_name,COUNT(*)::int open_order_count,SUM(outstanding)::numeric outstanding,
+       SUM(CASE WHEN age_days<=30 THEN outstanding ELSE 0 END)::numeric bucket_0_30,
+       SUM(CASE WHEN age_days BETWEEN 31 AND 60 THEN outstanding ELSE 0 END)::numeric bucket_31_60,
+       SUM(CASE WHEN age_days BETWEEN 61 AND 90 THEN outstanding ELSE 0 END)::numeric bucket_61_90,
+       SUM(CASE WHEN age_days>90 THEN outstanding ELSE 0 END)::numeric bucket_over_90
+     FROM balances WHERE outstanding>0.000001 GROUP BY supplier_code,supplier_name
+     ORDER BY outstanding DESC LIMIT ${MAX_CONTEXT_ROWS}`
   };
 
   await db.query(
