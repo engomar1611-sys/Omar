@@ -80,8 +80,8 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
     const wh=await client.query("SELECT id FROM warehouses WHERE id=$1 FOR UPDATE",[warehouse_id]);
     if(!wh.rowCount) throw Object.assign(new Error("Warehouse not found"),{code:"23503"});
     const receipt=await client.query(
-      `INSERT INTO purchase_receipts(reference_no,purchase_order_id,warehouse_id,received_by)
-       VALUES($1,$2,$3,$4) RETURNING *`,
+      `INSERT INTO purchase_receipts(reference_no,purchase_order_id,warehouse_id,received_by,inspection_status)
+       VALUES($1,$2,$3,$4,'pending_inspection') RETURNING *`,
       [reference_no.trim(),req.params.id,warehouse_id,received_by]
     );
     for(const line of lines){
@@ -91,7 +91,7 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
                           FROM purchase_receipt_lines prl
                           JOIN purchase_receipts pr ON pr.id=prl.receipt_id
                           WHERE pr.purchase_order_id=pol.purchase_order_id
-                            AND pr.status='accepted'
+                            AND pr.inspection_status='accepted'
                             AND prl.product_id=pol.product_id),0) AS received
          FROM purchase_order_lines pol
          WHERE pol.purchase_order_id=$1 AND pol.product_id=$2
@@ -106,8 +106,8 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
       if(!product.rowCount) throw Object.assign(new Error("Product not found"),{code:"23503"});
       if(product.rows[0].tracks_expiry&&!line.expiry_date) throw Object.assign(new Error("Expiry date is required for this product"),{statusCode:400});
       const lot=await client.query(
-        `INSERT INTO stock_lots(product_id,warehouse_id,lot_number,expiry_date,quantity_on_hand,unit_cost)
-         VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+        `INSERT INTO stock_lots(product_id,warehouse_id,lot_number,expiry_date,quantity_on_hand,unit_cost,is_saleable)
+         VALUES($1,$2,$3,$4,0,$6,FALSE) RETURNING id`,
         [line.product_id,warehouse_id,line.lot_number||null,line.expiry_date||null,line.quantity,line.unit_cost]
       );
       await client.query(
@@ -116,8 +116,7 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
         [receipt.rows[0].id,line.product_id,line.quantity,line.unit_cost,line.lot_number||null,line.expiry_date||null,lot.rows[0].id]
       );
       await client.query(
-        `INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_in,unit_cost,source_type,source_id,created_by)
-         VALUES($1,'purchase_receipt',$2,$3,$4,$5,$6,'purchase_receipt',$7,$8)`,
+        `-- Stock movement is posted only after warehouse inspection accepts the goods.`,
         [reference_no.trim(),line.product_id,warehouse_id,lot.rows[0].id,line.quantity,line.unit_cost,receipt.rows[0].id,received_by]
       );
     }
@@ -129,7 +128,7 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
              SELECT SUM(prl.quantity) FROM purchase_receipt_lines prl
              JOIN purchase_receipts pr ON pr.id=prl.receipt_id
              WHERE pr.purchase_order_id=pol.purchase_order_id
-               AND pr.status='accepted' AND prl.product_id=pol.product_id
+               AND pr.inspection_status='accepted' AND prl.product_id=pol.product_id
            ),0) + 0.000001
        ) AS has_remaining`,[req.params.id]
     );
@@ -140,6 +139,53 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
     await client.query("COMMIT");
     res.status(201).json({receipt:receipt.rows[0],accepted_lines:lines.length});
   }catch(e){await client.query("ROLLBACK");next(e);}
+  finally{client.release();}
+});
+
+
+router.post("/purchase-receipts/:id/inspect", async (req,res,next) => {
+  const {inspected_by=null,lines}=req.body??{};
+  if(!uuid.test(req.params.id)||(inspected_by&&!uuid.test(inspected_by))||
+     !Array.isArray(lines)||!lines.length||lines.length>500||
+     lines.some(x=>!uuid.test(x.receipt_line_id||"")||
+       !Number.isFinite(Number(x.accepted_quantity))||Number(x.accepted_quantity)<0||
+       !Number.isFinite(Number(x.rejected_quantity))||Number(x.rejected_quantity)<0))
+    return res.status(400).json({error:"Invalid inspection fields"});
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const receipt=await client.query("SELECT * FROM purchase_receipts WHERE id=$1 FOR UPDATE",[req.params.id]);
+    if(!receipt.rowCount||receipt.rows[0].inspection_status!=="pending_inspection")
+      throw Object.assign(new Error("Receipt is not awaiting inspection"),{statusCode:409});
+    const expected=await client.query("SELECT id,product_id,quantity,unit_cost,stock_lot_id FROM purchase_receipt_lines WHERE receipt_id=$1 FOR UPDATE",[req.params.id]);
+    if(expected.rowCount!==lines.length) throw Object.assign(new Error("Inspection must include every receipt line exactly once"),{statusCode:400});
+    const seen=new Set();
+    for(const x of lines){
+      if(seen.has(x.receipt_line_id)) throw Object.assign(new Error("Duplicate receipt line"),{statusCode:400});
+      seen.add(x.receipt_line_id);
+      const row=expected.rows.find(r=>r.id===x.receipt_line_id);
+      if(!row) throw Object.assign(new Error("Receipt line not found"),{statusCode:400});
+      const accepted=Number(x.accepted_quantity),rejected=Number(x.rejected_quantity);
+      if(Math.abs(accepted+rejected-Number(row.quantity))>0.000001)
+        throw Object.assign(new Error("Accepted plus rejected quantity must equal received quantity"),{statusCode:400});
+      await client.query("UPDATE purchase_receipt_lines SET accepted_quantity=$2,rejected_quantity=$3 WHERE id=$1",[row.id,accepted,rejected]);
+      await client.query("UPDATE stock_lots SET quantity_on_hand=$2,is_saleable=($2>0) WHERE id=$1",[row.stock_lot_id,accepted]);
+      if(accepted>0) await client.query(
+        "INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_in,unit_cost,source_type,source_id,created_by) SELECT $1,'purchase_receipt',$2,warehouse_id,$3,$4,$5,'purchase_receipt',$6,$7 FROM stock_lots WHERE id=$3",
+        [receipt.rows[0].reference_no,row.product_id,row.stock_lot_id,accepted,row.unit_cost,req.params.id,inspected_by]
+      );
+    }
+    const anyAccepted=lines.some(x=>Number(x.accepted_quantity)>0);
+    await client.query("UPDATE purchase_receipts SET inspection_status=$2 WHERE id=$1",[req.params.id,anyAccepted?"accepted":"rejected"]);
+    const orderId=receipt.rows[0].purchase_order_id;
+    const remaining=await client.query(
+      "SELECT EXISTS(SELECT 1 FROM purchase_order_lines pol WHERE pol.purchase_order_id=$1 AND pol.quantity > COALESCE((SELECT SUM(prl.accepted_quantity) FROM purchase_receipt_lines prl JOIN purchase_receipts pr ON pr.id=prl.receipt_id WHERE pr.purchase_order_id=pol.purchase_order_id AND pr.inspection_status='accepted' AND prl.product_id=pol.product_id),0)+0.000001) AS has_remaining",
+      [orderId]
+    );
+    await client.query("UPDATE purchase_orders SET status=$2 WHERE id=$1",[orderId,remaining.rows[0].has_remaining?"part_received":"received"]);
+    await client.query("COMMIT");
+    res.json({receipt_id:req.params.id,inspection_status:anyAccepted?"accepted":"rejected",accepted_lines:lines.filter(x=>Number(x.accepted_quantity)>0).length,rejected_lines:lines.filter(x=>Number(x.rejected_quantity)>0).length});
+  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}
   finally{client.release();}
 });
 
