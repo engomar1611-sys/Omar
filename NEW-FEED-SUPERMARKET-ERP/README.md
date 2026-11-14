@@ -97,3 +97,16 @@
 
 ### حدود هذه الدفعة
 هذه بنية تشغيلية وواجهات API أولية وليست اعتمادًا نهائيًا لكل الموديولات. لم يتم بعد استكمال دورة البيع POS وحجز/صرف FEFO والتحصيل والقيود المحاسبية، ولا سير موافقات المرتجعات والاستلام والفحص وربطها بمخزون قابل للبيع، ولا إدارة البنوك والتسويات والرواتب والإهلاك. كما لم يتم تشغيل PostgreSQL أو تنفيذ اختبارات تكامل فعلية في هذه البيئة. لا تعتبر النسخة جاهزة للإنتاج قبل تطبيق الترحيلات وتشغيل الاختبارات على قاعدة اختبار.
+
+
+## Warehouse quality gate (migration 007)
+
+Purchase receipts now enter `pending_inspection`. Received quantities are quarantined in non-saleable lots with zero saleable on-hand quantity. The warehouse inspection endpoint is:
+
+- `POST /api/purchase-receipts/:id/inspect`
+- Request body: `{ "inspected_by": "<user-uuid>", "lines": [{ "receipt_line_id": "<uuid>", "accepted_quantity": 8, "rejected_quantity": 2 }] }`
+- Every receipt line must be submitted exactly once; accepted plus rejected quantity must equal the received quantity.
+- Only accepted quantities become saleable stock and create inbound stock movements. Rejected quantities remain excluded from saleable inventory.
+- POS and the inventory availability view filter out quarantined/non-saleable lots.
+
+Apply `database/007_purchase_quality_workflow.sql` after the earlier schema migrations. This change has been committed to the repository, but has not yet been executed against a live PostgreSQL database. The receiving/inspection API still requires integration tests against the actual schema and user permissions before production use.
