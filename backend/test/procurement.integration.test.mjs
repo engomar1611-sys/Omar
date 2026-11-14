@@ -232,6 +232,50 @@ test('PostgreSQL procurement workflow: request, approval, order, receipt, QC qua
     });
     assert.equal(listed.statusCode, 200, listed.body);
     assert.ok(listed.json().some(row => row.id === receiptId && row.lines.length === 1));
+
+    const purchaseReturn = await app.inject({
+      method: 'POST', url: '/api/v1/purchases/returns', headers,
+      payload: { returnNo: code('PR'), supplierId: supplier.id, purchaseOrderId: orderId,
+        warehouseId: warehouse.id, reason: 'مرتجع مورد للاختبار',
+        lines: [{ itemId: item.id, lotNo: 'LOT-' + suffix, quantity: 2 }] }
+    });
+    assert.equal(purchaseReturn.statusCode, 201, purchaseReturn.body);
+    const warehouseReturn = await app.inject({
+      method: 'POST', url: '/api/v1/purchases/returns/' + purchaseReturn.json().returnId + '/warehouse-approve',
+      headers, payload: {}
+    });
+    assert.equal(warehouseReturn.statusCode, 200, warehouseReturn.body);
+    const accountingReturn = await app.inject({
+      method: 'POST', url: '/api/v1/purchases/returns/' + purchaseReturn.json().returnId + '/accounting-approve',
+      headers, payload: {}
+    });
+    assert.equal(accountingReturn.statusCode, 200, accountingReturn.body);
+    assert.equal(Number(accountingReturn.json().total), 10);
+
+    const overpay = await app.inject({
+      method: 'POST', url: '/api/v1/accounting/supplier-payments', headers,
+      payload: { paymentNo: code('SPX'), supplierId: supplier.id, amount: 31, paymentMethod: 'CASH',
+        allocations: [{ purchaseOrderId: orderId, amount: 31 }] }
+    });
+    assert.equal(overpay.statusCode, 409, overpay.body, 'payment must not exceed payable after accepted returns');
+
+    const payment = await app.inject({
+      method: 'POST', url: '/api/v1/accounting/supplier-payments', headers,
+      payload: { paymentNo: code('SP'), supplierId: supplier.id, amount: 10, paymentMethod: 'CASH',
+        allocations: [{ purchaseOrderId: orderId, amount: 10 }] }
+    });
+    assert.equal(payment.statusCode, 201, payment.body);
+
+    const aging = await app.inject({
+      method: 'GET', url: '/api/v1/reports/supplier-aging?asOf=' + new Date().toISOString().slice(0, 10), headers
+    });
+    assert.equal(aging.statusCode, 200, aging.body);
+    const agingRow = aging.json().find(x => x.purchase_order_id === orderId);
+    assert.ok(agingRow);
+    assert.equal(Number(agingRow.received_amount), 40);
+    assert.equal(Number(agingRow.returned_amount), 10);
+    assert.equal(Number(agingRow.paid_amount), 10);
+    assert.equal(Number(agingRow.outstanding), 20);
   } finally {
     await app.close();
     await pool.end();
