@@ -154,20 +154,24 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
     const map=Object.fromEntries(mappings.rows.map(x=>[x.mapping_key,x.account_id]));
     if(!map.sales_returns||!map.refund_payable||!map.inventory||!map.cogs)
       throw Object.assign(new Error("Return accounting mappings are missing; apply migration 012"),{statusCode:409});
-    const je=await client.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'sale_return_approval',$2,CURRENT_DATE,'posted') RETURNING id",["JE-"+req.params.id,req.params.id]);
-    if(total>0){
-      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.sales_returns,total]);
-      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.refund_payable,total]);
-    }
-    if(restockedCost>0){
-      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.inventory,restockedCost]);
-      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.cogs,restockedCost]);
+    let journalEntryId=null;
+    if(total>0||restockedCost>0){
+      const je=await client.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'sale_return_approval',$2,CURRENT_DATE,'posted') RETURNING id",["JE-"+req.params.id,req.params.id]);
+      journalEntryId=je.rows[0].id;
+      if(total>0){
+        await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journalEntryId,map.sales_returns,total]);
+        await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journalEntryId,map.refund_payable,total]);
+      }
+      if(restockedCost>0){
+        await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journalEntryId,map.inventory,restockedCost]);
+        await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journalEntryId,map.cogs,restockedCost]);
+      }
     }
     await client.query(
       "UPDATE sale_returns SET status='approved',financially_approved_by=$2,approved_at=now() WHERE id=$1",
       [req.params.id,financially_approved_by]);
     await client.query("COMMIT");
-    res.json({return_id:req.params.id,status:"approved",refund_due:Number(total.toFixed(6)),restocked_lines:lines.rows.filter(x=>x.condition==="sellable").length,journal_entry_id:je.rows[0].id});
+    res.json({return_id:req.params.id,status:"approved",refund_due:Number(total.toFixed(6)),restocked_lines:lines.rows.filter(x=>x.condition==="sellable").length,journal_entry_id:journalEntryId});
   }catch(e){
     await client.query("ROLLBACK");
     if(e.statusCode)return fail(res,e.statusCode,e.message);
