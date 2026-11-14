@@ -15,6 +15,7 @@ import { hrRoutes, maintenanceRoutes, settingsRoutes } from './hr-maintenance-se
 import { webUiRoutes } from './web-ui.mjs';
 import { aiAssistantRoutes } from './ai-assistant.mjs';
 import { financeExtrasRoutes } from './finance-extras.mjs';
+import { printingRoutes } from './printing.mjs';
 
 const SESSION_HOURS = 8;
 const MAX_FAILED_LOGINS = 5;
@@ -218,6 +219,7 @@ export function buildApp({ logger = true, db = pool, jwtSecret = process.env.AUT
   app.register(settingsRoutes, { db });
   app.register(aiAssistantRoutes, { db });
   app.register(financeExtrasRoutes, { db });
+  app.register(printingRoutes, { db });
   app.register(webUiRoutes);
 
   return app;
