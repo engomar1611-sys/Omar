@@ -163,7 +163,7 @@ test('PostgreSQL procurement workflow: request, approval, order, receipt, QC qua
     assert.equal(Number(qc.json().rejectedQty), 2);
 
     const balance = await pool.query(
-      'SELECT quantity,average_unit_cost,quality_status,TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',
+      "SELECT quantity,average_unit_cost,quality_status,TO_CHAR(expiry_date,'YYYY-MM-DD') AS expiry_date FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3",
       [warehouse.id, item.id, 'LOT-' + suffix]
     );
     assert.equal(balance.rowCount, 1);
