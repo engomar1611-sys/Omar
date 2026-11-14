@@ -21,7 +21,7 @@ router.post("/sales/complete",async(req,res,next)=>{
    if(!product.rowCount)throw Object.assign(new Error("Product or sale unit is not active or configured"),{statusCode:400});
    const qty=Number(line.quantity),baseQty=qty*Number(product.rows[0].conversion),unitPrice=Number(line.unit_price),discount=Number(line.discount_amount||0);
    const gross=qty*unitPrice;if(discount>gross+0.000001)throw Object.assign(new Error("Line discount exceeds line amount"),{statusCode:400});
-   const lots=await client.query("SELECT id,quantity_on_hand,unit_cost,expiry_date FROM stock_lots WHERE product_id=$1 AND warehouse_id IN (SELECT id FROM warehouses WHERE branch_id=$2 AND is_active=true) AND quantity_on_hand>0 AND (expiry_date IS NULL OR expiry_date>=CURRENT_DATE) ORDER BY expiry_date NULLS LAST,received_at,id FOR UPDATE",[line.product_id,branch_id]);
+   const lots=await client.query("SELECT id,quantity_on_hand,unit_cost,expiry_date FROM stock_lots WHERE product_id=$1 AND warehouse_id IN (SELECT id FROM warehouses WHERE branch_id=$2 AND is_active=true) AND is_saleable=true AND quantity_on_hand>0 AND (expiry_date IS NULL OR expiry_date>=CURRENT_DATE) ORDER BY expiry_date NULLS LAST,received_at,id FOR UPDATE",[line.product_id,branch_id]);
    const available=lots.rows.reduce((s,x)=>s+Number(x.quantity_on_hand),0);
    if(available+0.000001<baseQty)throw Object.assign(new Error("Insufficient non-expired stock for product "+line.product_id),{statusCode:409});
    let remaining=baseQty,lineCogs=0;
