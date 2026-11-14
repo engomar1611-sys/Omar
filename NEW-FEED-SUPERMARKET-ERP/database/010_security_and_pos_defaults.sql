@@ -35,3 +35,11 @@ INSERT INTO payment_methods(code,name_ar,name_en) VALUES
   ('WALLET','محفظة إلكترونية','E-wallet'),
   ('BANK_TRANSFER','تحويل بنكي','Bank transfer')
 ON CONFLICT(code) DO NOTHING;
+
+-- Single-branch starter configuration; no product, price, or stock data is fabricated.
+INSERT INTO branches(code,name) VALUES ('MAIN','الفرع الرئيسي')
+ON CONFLICT(code) DO NOTHING;
+
+INSERT INTO warehouses(branch_id,code,name)
+SELECT id,'MAIN','المخزن الرئيسي' FROM branches WHERE code='MAIN'
+ON CONFLICT(code) DO NOTHING;
