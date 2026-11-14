@@ -18,7 +18,8 @@ router.get("/purchase-orders", async (_req,res,next) => {
 });
 
 router.post("/purchase-orders", async (req,res,next) => {
-  const {reference_no,supplier_id,branch_id,created_by=null,lines}=req.body??{};
+  const {reference_no,supplier_id,branch_id,lines}=req.body??{};
+  const created_by=req.user.id;
   if(!validText(reference_no,50)||!uuid.test(supplier_id||"")||!uuid.test(branch_id||"")||
      (created_by&&!uuid.test(created_by))||!Array.isArray(lines)||lines.length===0||lines.length>500||
      lines.some(x=>!uuid.test(x.product_id||"")||!uuid.test(x.unit_id||"")||!positive(x.quantity)||
@@ -59,7 +60,8 @@ router.post("/purchase-orders/:id/approve", async (req,res,next) => {
 });
 
 router.post("/purchase-orders/:id/receive", async (req,res,next) => {
-  const {reference_no,warehouse_id,received_by=null,lines}=req.body??{};
+  const {reference_no,warehouse_id,lines}=req.body??{};
+  const received_by=req.user.id;
   if(!uuid.test(req.params.id)||!validText(reference_no,60)||!uuid.test(warehouse_id||"")||
      (received_by&&!uuid.test(received_by))||!Array.isArray(lines)||lines.length===0||lines.length>500||
      lines.some(x=>!uuid.test(x.product_id||"")||!positive(x.quantity)||
@@ -126,7 +128,8 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
 
 
 router.post("/purchase-receipts/:id/inspect", async (req,res,next) => {
-  const {inspected_by=null,lines}=req.body??{};
+  const {lines}=req.body??{};
+  const inspected_by=req.user.id;
   if(!uuid.test(req.params.id)||(inspected_by&&!uuid.test(inspected_by))||
      !Array.isArray(lines)||!lines.length||lines.length>500||
      lines.some(x=>!uuid.test(x.receipt_line_id||"")||
