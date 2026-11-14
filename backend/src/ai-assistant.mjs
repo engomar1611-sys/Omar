@@ -28,9 +28,9 @@ export function detectDataIntent(message) {
 }
 
 const permissionByIntent = {
-  inventory: 'INVENTORY.READ',
-  production: 'PRODUCTION.READ',
-  sales: 'SALES.READ',
+  inventory: ['INVENTORY.READ'],
+  production: ['PRODUCTION.READ'],
+  sales: ['SALES.READ'],
   purchases: ['PURCHASES.READ'],
   accounting: ['ACCOUNTING.READ', 'REPORTS.READ']
 };
@@ -80,9 +80,9 @@ async function readErpContext(db, request, intent) {
        WHERE p.order_date>=CURRENT_DATE-INTERVAL '30 days'
        GROUP BY p.id,s.code,s.name_ar ORDER BY p.order_date DESC,p.order_no DESC LIMIT ${MAX_CONTEXT_ROWS}`,
     accounting: `SELECT a.code account_code,a.name_ar account_name,a.account_type,
-       COALESCE(SUM(l.debit),0)::numeric total_debit,
-       COALESCE(SUM(l.credit),0)::numeric total_credit,
-       COALESCE(SUM(l.debit-l.credit),0)::numeric balance
+       COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit ELSE 0 END),0)::numeric total_debit,
+       COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.credit ELSE 0 END),0)::numeric total_credit,
+       COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit-l.credit ELSE 0 END),0)::numeric balance
        FROM gl_accounts a LEFT JOIN journal_lines l ON l.account_id=a.id
        LEFT JOIN journal_entries j ON j.id=l.journal_entry_id AND j.status='POSTED'
        GROUP BY a.id ORDER BY a.code LIMIT ${MAX_CONTEXT_ROWS}`
