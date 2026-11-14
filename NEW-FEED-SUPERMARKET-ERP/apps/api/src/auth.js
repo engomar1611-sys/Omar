@@ -34,19 +34,19 @@ export function createAccessToken(userId){
 
 export async function authorizeModule(req,res,next){
   const rules=[
-    [/^\\/(categories|units|products|brands|product-prices|product-imports)(\\/|$)/,"catalog.manage"],
-    [/^\\/(purchase-orders|purchase-receipts)(\\/|$)/,"purchasing.manage"],
-    [/^\\/sales\\/returns\\/[^/]+\\/inspect$/,"returns.inspect"],
-    [/^\\/sales\\/returns\\/[^/]+\\/(approve|refund)$/,"returns.approve"],
-    [/^\\/sales(\\/|$)/,"sales.manage"],
-    [/^\\/(inventory|warehouses)(\\/|$)/,"inventory.manage"],
-    [/^\\/suppliers(\\/|$)/,"purchasing.manage"],
-    [/^\\/customers(\\/|$)/,"sales.manage"],
-    [/^\\/employees(\\/|$)/,"hr.manage"],
-    [/^\\/assets(\\/|$)/,"assets.manage"],
-    [/^\\/delivery(\\/|$)/,"delivery.manage"],
-    [/^\\/ecommerce(\\/|$)/,"ecommerce.manage"],
-    [/^\\/accounting(\\/|$)/,"accounting.manage"]
+    [/^\/(categories|units|products|brands|product-prices|product-imports)(\/|$)/,"catalog.manage"],
+    [/^\/(purchase-orders|purchase-receipts)(\/|$)/,"purchasing.manage"],
+    [/^\/sales\/returns\/[^/]+\/inspect$/,"returns.inspect"],
+    [/^\/sales\/returns\/[^/]+\/(approve|refund)$/,"returns.approve"],
+    [/^\/sales(\/|$)/,"sales.manage"],
+    [/^\/(inventory|warehouses)(\/|$)/,"inventory.manage"],
+    [/^\/suppliers(\/|$)/,"purchasing.manage"],
+    [/^\/customers(\/|$)/,"sales.manage"],
+    [/^\/employees(\/|$)/,"hr.manage"],
+    [/^\/assets(\/|$)/,"assets.manage"],
+    [/^\/delivery(\/|$)/,"delivery.manage"],
+    [/^\/ecommerce(\/|$)/,"ecommerce.manage"],
+    [/^\/accounting(\/|$)/,"accounting.manage"]
   ];
   const rule=rules.find(([pattern])=>pattern.test(req.path));
   if(!rule)return next();
