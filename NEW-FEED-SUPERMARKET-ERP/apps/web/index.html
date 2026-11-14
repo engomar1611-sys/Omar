@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#073b70">
+  <title>New Feed Supermarket ERP</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><div class="brand-mark">🛒</div><div><b>New Feed</b><strong>Supermarket</strong></div></div>
+    <div class="screen-title"><span class="screen-icon">▣</span><span id="screenTitle">نقطة البيع - كاشير رقم 1</span></div>
+    <div class="user"><span class="avatar">أ</span><span><b>المستخدم</b><small>كاشير</small></span></div>
+    <div class="datetime"><b id="dateText">—</b><strong id="timeText">—</strong></div>
+  </header>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="side-heading">القائمة الرئيسية</div>
+      <nav id="moduleNav" aria-label="وحدات النظام"></nav>
+      <div class="side-footer">NEW FEED ERP <small>نسخة تأسيسية</small></div>
+    </aside>
+    <main class="workspace">
+      <section id="posView" class="pos-layout">
+        <aside class="categories" id="categories"></aside>
+        <section class="products-area">
+          <div class="search-row"><input id="productSearch" placeholder="ابحث عن صنف بالاسم أو الباركود ..." autocomplete="off"><button id="scanButton" title="إدخال باركود">▥</button></div>
+          <div class="product-grid" id="productGrid"></div>
+        </section>
+        <section class="cart-panel">
+          <div class="cart-head"><span>#</span><span>الصنف</span><span>الكمية</span><span>سعر الوحدة</span><span>الإجمالي</span><span></span></div>
+          <div id="cartLines" class="cart-lines"></div>
+          <div class="cart-meta"><span>عدد الأصناف: <b id="itemCount">0</b></span><span>المجموع الفرعي: <b id="subtotal">0.00</b> ج.م</span></div>
+          <div class="discount-row"><label for="discountInput">خصم (%)</label><input id="discountInput" type="number" min="0" max="100" value="0"><b id="discountValue">0.00</b></div>
+          <div class="grand-total"><span>الإجمالي بعد الخصم</span><strong id="grandTotal">0.00 ج.م</strong></div>
+          <div class="payment-row"><span>طريقة الدفع</span><select id="paymentMethod"><option value="cash">نقدي</option><option value="card">بطاقة</option><option value="wallet">محفظة إلكترونية</option></select></div>
+          <button class="complete-sale" id="completeSale">🛒 إتمام البيع</button>
+        </section>
+      </section>
+      <section id="moduleView" class="module-view hidden"></section>
+    </main>
+  </div>
+  <footer class="actionbar" id="posActions">
+    <button class="action purple" id="printReceipt">▣<span>إعادة طباعة الفاتورة</span></button>
+    <button class="action blue" id="holdSale">▤<span>تعليق الفاتورة</span></button>
+    <button class="action green" id="returnSale">↶<span>مرتجع</span></button>
+    <button class="action orange" id="discountFocus">％<span>خصم</span></button>
+    <button class="action blue" id="noteSale">▦<span>إضافة ملاحظة</span></button>
+    <button class="action red" id="clearCart">▤<span>إلغاء</span></button>
+  </footer>
+  <script src="./app.js"></script>
+</body>
+</html>
