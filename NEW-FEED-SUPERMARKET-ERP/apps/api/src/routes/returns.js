@@ -127,6 +127,7 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
     const lines=await client.query(
       "SELECT srl.*,sl.sale_id,p.tracks_expiry FROM sale_return_lines srl JOIN sale_lines sl ON sl.id=srl.sale_line_id JOIN products p ON p.id=srl.product_id WHERE srl.return_id=$1 FOR UPDATE",
       [req.params.id]);
+    let restockedCost=0;
     for(const line of lines.rows){
       if(line.condition!=="sellable")continue;
       const cost=await client.query(
@@ -144,13 +145,29 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
         "INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_in,unit_cost,source_type,source_id,created_by) VALUES($1,'sale_return',$2,$3,$4,$5,$6,'sale_return',$7,$8) RETURNING id",
         [ret.rows[0].reference_no,line.product_id,ret.rows[0].warehouse_id,lot.rows[0].id,line.quantity,unitCost,req.params.id,financially_approved_by]);
       await client.query("UPDATE sale_return_lines SET stock_lot_id=$2 WHERE id=$1",[line.id,lot.rows[0].id]);
+      restockedCost+=Number(line.quantity)*unitCost;
+    }
+    const total=lines.rows.reduce((s,x)=>s+Number(x.refund_amount),0);
+    const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+    if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+    const mappings=await client.query("SELECT mapping_key,account_id FROM system_account_mappings WHERE mapping_key=ANY($1::varchar[])",[["sales_returns","refund_payable","inventory","cogs"]]);
+    const map=Object.fromEntries(mappings.rows.map(x=>[x.mapping_key,x.account_id]));
+    if(!map.sales_returns||!map.refund_payable||!map.inventory||!map.cogs)
+      throw Object.assign(new Error("Return accounting mappings are missing; apply migration 012"),{statusCode:409});
+    const je=await client.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'sale_return_approval',$2,CURRENT_DATE,'posted') RETURNING id",["JE-"+req.params.id,req.params.id]);
+    if(total>0){
+      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.sales_returns,total]);
+      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.refund_payable,total]);
+    }
+    if(restockedCost>0){
+      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.inventory,restockedCost]);
+      await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.cogs,restockedCost]);
     }
     await client.query(
       "UPDATE sale_returns SET status='approved',financially_approved_by=$2,approved_at=now() WHERE id=$1",
       [req.params.id,financially_approved_by]);
     await client.query("COMMIT");
-    const total=lines.rows.reduce((s,x)=>s+Number(x.refund_amount),0);
-    res.json({return_id:req.params.id,status:"approved",refund_due:Number(total.toFixed(6)),restocked_lines:lines.rows.filter(x=>x.condition==="sellable").length});
+    res.json({return_id:req.params.id,status:"approved",refund_due:Number(total.toFixed(6)),restocked_lines:lines.rows.filter(x=>x.condition==="sellable").length,journal_entry_id:je.rows[0].id});
   }catch(e){
     await client.query("ROLLBACK");
     if(e.statusCode)return fail(res,e.statusCode,e.message);
@@ -173,14 +190,21 @@ router.post("/sales/returns/:id/refund",async(req,res,next)=>{
     const total=await client.query("SELECT COALESCE(SUM(refund_amount),0) amount FROM sale_return_lines WHERE return_id=$1",[req.params.id]);
     if(Math.abs(Number(total.rows[0].amount)-Number(amount))>0.01)
       throw Object.assign(new Error("Refund amount must equal the approved return amount"),{statusCode:400});
-    const method=await client.query("SELECT id FROM payment_methods WHERE id=$1 AND is_active=true",[payment_method_id]);
-    if(!method.rowCount)throw Object.assign(new Error("Active payment method not found"),{statusCode:400});
+    const method=await client.query("SELECT id,account_id FROM payment_methods WHERE id=$1 AND is_active=true",[payment_method_id]);
+    if(!method.rowCount||!method.rows[0].account_id)throw Object.assign(new Error("Active payment method has no ledger account mapping"),{statusCode:400});
+    const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+    if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+    const payable=await client.query("SELECT account_id FROM system_account_mappings WHERE mapping_key='refund_payable'");
+    if(!payable.rowCount)throw Object.assign(new Error("Refund payable mapping is missing; apply migration 012"),{statusCode:409});
+    const je=await client.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'sale_return_refund',$2,CURRENT_DATE,'posted') RETURNING id",["JER-"+req.params.id,req.params.id]);
+    await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,payable.rows[0].account_id,amount]);
+    await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,method.rows[0].account_id,amount]);
     await client.query(
       "INSERT INTO sale_return_refunds(return_id,payment_method_id,amount,reference_text,processed_by) VALUES($1,$2,$3,$4,$5)",
       [req.params.id,payment_method_id,amount,reference_text,processed_by]);
     await client.query("UPDATE sale_returns SET status='refunded' WHERE id=$1",[req.params.id]);
     await client.query("COMMIT");
-    res.json({return_id:req.params.id,status:"refunded",amount:Number(amount)});
+    res.json({return_id:req.params.id,status:"refunded",amount:Number(amount),journal_entry_id:je.rows[0].id});
   }catch(e){
     await client.query("ROLLBACK");
     if(e.statusCode)return fail(res,e.statusCode,e.message);
