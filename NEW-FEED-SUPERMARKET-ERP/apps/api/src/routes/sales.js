@@ -5,7 +5,8 @@ const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 const validRef=v=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=50;
 router.get("/sales",async(_q,res,next)=>{try{const r=await pool.query("SELECT s.*,c.name customer_name,u.display_name cashier_name FROM sales s LEFT JOIN customers c ON c.id=s.customer_id JOIN users u ON u.id=s.cashier_id ORDER BY s.created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/sales/complete",async(req,res,next)=>{
- const {reference_no,branch_id,cashier_id,customer_id=null,lines,payments,idempotency_key=null}=req.body??{};
+ const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null}=req.body??{};
+ const cashier_id=req.user.id;
  if(!validRef(reference_no)||!uuid.test(branch_id||"")||!uuid.test(cashier_id||"")||(customer_id&&!uuid.test(customer_id))||
  !Array.isArray(lines)||!lines.length||lines.length>200||lines.some(x=>!uuid.test(x.product_id||"")||!uuid.test(x.unit_id||"")||!Number.isFinite(Number(x.quantity))||Number(x.quantity)<=0||!Number.isFinite(Number(x.unit_price))||Number(x.unit_price)<0||!Number.isFinite(Number(x.discount_amount||0))||Number(x.discount_amount||0)<0)||
  !Array.isArray(payments)||!payments.length||payments.some(x=>!uuid.test(x.payment_method_id||"")||!Number.isFinite(Number(x.amount))||Number(x.amount)<=0))
