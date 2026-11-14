@@ -140,12 +140,43 @@ async function loadOperationalModule(id){
   }
  }catch(e){$("liveModuleContent").innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'</div>';}
 }
+async function openUsers(){
+ const root=$("moduleView");
+ root.innerHTML='<h1 class="module-title">المستخدمون والصلاحيات</h1><div id="usersContent" class="empty-state">جارٍ تحميل المستخدمين...</div>';
+ try{
+  const [users,roles,permissions]=await Promise.all([api("/api/users"),api("/api/roles"),api("/api/permissions")]);
+  const target=$("usersContent");
+  const roleOptions=roles.items.map(r=>'<option value="'+escapeHtml(r.code)+'">'+escapeHtml(r.name)+' ('+escapeHtml(r.code)+')</option>').join("");
+  target.innerHTML='<h2>إضافة مستخدم</h2><div class="form-grid"><label>اسم المستخدم<input id="newUsername"></label><label>الاسم الظاهر<input id="newDisplayName"></label><label>كلمة المرور<input id="newUserPassword" type="password" minlength="12"></label><label>الأدوار (يمكن اختيار أكثر من دور)<select id="newUserRoles" multiple size="4">'+roleOptions+'</select></label></div><button class="primary-btn" id="createUser">إنشاء المستخدم</button><div class="table-scroll"><h2>قائمة المستخدمين</h2><table class="module-table"><thead><tr><th>اسم المستخدم</th><th>الاسم</th><th>الأدوار</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>'+users.items.map(u=>'<tr><td>'+escapeHtml(u.username)+'</td><td>'+escapeHtml(u.display_name)+'</td><td>'+escapeHtml((u.role_codes||[]).join("، "))+'</td><td>'+(u.is_active?"نشط":"موقوف")+'</td><td><button class="small-btn" data-user-toggle="'+u.id+'" data-active="'+u.is_active+'">'+(u.is_active?"إيقاف":"تفعيل")+'</button></td></tr>').join("")+'</tbody></table></div><h2>صلاحيات الأدوار</h2><div class="module-toolbar"><select id="rolePermissionTarget">'+roleOptions+'</select><button class="primary-btn" id="saveRolePermissions">حفظ صلاحيات الدور</button></div><div id="permissionChecks" class="form-grid"></div>';
+  $("createUser").onclick=async()=>{
+   const selected=[...$("newUserRoles").selectedOptions].map(x=>x.value);
+   const body={username:$("newUsername").value.trim(),display_name:$("newDisplayName").value.trim(),password:$("newUserPassword").value,role_codes:selected};
+   try{await api("/api/users",{method:"POST",body:JSON.stringify(body)});toast("تم إنشاء المستخدم");await openUsers();}catch(e){toast(e.message);}
+  };
+  document.querySelectorAll("[data-user-toggle]").forEach(b=>b.onclick=async()=>{
+   try{await api("/api/users/"+b.dataset.userToggle+"/status",{method:"PATCH",body:JSON.stringify({is_active:b.dataset.active!=="true"})});toast("تم تحديث حالة المستخدم");await openUsers();}catch(e){toast(e.message);}
+  });
+  const renderPermissions=()=>{
+   const role=roles.items.find(x=>x.code===$("rolePermissionTarget").value);
+   const selected=new Set(role?.permission_codes||[]);
+   $("permissionChecks").innerHTML=permissions.items.map(p=>'<label class="check-label"><input type="checkbox" value="'+escapeHtml(p.code)+'" '+(selected.has(p.code)?"checked":"")+' '+(role?.code==="SUPER_ADMIN"?"disabled":"")+'>'+escapeHtml(p.description)+' ('+escapeHtml(p.code)+')</label>').join("");
+   $("saveRolePermissions").disabled=role?.code==="SUPER_ADMIN";
+  };
+  $("rolePermissionTarget").onchange=renderPermissions;renderPermissions();
+  $("saveRolePermissions").onclick=async()=>{
+   const role=$("rolePermissionTarget").value;
+   const permission_codes=[...$("permissionChecks").querySelectorAll("input:checked")].map(x=>x.value);
+   try{await api("/api/roles/"+encodeURIComponent(role)+"/permissions",{method:"PUT",body:JSON.stringify({permission_codes})});toast("تم حفظ صلاحيات الدور");await openUsers();}catch(e){toast(e.message);}
+  };
+ }catch(e){root.innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'</div>';}
+}
 function openModule(id){
  document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.module===id));
  $("posView").classList.toggle("hidden",id!=="pos");$("posActions").classList.toggle("hidden",id!=="pos");$("moduleView").classList.toggle("hidden",id==="pos");
  const title=modules.find(x=>x[0]===id)?.[2]||"نقطة البيع";$("screenTitle").textContent=title;
  if(id==="pos")return;
  if(id==="catalog"){openCatalog();return;}
+ if(id==="users"){openUsers();return;}
  if(liveModuleConfig[id]){loadOperationalModule(id);return;}
  const d=moduleData[id];$("moduleView").innerHTML='<h1 class="module-title">'+escapeHtml(d[0])+'</h1><div class="empty-state">'+escapeHtml(d[2])+'</div>';
 }
