@@ -11,7 +11,23 @@ const enabled = Boolean(
 
 test('PostgreSQL sales workflow: discounted invoice, collection allocation, partial delivery and two-stage return approval', { skip: !enabled }, async () => {
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-  const app = buildApp({ logger: false, db: pool, jwtSecret: process.env.AUTH_JWT_SECRET });
+  const tracedDb = {
+    query: (...args) => pool.query(...args),
+    connect: async () => {
+      const client = await pool.connect();
+      return {
+        query: async (...args) => {
+          try { return await client.query(...args); }
+          catch (error) {
+            console.error('SALES_INTEGRATION_SQL_ERROR', error.code, error.message, args[0]);
+            throw error;
+          }
+        },
+        release: () => client.release()
+      };
+    }
+  };
+  const app = buildApp({ logger: false, db: tracedDb, jwtSecret: process.env.AUTH_JWT_SECRET });
   const suffix = Date.now().toString();
   const code = (prefix) => (prefix + suffix).slice(0, 40);
   try {
