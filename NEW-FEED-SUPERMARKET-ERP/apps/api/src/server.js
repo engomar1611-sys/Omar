@@ -11,6 +11,7 @@ import productMasterRoutes from "./routes/product-master.js";
 import productImportRoutes from "./routes/product-imports.js";
 import operationsRoutes from "./routes/operations.js";
 import salesRoutes from "./routes/sales.js";
+import returnsRoutes from "./routes/returns.js";
 
 const app = express();
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -49,6 +50,7 @@ app.use("/api", productMasterRoutes);
 app.use("/api", productImportRoutes);
 app.use("/api", operationsRoutes);
 app.use("/api", salesRoutes);
+app.use("/api", returnsRoutes);
 app.use("/api", (_req, res) => res.status(404).json({ error: "API route not found" }));
 
 app.use((error, _req, res, _next) => {
