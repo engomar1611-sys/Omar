@@ -56,7 +56,7 @@ export async function commercialRoutes(app,{db}){
  });
  app.post('/api/v1/sales/invoices',auth(app,'SALES.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.invoiceNo,40)||!b.customerId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||
-   b.lines.some(l=>!l.itemId||!pos(l.quantity)||!Number.isFinite(Number(l.unitPrice))||Number(l.unitPrice)<0)||(b.dueDate&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(b.dueDate))))return bad(rep);
+   b.lines.some(l=>!l.itemId||!pos(l.quantity)||!Number.isFinite(Number(l.unitPrice))||Number(l.unitPrice)<0)||(b.dueDate&&!/^\d{4}-\d{2}-\d{2}$/.test(String(b.dueDate))))return bad(rep);
   const discount=Number(b.discountAmount??0);if(!Number.isFinite(discount)||discount<0)return bad(rep);
   try{
    const out=await tx(db,async c=>{
