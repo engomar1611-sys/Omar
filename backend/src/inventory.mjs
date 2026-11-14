@@ -101,23 +101,28 @@ export async function inventoryRoutes(app,{db}){
     const lines=await c.query('SELECT * FROM inventory_transfer_lines WHERE transfer_id=$1 ORDER BY item_id,lot_no FOR UPDATE',[req.params.id]);
     if(!lines.rowCount)throw Object.assign(new Error('التحويل لا يحتوي على أصناف'),{code:'P0001'});
     for(const l of lines.rows){
-     const source=await c.query(`SELECT quantity,average_unit_cost,expiry_date,quality_status FROM inventory_balances
-      WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE`,[h.rows[0].source_warehouse_id,l.item_id,l.lot_no]);
-     if(!source.rowCount||Number(source.rows[0].quantity)+0.000001<Number(l.quantity))
+     const locked=await c.query(`SELECT warehouse_id,quantity,average_unit_cost,expiry_date,quality_status FROM inventory_balances
+      WHERE warehouse_id IN ($1,$2) AND item_id=$3 AND lot_no=$4 ORDER BY warehouse_id FOR UPDATE`,
+      [h.rows[0].source_warehouse_id,h.rows[0].destination_warehouse_id,l.item_id,l.lot_no]);
+     const s=locked.rows.find(x=>x.warehouse_id===h.rows[0].source_warehouse_id);
+     const d=locked.rows.find(x=>x.warehouse_id===h.rows[0].destination_warehouse_id);
+     if(!s||Number(s.quantity)+0.000001<Number(l.quantity))
       throw Object.assign(new Error('الرصيد غير كافٍ لإتمام التحويل'),{code:'P0001'});
-     const s=source.rows[0],qty=Number(l.quantity),cost=Number(s.average_unit_cost);
-     const destination=await c.query(`SELECT quantity,average_unit_cost FROM inventory_balances
-      WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE`,[h.rows[0].destination_warehouse_id,l.item_id,l.lot_no]);
-     const oldQty=destination.rowCount?Number(destination.rows[0].quantity):0;
-     const oldCost=destination.rowCount?Number(destination.rows[0].average_unit_cost):0;
+     const qty=Number(l.quantity),cost=Number(s.average_unit_cost);
+     if(d&&String(d.expiry_date??'')!==String(s.expiry_date??''))
+      throw Object.assign(new Error('لا يمكن دمج نفس التشغيلة بتاريخي صلاحية مختلفين'),{code:'P0001'});
+     const oldQty=d?Number(d.quantity):0;
+     const oldCost=d?Number(d.average_unit_cost):0;
      const newQty=oldQty+qty,newCost=newQty>0?((oldQty*oldCost)+(qty*cost))/newQty:cost;
+     const qualityStatus=!d?s.quality_status:(d.quality_status===s.quality_status?s.quality_status:
+      (d.quality_status==='QUARANTINED'||s.quality_status==='QUARANTINED'?'QUARANTINED':'PENDING_QC'));
      await c.query('UPDATE inventory_balances SET quantity=quantity-$4,updated_at=NOW() WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',
       [h.rows[0].source_warehouse_id,l.item_id,l.lot_no,qty]);
      await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,expiry_date,quantity,average_unit_cost,quality_status)
       VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE
       SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,expiry_date=EXCLUDED.expiry_date,
        quality_status=EXCLUDED.quality_status,updated_at=NOW()`,
-      [h.rows[0].destination_warehouse_id,l.item_id,l.lot_no,s.expiry_date,newQty,newCost,s.quality_status??'RELEASED']);
+      [h.rows[0].destination_warehouse_id,l.item_id,l.lot_no,s.expiry_date,newQty,newCost,qualityStatus]);
      await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,quantity_out,unit_cost,reference_type,reference_id,created_by)
       VALUES($1,$2,$3,$4,'TRANSFER_OUT',0,$5,$6,'INVENTORY_TRANSFER',$7,$8),
             ($9,$10,$3,$4,'TRANSFER_IN',$5,0,$6,'INVENTORY_TRANSFER',$7,$8)`,
