@@ -22,31 +22,33 @@ export function detectDataIntent(message) {
   if (/مخزون|رصيد|أرصدة|خامات|اصناف|أصناف|inventory|stock|items/.test(value)) return 'inventory';
   if (/إنتاج|انتاج|تشغيلات|أوامر الإنتاج|امر انتاج|production|manufacturing/.test(value)) return 'production';
   if (/مبيعات|فواتير بيع|عملاء|sales|invoices/.test(value)) return 'sales';
+  if (/ميزان مراجعة|ميزان|قيود محاسبية|الحسابات|حسابات|دفتر الأستاذ|trial balance|general ledger|accounting/.test(value)) return 'accounting';
   if (/مشتريات|أوامر شراء|موردين|purchase|suppliers/.test(value)) return 'purchases';
   return null;
 }
 
 const permissionByIntent = {
-  inventory: 'INVENTORY.READ',
-  production: 'PRODUCTION.READ',
-  sales: 'SALES.READ',
-  purchases: 'PURCHASES.READ'
+  inventory: ['INVENTORY.READ'],
+  production: ['PRODUCTION.READ'],
+  sales: ['SALES.READ'],
+  purchases: ['PURCHASES.READ'],
+  accounting: ['ACCOUNTING.READ', 'REPORTS.READ']
 };
 
 async function readErpContext(db, request, intent) {
   if (!intent) return null;
-  const permission = permissionByIntent[intent];
+  const permissions = permissionByIntent[intent];
   const allowed = await db.query(
-    `SELECT EXISTS (
-       SELECT 1 FROM user_roles ur
+    `SELECT COUNT(DISTINCT p.code)::int granted
+       FROM user_roles ur
        JOIN role_permissions rp ON rp.role_id=ur.role_id
        JOIN permissions p ON p.id=rp.permission_id
        JOIN roles r ON r.id=ur.role_id
-       WHERE ur.user_id=$1 AND p.code=$2 AND p.is_active=TRUE AND r.is_active=TRUE
-     ) AS allowed`,
-    [request.authUser.user_id, permission]
+       WHERE ur.user_id=$1 AND p.code=ANY($2::text[])
+         AND p.is_active=TRUE AND r.is_active=TRUE`,
+    [request.authUser.user_id, permissions]
   );
-  if (!allowed.rows[0]?.allowed) {
+  if (Number(allowed.rows[0]?.granted ?? 0) !== permissions.length) {
     return { denied: true, message: 'المستخدم لا يملك صلاحية قراءة بيانات هذا القسم.' };
   }
 
@@ -76,13 +78,20 @@ async function readErpContext(db, request, intent) {
        FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id
        LEFT JOIN purchase_order_lines l ON l.purchase_order_id=p.id
        WHERE p.order_date>=CURRENT_DATE-INTERVAL '30 days'
-       GROUP BY p.id,s.code,s.name_ar ORDER BY p.order_date DESC,p.order_no DESC LIMIT ${MAX_CONTEXT_ROWS}`
+       GROUP BY p.id,s.code,s.name_ar ORDER BY p.order_date DESC,p.order_no DESC LIMIT ${MAX_CONTEXT_ROWS}`,
+    accounting: `SELECT a.code account_code,a.name_ar account_name,a.account_type,
+       COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit ELSE 0 END),0)::numeric total_debit,
+       COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.credit ELSE 0 END),0)::numeric total_credit,
+       COALESCE(SUM(CASE WHEN j.id IS NOT NULL THEN l.debit-l.credit ELSE 0 END),0)::numeric balance
+       FROM gl_accounts a LEFT JOIN journal_lines l ON l.account_id=a.id
+       LEFT JOIN journal_entries j ON j.id=l.journal_entry_id AND j.status='POSTED'
+       GROUP BY a.id ORDER BY a.code LIMIT ${MAX_CONTEXT_ROWS}`
   };
 
   await db.query(
     `INSERT INTO audit_logs(actor_user_id,action,entity_type,entity_id,details)
      VALUES($1,'AI_READ_ONLY_DATA_ACCESS',$2,NULL,$3::jsonb)`,
-    [request.authUser.user_id, intent.toUpperCase(), JSON.stringify({ permission, rowLimit: MAX_CONTEXT_ROWS })]
+    [request.authUser.user_id, intent.toUpperCase(), JSON.stringify({ permissions, rowLimit: MAX_CONTEXT_ROWS })]
   );
 
   const client = await db.connect();
@@ -155,6 +164,7 @@ export async function aiAssistantRoutes(app, { db }) {
             'إذا لم تصلك بيانات، وضّح أن الإجابة لا تستند إلى قراءة مباشرة.',
             'البيانات للقراءة فقط. لا تنفذ ولا توصي باعتماد أو تعديل حركات مالية أو مخزنية نيابة عن المستخدم.',
             'اذكر أن المبيعات والمشتريات في السياق تخص آخر 30 يوماً عندما ينطبق ذلك.',
+            'ملخص الحسابات يعرض القيود المرحلة فقط ويجب عدم اعتباره ميزان مراجعة معتمداً دون مراجعة محاسب النظام.',
             'إذا كانت نتيجة الاستعلام فارغة فقل ذلك بوضوح.'
           ].join(' '),
           input: erpContext
