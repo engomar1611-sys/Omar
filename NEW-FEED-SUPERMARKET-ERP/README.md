@@ -110,3 +110,24 @@ Purchase receipts now enter `pending_inspection`. Received quantities are quaran
 - POS and the inventory availability view filter out quarantined/non-saleable lots.
 
 Apply `database/007_purchase_quality_workflow.sql` after the earlier schema migrations. This change has been committed to the repository, but has not yet been executed against a live PostgreSQL database. The receiving/inspection API still requires integration tests against the actual schema and user permissions before production use.
+
+
+## تصحيح الاستلام وإدارة مرتجعات البيع (المهاجرتان 007 و008)
+
+- تم تصحيح إنشاء لوط الاستلام ليستخدم تكلفة الوحدة الصحيحة دون تمرير معاملات SQL زائدة.
+- لم تعد عملية الاستلام تنشئ حركة مخزون وهمية؛ حركة الوارد تُنشأ فقط بعد اعتماد فحص المخزن.
+- أمر الشراء يظل قيد الاستلام الجزئي إلى أن يعتمد الفحص الكميات المقبولة. الكميات المرفوضة لا تُحتسب كرصيد متاح، ويمكن استبدالها باستلام لاحق.
+- فحص الاستلام يجب أن يشمل كل سطر مرة واحدة، ومجموع المقبول والمرفوض يجب أن يساوي الكمية المستلمة.
+- دورة مرتجع البيع أصبحت: طلب مرتجع مرتبط بسطور فاتورة مكتملة، ثم فحص مخزني، ثم اعتماد مالي، ثم تسجيل رد المبلغ.
+- يمنع النظام رد كمية تتجاوز صافي الكمية المباعة بعد خصم المرتجعات السابقة غير المرفوضة.
+- الأصناف المرتجعة بحالة تالفة أو منتهية لا تعود للمخزون. الصنف المقبول للبيع فقط يُنشأ له لوط جديد وحركة وارد بعد الاعتماد المالي.
+- الأصناف التي تتبع الصلاحية تتطلب إدخال تاريخ صلاحية صالح عند قبولها للبيع.
+- مسارات المرتجعات:
+  - `POST /api/sales/:saleId/returns` لإنشاء طلب.
+  - `POST /api/sales/returns/:id/inspect` لفحص المخزن.
+  - `POST /api/sales/returns/:id/approve` للاعتماد المالي وإرجاع المقبول فقط للمخزون.
+  - `POST /api/sales/returns/:id/refund` لتسجيل رد المبلغ بعد الاعتماد.
+  - `GET /api/sales/returns` لعرض الطلبات.
+- يجب تطبيق `database/008_sales_returns_workflow.sql` بعد `database/007_purchase_quality_workflow.sql`، وبعد `schema.sql` والترحيلات 002 إلى 006.
+
+**حدود التنفيذ:** تسجيل رد المبلغ يحفظ وسيلة الدفع والمرجع والمبلغ في سجل مستقل، لكنه لا ينشئ حتى الآن قيدًا محاسبيًا عامًا أو حركة بنك/خزينة تلقائية. كذلك لم تُنفذ اختبارات قاعدة بيانات حية أو اختبارات أجهزة POS والطابعات في هذه البيئة. لا تعتبر هذه الدورة معتمدة للإنتاج قبل استكمال ربط الأستاذ العام واختبارها على PostgreSQL.
