@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS inventory_transfer_lines (
 CREATE INDEX IF NOT EXISTS idx_inventory_transfers_created ON inventory_transfers(created_at DESC);
 ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS stock_movements_movement_type_check;
 ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_movement_type_check
- CHECK(movement_type IN ('PURCHASE_RECEIPT','PRODUCTION_ISSUE','PRODUCTION_OUTPUT','ADJUSTMENT_IN','ADJUSTMENT_OUT','TRANSFER_IN','TRANSFER_OUT'));
+ CHECK(movement_type IN ('PURCHASE_RECEIPT','PRODUCTION_ISSUE','PRODUCTION_OUTPUT','ADJUSTMENT_IN','ADJUSTMENT_OUT','PRODUCTION_LOSS','TRANSFER_IN','TRANSFER_OUT'));
 INSERT INTO permissions(code,name_ar,module_code,description) VALUES
  ('INVENTORY.TRANSFER','إنشاء تحويلات المخزون بين المخازن','INVENTORY','إنشاء مسودة تحويل مخزون'),
  ('INVENTORY.TRANSFER.APPROVE','اعتماد وترحيل تحويلات المخزون','INVENTORY','ترحيل التحويل بين المخازن مع الحفاظ على التشغيلة ومتوسط التكلفة')
