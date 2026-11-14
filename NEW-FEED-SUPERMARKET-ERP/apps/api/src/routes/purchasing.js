@@ -86,11 +86,22 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
     );
     for(const line of lines){
       const ordered=await client.query(
-        `SELECT COALESCE(SUM(quantity),0) AS ordered
-         FROM purchase_order_lines WHERE purchase_order_id=$1 AND product_id=$2`,
+        `SELECT COALESCE(SUM(pol.quantity),0) AS ordered,
+                COALESCE((SELECT SUM(prl.quantity)
+                          FROM purchase_receipt_lines prl
+                          JOIN purchase_receipts pr ON pr.id=prl.receipt_id
+                          WHERE pr.purchase_order_id=pol.purchase_order_id
+                            AND pr.status='accepted'
+                            AND prl.product_id=pol.product_id),0) AS received
+         FROM purchase_order_lines pol
+         WHERE pol.purchase_order_id=$1 AND pol.product_id=$2
+         GROUP BY pol.purchase_order_id`,
         [req.params.id,line.product_id]
       );
-      if(Number(ordered.rows[0].ordered)<=0) throw Object.assign(new Error("Product is not part of this purchase order"),{statusCode:400});
+      if(!ordered.rowCount) throw Object.assign(new Error("Product is not part of this purchase order"),{statusCode:400});
+      const remaining=Number(ordered.rows[0].ordered)-Number(ordered.rows[0].received);
+      if(Number(line.quantity)>remaining+0.000001)
+        throw Object.assign(new Error("Received quantity exceeds the remaining ordered quantity"),{statusCode:409});
       const product=await client.query("SELECT tracks_expiry FROM products WHERE id=$1",[line.product_id]);
       if(!product.rowCount) throw Object.assign(new Error("Product not found"),{code:"23503"});
       if(product.rows[0].tracks_expiry&&!line.expiry_date) throw Object.assign(new Error("Expiry date is required for this product"),{statusCode:400});
@@ -110,8 +121,21 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
         [reference_no.trim(),line.product_id,warehouse_id,lot.rows[0].id,line.quantity,line.unit_cost,receipt.rows[0].id,received_by]
       );
     }
+    const balance=await client.query(
+      `SELECT EXISTS(
+         SELECT 1 FROM purchase_order_lines pol
+         WHERE pol.purchase_order_id=$1
+           AND pol.quantity > COALESCE((
+             SELECT SUM(prl.quantity) FROM purchase_receipt_lines prl
+             JOIN purchase_receipts pr ON pr.id=prl.receipt_id
+             WHERE pr.purchase_order_id=pol.purchase_order_id
+               AND pr.status='accepted' AND prl.product_id=pol.product_id
+           ),0) + 0.000001
+       ) AS has_remaining`,[req.params.id]
+    );
     await client.query(
-      "UPDATE purchase_orders SET status='part_received' WHERE id=$1",[req.params.id]
+      "UPDATE purchase_orders SET status=$2 WHERE id=$1",
+      [req.params.id,balance.rows[0].has_remaining?"part_received":"received"]
     );
     await client.query("COMMIT");
     res.status(201).json({receipt:receipt.rows[0],accepted_lines:lines.length});
