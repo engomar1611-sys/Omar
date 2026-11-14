@@ -298,9 +298,35 @@ export async function commercialRoutes(app,{db}){
  app.post('/api/v1/accounting/periods/close',auth(app,'ACCOUNTING.PERIODS.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.periodCode,20)||!b.startDate||!b.endDate||String(b.endDate)<String(b.startDate))return bad(rep);
   try{
-   const r=await db.query(`INSERT INTO accounting_periods(period_code,start_date,end_date,status,closed_by,closed_at)
-    VALUES($1,$2,$3,'CLOSED',$4,NOW()) RETURNING *`,[b.periodCode,b.startDate,b.endDate,req.authUser.user_id]);
-   return rep.code(201).send(r.rows[0]);
+   const r=await tx(db,async c=>{
+    await c.query("SELECT pg_advisory_xact_lock(hashtext('new-feed-accounting-periods'))");
+    const overlap=await c.query("SELECT id,period_code FROM accounting_periods WHERE daterange(start_date,end_date,'[]') && daterange($1::date,$2::date,'[]') FOR UPDATE",[b.startDate,b.endDate]);
+    if(overlap.rowCount)throw Object.assign(new Error('الفترة تتداخل مع فترة محاسبية موجودة: '+overlap.rows[0].period_code),{code:'P0001'});
+    const integrity=await c.query(`SELECT COUNT(*)::int n FROM journal_entries j
+     LEFT JOIN (SELECT journal_entry_id,SUM(debit) debit,SUM(credit) credit,COUNT(*) line_count
+       FROM journal_lines GROUP BY journal_entry_id) l ON l.journal_entry_id=j.id
+     WHERE j.entry_date BETWEEN $1::date AND $2::date
+       AND (l.journal_entry_id IS NULL OR l.line_count<2
+        OR ABS(COALESCE(l.debit,0)-j.total_debit)>0.00001
+        OR ABS(COALESCE(l.credit,0)-j.total_credit)>0.00001
+        OR ABS(COALESCE(l.debit,0)-COALESCE(l.credit,0))>0.00001)`,[b.startDate,b.endDate]);
+    if(integrity.rows[0].n)throw Object.assign(new Error('توجد قيود غير مكتملة أو غير متطابقة؛ لا يمكن إغلاق الفترة'),{code:'P0001'});
+    const totals=await c.query(`SELECT COALESCE(SUM(total_debit),0) debit,COALESCE(SUM(total_credit),0) credit
+      FROM journal_entries WHERE entry_date BETWEEN $1::date AND $2::date AND status='POSTED'`,[b.startDate,b.endDate]);
+    if(Math.abs(Number(totals.rows[0].debit)-Number(totals.rows[0].credit))>0.00001)
+     throw Object.assign(new Error('ميزان الفترة غير متوازن؛ لا يمكن إغلاقها'),{code:'P0001'});
+    const result=await c.query(`INSERT INTO accounting_periods(period_code,start_date,end_date,status,closed_by,closed_at)
+     VALUES($1,$2,$3,'CLOSED',$4,NOW()) RETURNING *`,[b.periodCode,b.startDate,b.endDate,req.authUser.user_id]);
+    return result.rows[0];
+   });
+   return rep.code(201).send(r);
+  }catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/accounting/periods/:id/lock',auth(app,'ACCOUNTING.PERIODS.MANAGE'),async(req,rep)=>{
+  try{
+   const r=await db.query("UPDATE accounting_periods SET status='LOCKED',closed_by=$1,closed_at=NOW() WHERE id=$2 AND status='CLOSED' RETURNING *",[req.authUser.user_id,req.params.id]);
+   if(!r.rowCount)return rep.code(409).send({error:'BUSINESS_RULE',message:'الفترة غير موجودة أو ليست مغلقة'});
+   return r.rows[0];
   }catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/quality/sales-returns/:returnId/inspect',auth(app,'QUALITY.APPROVE'),async(req,rep)=>{
