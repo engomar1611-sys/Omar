@@ -1,0 +1,40 @@
+import {Router} from "express";
+import {pool} from "../db.js";
+const router=Router();
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const validRef=v=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=50;
+router.get("/sales",async(_q,res,next)=>{try{const r=await pool.query("SELECT s.*,c.name customer_name,u.display_name cashier_name FROM sales s LEFT JOIN customers c ON c.id=s.customer_id JOIN users u ON u.id=s.cashier_id ORDER BY s.created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
+router.post("/sales/complete",async(req,res,next)=>{
+ const {reference_no,branch_id,cashier_id,customer_id=null,lines,payments,idempotency_key=null}=req.body??{};
+ if(!validRef(reference_no)||!uuid.test(branch_id||"")||!uuid.test(cashier_id||"")||(customer_id&&!uuid.test(customer_id))||
+ !Array.isArray(lines)||!lines.length||lines.length>200||lines.some(x=>!uuid.test(x.product_id||"")||!uuid.test(x.unit_id||"")||!Number.isFinite(Number(x.quantity))||Number(x.quantity)<=0||!Number.isFinite(Number(x.unit_price))||Number(x.unit_price)<0||!Number.isFinite(Number(x.discount_amount||0))||Number(x.discount_amount||0)<0)||
+ !Array.isArray(payments)||!payments.length||payments.some(x=>!uuid.test(x.payment_method_id||"")||!Number.isFinite(Number(x.amount))||Number(x.amount)<=0))
+ return res.status(400).json({error:"Invalid sale fields"});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  if(idempotency_key){const prior=await client.query("SELECT * FROM sales WHERE idempotency_key=$1",[idempotency_key]);if(prior.rowCount){await client.query("ROLLBACK");return res.json({sale:prior.rows[0],duplicate:true});}}
+  const sale=await client.query("INSERT INTO sales(reference_no,branch_id,customer_id,cashier_id,status,channel,idempotency_key) VALUES($1,$2,$3,$4,'open','pos',$5) RETURNING *",[reference_no.trim(),branch_id,customer_id,cashier_id,idempotency_key]);
+  let subtotal=0,discountTotal=0,cogs=0;
+  for(const line of lines){
+   const product=await client.query("SELECT p.id,p.base_unit_id,p.tracks_expiry,COALESCE(pu.conversion_to_base,1) conversion FROM products p LEFT JOIN product_units pu ON pu.product_id=p.id AND pu.unit_id=$2 WHERE p.id=$1 AND p.is_active=true AND (p.base_unit_id=$2 OR pu.unit_id IS NOT NULL) FOR UPDATE OF p",[line.product_id,line.unit_id]);
+   if(!product.rowCount)throw Object.assign(new Error("Product or sale unit is not active or configured"),{statusCode:400});
+   const qty=Number(line.quantity),baseQty=qty*Number(product.rows[0].conversion),unitPrice=Number(line.unit_price),discount=Number(line.discount_amount||0);
+   const gross=qty*unitPrice;if(discount>gross+0.000001)throw Object.assign(new Error("Line discount exceeds line amount"),{statusCode:400});
+   const lots=await client.query("SELECT id,quantity_on_hand,unit_cost,expiry_date FROM stock_lots WHERE product_id=$1 AND warehouse_id IN (SELECT id FROM warehouses WHERE branch_id=$2 AND is_active=true) AND quantity_on_hand>0 AND (expiry_date IS NULL OR expiry_date>=CURRENT_DATE) ORDER BY expiry_date NULLS LAST,received_at,id FOR UPDATE",[line.product_id,branch_id]);
+   const available=lots.rows.reduce((s,x)=>s+Number(x.quantity_on_hand),0);
+   if(available+0.000001<baseQty)throw Object.assign(new Error("Insufficient non-expired stock for product "+line.product_id),{statusCode:409});
+   let remaining=baseQty,lineCogs=0;
+   for(const lot of lots.rows){if(remaining<=0.000001)break;const take=Math.min(remaining,Number(lot.quantity_on_hand));await client.query("UPDATE stock_lots SET quantity_on_hand=quantity_on_hand-$2 WHERE id=$1",[lot.id,take]);await client.query("INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_out,unit_cost,source_type,source_id,created_by) SELECT $1,'sale_issue',$2,warehouse_id,$3,$4,$5,'sale',$6,$7 FROM stock_lots WHERE id=$3",[reference_no.trim(),line.product_id,lot.id,take,lot.unit_cost,sale.rows[0].id,cashier_id]);lineCogs+=take*Number(lot.unit_cost);remaining-=take;}
+   const lineTotal=gross-discount;subtotal+=gross;discountTotal+=discount;cogs+=lineCogs;
+   await client.query("INSERT INTO sale_lines(sale_id,product_id,unit_id,quantity,unit_price,discount_amount,line_total) VALUES($1,$2,$3,$4,$5,$6,$7)",[sale.rows[0].id,line.product_id,line.unit_id,qty,unitPrice,discount,lineTotal]);
+  }
+  const total=subtotal-discountTotal,paymentTotal=payments.reduce((s,x)=>s+Number(x.amount),0);
+  if(Math.abs(paymentTotal-total)>0.01)throw Object.assign(new Error("Payment total must equal the sale total"),{statusCode:400});
+  for(const p of payments)await client.query("INSERT INTO sale_payments(sale_id,payment_method_id,amount,reference_text) VALUES($1,$2,$3,$4)",[sale.rows[0].id,p.payment_method_id,p.amount,p.reference_text||null]);
+  const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,grand_total=$4,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal,total]);
+  await client.query("COMMIT");
+  res.status(201).json({sale:done.rows[0],cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal});
+ }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
+});
+export default router;
