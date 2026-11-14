@@ -19,6 +19,7 @@ function extractText(payload) {
 
 export function detectDataIntent(message) {
   const value = message.toLowerCase();
+  if (/انتهاء الصلاحية|تاريخ الصلاحية|منتهية الصلاحية|قرب انتهاء|تشغيلات.*انتهاء|expiry|expired|expiring/.test(value)) return 'inventory';
   if (/مخزون|رصيد|أرصدة|خامات|اصناف|أصناف|inventory|stock|items/.test(value)) return 'inventory';
   if (/إنتاج|انتاج|تشغيلات|أوامر الإنتاج|امر انتاج|production|manufacturing/.test(value)) return 'production';
   if (/مستحقات العملاء|أعمار الديون للعملاء|مديونية العملاء|ذمم العملاء|receivables|customer aging/.test(value)) return 'receivables';
@@ -59,6 +60,12 @@ async function readErpContext(db, request, intent) {
   // Fixed read-only SQL only; user text is never interpolated into a query.
   const statements = {
     inventory: `SELECT i.code item_code,i.name_ar item_name,w.code warehouse_code,b.quality_status,
+       b.expiry_date,
+       CASE WHEN b.expiry_date IS NULL THEN NULL
+            WHEN b.expiry_date<CURRENT_DATE THEN 'EXPIRED'
+            WHEN b.expiry_date<=CURRENT_DATE+30 THEN 'EXPIRING_SOON'
+            ELSE 'VALID' END expiry_status,
+       CASE WHEN b.expiry_date IS NULL THEN NULL ELSE (b.expiry_date-CURRENT_DATE)::int END days_to_expiry,
        SUM(b.quantity)::numeric quantity,
        CASE WHEN SUM(b.quantity)>0
          THEN SUM(b.quantity*b.average_unit_cost)/SUM(b.quantity) ELSE 0 END::numeric average_unit_cost,
@@ -66,7 +73,7 @@ async function readErpContext(db, request, intent) {
        FROM inventory_balances b JOIN items i ON i.id=b.item_id
        JOIN warehouses w ON w.id=b.warehouse_id
        WHERE b.quantity<>0
-       GROUP BY i.code,i.name_ar,w.code,b.quality_status ORDER BY i.code,w.code,b.quality_status LIMIT ${MAX_CONTEXT_ROWS}`,
+       GROUP BY i.code,i.name_ar,w.code,b.quality_status,b.expiry_date ORDER BY i.code,w.code,b.expiry_date,b.quality_status LIMIT ${MAX_CONTEXT_ROWS}`,
     production: `SELECT p.order_no,p.status,fp.code product_code,fp.name_ar product_name,
        p.planned_qty,p.actual_qty,p.total_material_cost,p.unit_production_cost,p.created_at
        FROM production_orders p JOIN feed_products fp ON fp.id=p.feed_product_id
@@ -225,6 +232,7 @@ export async function aiAssistantRoutes(app, { db }) {
             'إذا لم تصلك بيانات، وضّح أن الإجابة لا تستند إلى قراءة مباشرة.',
             'البيانات للقراءة فقط. لا تنفذ ولا توصي باعتماد أو تعديل حركات مالية أو مخزنية نيابة عن المستخدم.',
             'اذكر أن المبيعات والمشتريات في السياق تخص آخر 30 يوماً عندما ينطبق ذلك.',
+            'في بيانات المخزون، وضّح حالة الجودة وتاريخ الصلاحية وعدد الأيام المتبقية؛ EXPIRED منتهي، EXPIRING_SOON خلال 30 يوماً، وVALID أبعد من ذلك. لا تعتبر PENDING_QC أو QUARANTINED صالحاً للبيع.',
             'ملخص الحسابات يعرض القيود المرحلة فقط ويجب عدم اعتباره ميزان مراجعة معتمداً دون مراجعة محاسب النظام.',
             'إذا كانت نتيجة الاستعلام فارغة فقل ذلك بوضوح.'
           ].join(' '),
