@@ -129,7 +129,7 @@ Apply `database/007_purchase_quality_workflow.sql` after the earlier schema migr
   - `POST /api/sales/returns/:id/approve` للاعتماد المالي وإرجاع المقبول فقط للمخزون.
   - `POST /api/sales/returns/:id/refund` لتسجيل رد المبلغ بعد الاعتماد.
   - `GET /api/sales/returns` لعرض الطلبات.
-- يجب تطبيق `database/008_sales_returns_workflow.sql` بعد `database/007_purchase_quality_workflow.sql`، ثم `database/009_backfill_legacy_receipts.sql` مرة واحدة أثناء الترقية وقبل فتح API الاستلام للمستخدمين، ثم `database/010_security_and_pos_defaults.sql`. الترتيب الكامل: `schema.sql` ثم 002 إلى 010.
+- يجب تطبيق `database/008_sales_returns_workflow.sql` بعد `database/007_purchase_quality_workflow.sql`، ثم `database/009_backfill_legacy_receipts.sql` مرة واحدة أثناء الترقية وقبل فتح API الاستلام للمستخدمين، ثم `database/010_security_and_pos_defaults.sql` و`database/011_sales_discount_permission.sql`. الترتيب الكامل: `schema.sql` ثم 002 إلى 011.
 
 **حدود التنفيذ:** تسجيل رد المبلغ يحفظ وسيلة الدفع والمرجع والمبلغ في سجل مستقل، لكنه لا ينشئ حتى الآن قيدًا محاسبيًا عامًا أو حركة بنك/خزينة تلقائية. كذلك لم تُنفذ اختبارات قاعدة بيانات حية أو اختبارات أجهزة POS والطابعات في هذه البيئة. لا تعتبر هذه الدورة معتمدة للإنتاج قبل استكمال ربط الأستاذ العام واختبارها على PostgreSQL.
 
@@ -166,3 +166,7 @@ Apply `database/007_purchase_quality_workflow.sql` after the earlier schema migr
 
 ### إدارة مخطط قاعدة البيانات
 يستخدم المشروع `npm run migrate` لتطبيق `database/schema.sql` ثم ملفات الترحيل الرقمية بالترتيب، مع تسجيل كل ملف في جدول `schema_migrations` حتى لا يُعاد تطبيقه. خذ نسخة احتياطية قبل أي ترقية إنتاجية، وراجع خصوصًا الترحيل 009 لأنه يرحّل الاستلامات القديمة إلى حالة مقبولة مرة واحدة.
+
+
+### تسعير البيع وصلاحية الخصم
+يرفض API نقطة البيع أي سعر وحدة لا يطابق أحدث سعر تجزئة نشط ومعتمد في `product_prices`. كما يتطلب تطبيق أي خصم صلاحية مستقلة `sales.discount` بالإضافة إلى صلاحية المبيعات؛ أضيفت هذه الصلاحية في الترحيل 011، ويمنحها دور مدير النظام فقط افتراضيًا.
