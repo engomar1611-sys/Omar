@@ -1,5 +1,6 @@
 import {Router} from "express";
 import {pool} from "../db.js";
+import {requirePermission} from "../auth.js";
 
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -20,7 +21,7 @@ router.get("/sales/returns",async(_req,res,next)=>{
   }catch(e){next(e);}
 });
 
-router.post("/sales/:saleId/returns",async(req,res,next)=>{
+router.post("/sales/:saleId/returns",requirePermission("sales.void.line"),async(req,res,next)=>{
   const {reference_no,reason,lines}=req.body??{};
   const requested_by=req.user.id;
   if(!uuid.test(req.params.saleId)||!text(reference_no,50)||!text(reason,1000)||
