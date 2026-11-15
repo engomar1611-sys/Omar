@@ -9,6 +9,8 @@ const date=v=>typeof v==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(v);
 const bad=(res,error)=>res.status(400).json({error});
 const guarded=(permission)=>requirePermission(permission);
 
+router.get("/accounting/accounts",guarded("accounting.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT * FROM accounts ORDER BY code");res.json({items:r.rows});}catch(e){next(e);}});
+router.post("/accounting/accounts",guarded("accounting.manage"),async(req,res,next)=>{const {code,name_ar,name_en=null,account_type}=req.body??{};if(!txt(code,40)||!txt(name_ar,160)||!["asset","liability","equity","revenue","expense"].includes(account_type))return bad(res,"Invalid chart of accounts entry");try{const r=await pool.query("INSERT INTO accounts(code,name_ar,name_en,account_type) VALUES($1,$2,$3,$4) RETURNING *",[code.trim(),name_ar.trim(),name_en,account_type]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
 // Customer loyalty ledger; customer balance is updated under row lock in the same transaction.
 router.get("/loyalty/transactions",guarded("loyalty.manage"),async(req,res,next)=>{try{
  const r=await pool.query(`SELECT l.*,c.code customer_code,c.name customer_name,u.display_name created_by_name
