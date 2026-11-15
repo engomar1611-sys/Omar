@@ -253,7 +253,7 @@ async function openPurchasing(){
   const supplierOpts=suppliers.items.map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name)+' — '+escapeHtml(x.code)+'</option>').join("");
   const branchOpts=branches.items.map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name)+'</option>').join("");
   const productOpts=products.items.map(x=>'<option value="'+x.id+'" data-unit="'+x.base_unit_id+'" data-name="'+escapeHtml(x.name_ar)+'" data-expiry="'+x.tracks_expiry+'">'+escapeHtml(x.name_ar)+' ('+escapeHtml(x.sku)+')</option>').join("");
-  host.innerHTML='<section class="purchase-panel"><h2>إنشاء طلب شراء</h2><div class="form-grid"><label>الرقم المرجعي<input id="poReference" value="PO-'+Date.now()+'"></label><label>المورد<select id="poSupplier">'+supplierOpts+'</select></label><label>الفرع<select id="poBranch">'+branchOpts+'</select></label></div><div id="poLines"></div><div class="module-toolbar"><button class="small-btn" id="addPoLine">إضافة صنف</button><button class="primary-btn" id="createPo">حفظ وإرسال طلب الشراء</button></div></section><section class="purchase-panel"><h2>أوامر الشراء</h2><div id="poList"></div></section><section class="purchase-panel"><h2>استلامات وفحص الجودة</h2><div id="receiptList"></div></section><section class="purchase-panel" id="purchaseAction" hidden></section>';
+  host.innerHTML='<section class="purchase-panel"><h2>إنشاء طلب شراء</h2><div class="form-grid"><label>الرقم المرجعي<input id="poReference" value="PO-'+Date.now()+'"></label><label>المورد<select id="poSupplier">'+supplierOpts+'</select></label><label>الفرع<select id="poBranch">'+branchOpts+'</select></label></div><div id="poLines"></div><div class="module-toolbar"><button class="small-btn" id="addPoLine">إضافة صنف</button><button class="primary-btn" id="createPo">حفظ وإرسال طلب الشراء</button></div></section><section class="purchase-panel"><h2>أوامر الشراء</h2><div id="poList"></div></section><section class="purchase-panel"><h2>استلامات وفحص الجودة</h2><div id="receiptList"></div></section><section class="purchase-panel" id="purchaseAction" hidden></section><section class="purchase-panel"><h2>فواتير الموردين وتسوية المستحقات</h2><p class="muted">أنشئ فاتورة مورد من استلام تم اعتماده مخزنيًا، ثم سجل دفعات كاملة أو جزئية مع تخصيصها على الفواتير.</p><div id="supplierAccountingRows" class="empty-state">جارٍ تحميل حسابات الموردين...</div></section>';
   let lineNo=0;
   const addLine=()=>{
    const id=++lineNo,wrap=document.createElement("div");wrap.className="purchase-line";wrap.dataset.line=id;
@@ -301,6 +301,55 @@ async function openPurchasing(){
    if(lines.some(x=>!x.product_id||!x.unit_id))return toast("اختر الصنف والوحدة الأساسية");
    try{await api("/api/purchase-orders",{method:"POST",body:JSON.stringify({reference_no:$("poReference").value.trim(),supplier_id:$("poSupplier").value,branch_id:$("poBranch").value,lines})});toast("تم إنشاء طلب الشراء وإرساله للاعتماد");await openPurchasing();}catch(e){toast(e.message);}
   };
+  const renderSupplierAccounting=async()=>{
+   const area=$("supplierAccountingRows");
+   try{
+    const [invoices,methods]=await Promise.all([api("/api/supplier-invoices"),api("/api/supplier-payment-methods")]);
+    const accepted=receipts.items.filter(x=>x.inspection_status==="accepted");
+    const invHtml=invoices.items.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>رقم فاتورة المورد</th><th>المورد</th><th>أمر الشراء</th><th>التاريخ</th><th>القيمة</th><th>المسدد</th><th>المتبقي</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>'+invoices.items.map(x=>{const due=Math.max(0,Number(x.subtotal)-Number(x.paid_amount||0));return '<tr><td>'+escapeHtml(x.supplier_invoice_no)+'</td><td>'+escapeHtml(x.supplier_name)+'</td><td>'+escapeHtml(x.purchase_order_reference)+'</td><td>'+escapeHtml(x.invoice_date)+'</td><td>'+money(x.subtotal)+'</td><td>'+money(x.paid_amount||0)+'</td><td>'+money(due)+'</td><td>'+escapeHtml(x.status)+'</td><td>'+(x.status==="posted"&&due>0.000001?'<button class="small-btn" data-pay-supplier="'+x.id+'" data-due="'+due+'" data-supplier="'+x.supplier_id+'">تسجيل دفعة</button>':"")+'</td></tr>';}).join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد فواتير موردين حتى الآن.</div>';
+    const receiptHtml=accepted.length?'<h3>إنشاء فاتورة من استلام معتمد</h3><div class="table-scroll"><table class="module-table"><thead><tr><th>إذن الاستلام</th><th>أمر الشراء</th><th>المورد</th><th>المخزن</th><th>الإجراء</th></tr></thead><tbody>'+accepted.map(x=>'<tr><td>'+escapeHtml(x.reference_no)+'</td><td>'+escapeHtml(x.purchase_order_reference)+'</td><td>'+escapeHtml(x.supplier_name)+'</td><td>'+escapeHtml(x.warehouse_name)+'</td><td><button class="small-btn" data-create-supplier-invoice="'+x.id+'">إنشاء وترحيل فاتورة</button></td></tr>').join("")+'</tbody></table></div>':'<p class="muted">لا توجد استلامات مقبولة جاهزة للفوترة.</p>';
+    area.innerHTML=invHtml+receiptHtml;
+    area.querySelectorAll("[data-create-supplier-invoice]").forEach(btn=>btn.onclick=async()=>{
+     try{
+      const receipt=await api("/api/purchase-receipts/"+btn.dataset.createSupplierInvoice);
+      const order=await api("/api/purchase-orders/"+receipt.receipt.purchase_order_id);
+      const acceptedLines=receipt.lines.filter(l=>Number(l.accepted_quantity)>0);
+      if(!acceptedLines.length)return toast("لا توجد كميات مقبولة في هذا الاستلام");
+      const supplierInvoiceNo=prompt("أدخل رقم فاتورة المورد");
+      if(!supplierInvoiceNo?.trim())return;
+      const lines=acceptedLines.map(l=>({receipt_line_id:l.id,quantity:Number(l.accepted_quantity),unit_price:Number(l.unit_cost)}));
+      const draft=await api("/api/supplier-invoices",{method:"POST",body:JSON.stringify({reference_no:"SINV-"+Date.now(),supplier_invoice_no:supplierInvoiceNo.trim(),supplier_id:order.purchase_order.supplier_id,purchase_order_id:order.purchase_order.id,invoice_date:new Date().toLocaleDateString("en-CA"),lines})});
+      await api("/api/supplier-invoices/"+draft.invoice.id+"/post",{method:"POST",body:"{}"});
+      toast("تم ترحيل فاتورة المورد وربطها بحساب المستحقات");
+      await renderSupplierAccounting();
+     }catch(e){toast(e.message);}
+    });
+    area.querySelectorAll("[data-pay-supplier]").forEach(btn=>btn.onclick=async()=>{
+     try{
+      const amountText=prompt("المبلغ المراد دفعه. الرصيد المستحق: "+money(btn.dataset.due));
+      if(amountText===null)return;
+      const amount=Number(amountText);
+      if(!Number.isFinite(amount)||amount<=0||amount>Number(btn.dataset.due)+0.000001)return toast("أدخل مبلغًا صحيحًا لا يتجاوز الرصيد المستحق");
+      const methodOptions=methods.items.map((m,i)=>(i+1)+") "+m.name_ar+" ["+m.code+"]").join("\\n");
+      const methodIndex=Number(prompt("اختر طريقة الدفع بكتابة رقمها:\\n"+methodOptions))-1;
+      const method=methods.items[methodIndex];if(!method)return;
+      const payload={reference_no:"SPAY-"+Date.now(),supplier_id:btn.dataset.supplier,payment_method_id:method.id,amount,payment_date:new Date().toLocaleDateString("en-CA"),allocations:[{invoice_id:btn.dataset.paySupplier,amount}]};
+      if(/card|visa|بطاقة|فيزا/i.test(method.code+" "+method.name_ar)){
+       const bankQuery=prompt("اكتب اسم البنك للبحث");
+       if(!bankQuery?.trim())return;
+       const banks=await api("/api/payment-banks?q="+encodeURIComponent(bankQuery.trim()));
+       if(!banks.items.length)return toast("لم يتم العثور على البنك");
+       const bank=banks.items[0];payload.bank_id=bank.id;payload.transaction_reference=prompt("الرقم المرجعي لعملية الفيزا")?.trim();payload.card_last_four=prompt("آخر 4 أرقام من البطاقة")?.trim();
+       if(!payload.transaction_reference||!/^\\d{4}$/.test(payload.card_last_four||""))return toast("بيانات عملية البطاقة غير مكتملة");
+      }
+      await api("/api/supplier-payments",{method:"POST",body:JSON.stringify(payload)});
+      toast("تم تسجيل الدفعة وتخصيصها على الفاتورة");
+      await renderSupplierAccounting();
+     }catch(e){toast(e.message);}
+    });
+   }catch(e){area.innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'</div>';}
+  };
+  await renderSupplierAccounting();
   renderOrders();renderReceipts();
  }catch(e){hostError(root,e.message);}
 }
