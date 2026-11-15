@@ -97,9 +97,15 @@ export async function commercialRoutes(app,{db}){
     }
     if(discount>subtotal)throw Object.assign(new Error('الخصم أكبر من إجمالي الفاتورة'),{code:'P0001'});
     const total=subtotal-discount;
-    const outstanding=await c.query(`SELECT COALESCE(SUM(total_amount),0)-COALESCE((SELECT SUM(a.amount) FROM receipt_allocations a
-      JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED'
-      JOIN sales_invoices x ON x.id=a.sales_invoice_id WHERE x.customer_id=$1),0) due
+    const outstanding=await c.query(`SELECT
+      COALESCE(SUM(total_amount),0)
+      -COALESCE((SELECT SUM(a.amount) FROM receipt_allocations a
+        JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED'
+        JOIN sales_invoices x ON x.id=a.sales_invoice_id WHERE x.customer_id=$1),0)
+      -COALESCE((SELECT SUM(l.quantity*l.unit_price) FROM sales_returns sr
+        JOIN sales_return_lines l ON l.sales_return_id=sr.id
+        JOIN sales_invoices x ON x.id=sr.sales_invoice_id
+        WHERE x.customer_id=$1 AND sr.status='APPROVED'),0) due
       FROM sales_invoices WHERE customer_id=$1 AND status IN ('POSTED','PARTIALLY_PAID','PAID')`,[b.customerId]);
     if(Number(cust.rows[0].credit_limit)>0&&Number(outstanding.rows[0].due)+total>Number(cust.rows[0].credit_limit))throw Object.assign(new Error('تجاوز الحد الائتماني للعميل'),{code:'P0001'});
     await c.query(`UPDATE sales_invoices SET subtotal=$1,total_amount=$2,cost_amount=$3,status='POSTED',posted_at=NOW() WHERE id=$4`,[subtotal,total,costTotal,h.rows[0].id]);
