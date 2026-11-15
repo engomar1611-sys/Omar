@@ -165,7 +165,8 @@ jobs:
             IF NOT EXISTS (
               SELECT 1 FROM information_schema.columns
               WHERE table_schema='public' AND table_name='sale_payments' AND column_name='cash_session_id'
-            ) OR to_regclass('public.idx_sale_payments_cash_session') IS NULL THEN
+            ) OR to_regclass('public.idx_sale_payments_cash_session') IS NULL
+              OR to_regclass('public.uq_cash_session_one_open_per_cashier') IS NULL THEN
               RAISE EXCEPTION 'Exact cash session reconciliation linkage is missing';
             END IF;
 
