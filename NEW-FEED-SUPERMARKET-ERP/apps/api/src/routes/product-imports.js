@@ -34,6 +34,8 @@ router.post("/product-imports",async(req,res,next)=>{
       if(r.purchase_price!==undefined&&r.purchase_price!==""&&(!Number.isFinite(Number(r.purchase_price))||Number(r.purchase_price)<0))errors.push("purchase_price must be non-negative");
       if(r.manufacturer_barcode!==undefined&&r.manufacturer_barcode!==""&&!txt(r.manufacturer_barcode,80))errors.push("invalid manufacturer_barcode");
       if(r.brand_code!==undefined&&r.brand_code!==""&&!txt(r.brand_code,40))errors.push("invalid brand_code");
+      if(r.supplier_code!==undefined&&r.supplier_code!==""&&!txt(r.supplier_code,60))errors.push("invalid supplier_code");
+      if(r.supplier_product_code!==undefined&&r.supplier_product_code!==""&&!txt(r.supplier_product_code,100))errors.push("invalid supplier_product_code");
       staged.push({row_number:i+1,raw_data:r,validation_errors:errors,status:errors.length?"rejected":"pending"});
     }
     for(const r of staged){
@@ -101,6 +103,7 @@ router.post("/product-imports/:id/approve",async(req,res,next)=>{
           );
         }
       }
+      if(r.supplier_code){const supplier=await client.query("SELECT id FROM suppliers WHERE code=$1",[String(r.supplier_code).trim()]);if(!supplier.rowCount){await client.query("UPDATE product_import_rows SET status='rejected',validation_errors=validation_errors || '[\"Supplier code not found\"]'::jsonb WHERE id=$1",[row.id]);continue;}await client.query("INSERT INTO product_suppliers(supplier_id,product_id,supplier_product_code,last_purchase_price,is_primary) VALUES($1,$2,$3,$4,TRUE) ON CONFLICT(supplier_id,product_id) DO UPDATE SET supplier_product_code=EXCLUDED.supplier_product_code,last_purchase_price=EXCLUDED.last_purchase_price",[supplier.rows[0].id,product.rows[0].id,r.supplier_product_code||null,r.purchase_price??null]);}
       await client.query("UPDATE product_import_rows SET status='accepted',product_id=$2 WHERE id=$1",[row.id,product.rows[0].id]);
       created.push(product.rows[0]);
     }
