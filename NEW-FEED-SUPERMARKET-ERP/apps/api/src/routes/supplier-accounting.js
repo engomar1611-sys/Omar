@@ -12,10 +12,11 @@ router.get("/supplier-payment-methods",permission,async(_req,res,next)=>{try{con
 
 router.get("/supplier-invoices",permission,async(req,res,next)=>{try{
  const r=await pool.query(`SELECT i.*,s.name supplier_name,po.reference_no purchase_order_reference,
-   COALESCE(SUM(a.amount),0) paid_amount
+   COALESCE(SUM(a.amount) FILTER (WHERE sp.status='posted'),0) paid_amount
    FROM supplier_invoices i JOIN suppliers s ON s.id=i.supplier_id
    JOIN purchase_orders po ON po.id=i.purchase_order_id
    LEFT JOIN supplier_payment_allocations a ON a.invoice_id=i.id
+   LEFT JOIN supplier_payments sp ON sp.id=a.payment_id
    GROUP BY i.id,s.name,po.reference_no ORDER BY i.created_at DESC LIMIT 300`);
  res.json({items:r.rows});
 }catch(e){next(e);}});
@@ -174,6 +175,49 @@ router.get("/supplier-aging",permission,async(req,res,next)=>{
   const r=await pool.query("WITH balances AS (SELECT i.id,i.supplier_id,COALESCE(i.due_date,i.invoice_date) due_date,i.subtotal-COALESCE(SUM(a.amount) FILTER(WHERE p.status='posted'),0) balance FROM supplier_invoices i LEFT JOIN supplier_payment_allocations a ON a.invoice_id=i.id LEFT JOIN supplier_payments p ON p.id=a.payment_id WHERE i.status='posted' AND i.invoice_date<=$1::date GROUP BY i.id HAVING i.subtotal-COALESCE(SUM(a.amount) FILTER(WHERE p.status='posted'),0)>0.000001) SELECT s.id supplier_id,s.code supplier_code,s.name supplier_name,COALESCE(SUM(b.balance),0) total_due,COALESCE(SUM(b.balance) FILTER(WHERE b.due_date >= $1::date),0) current_due,COALESCE(SUM(b.balance) FILTER(WHERE $1::date-b.due_date BETWEEN 1 AND 30),0) days_1_30,COALESCE(SUM(b.balance) FILTER(WHERE $1::date-b.due_date BETWEEN 31 AND 60),0) days_31_60,COALESCE(SUM(b.balance) FILTER(WHERE $1::date-b.due_date BETWEEN 61 AND 90),0) days_61_90,COALESCE(SUM(b.balance) FILTER(WHERE $1::date-b.due_date>90),0) over_90 FROM suppliers s LEFT JOIN balances b ON b.supplier_id=s.id GROUP BY s.id ORDER BY total_due DESC,s.name",[asOf]);
   res.json({as_of:asOf,items:r.rows,totals:r.rows.reduce((a,x)=>{for(const k of ["total_due","current_due","days_1_30","days_31_60","days_61_90","over_90"])a[k]=(a[k]||0)+Number(x[k]);return a;},{})});
  }catch(e){next(e);}
+});
+
+
+router.post("/supplier-invoices/:id/void",permission,async(req,res,next)=>{
+ const {reason}=req.body??{};
+ if(!uuid.test(req.params.id)||!txt(reason,1000))return res.status(400).json({error:"A cancellation reason is required"});
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const inv=await c.query("SELECT * FROM supplier_invoices WHERE id=$1 FOR UPDATE",[req.params.id]);
+  if(!inv.rowCount||inv.rows[0].status!=="posted")throw Object.assign(new Error("Only posted supplier invoices can be voided"),{statusCode:409});
+  const allocated=await c.query("SELECT COALESCE(SUM(a.amount),0) amount FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.payment_id WHERE a.invoice_id=$1 AND p.status='posted'",[req.params.id]);
+  if(Number(allocated.rows[0].amount)>0.000001)throw Object.assign(new Error("Reverse posted supplier payments before voiding this invoice"),{statusCode:409});
+  const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[inv.rows[0].journal_entry_id]);
+  if(!original.rowCount)throw Object.assign(new Error("Original posted journal entry not found"),{statusCode:409});
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_invoice_void',$2,CURRENT_DATE,'posted') RETURNING id",["VOID-"+inv.rows[0].reference_no,req.params.id]);
+  await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) SELECT $1,account_id,credit,debit FROM journal_lines WHERE journal_entry_id=$2",[reversal.rows[0].id,original.rows[0].id]);
+  await c.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
+  await c.query("UPDATE supplier_invoices SET status='voided' WHERE id=$1",[req.params.id]);
+  await c.query("COMMIT");res.json({invoice_id:req.params.id,status:"voided",reversal_journal_id:reversal.rows[0].id,reason:reason.trim()});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
+
+router.post("/supplier-payments/:id/void",permission,async(req,res,next)=>{
+ const {reason}=req.body??{};
+ if(!uuid.test(req.params.id)||!txt(reason,1000))return res.status(400).json({error:"A cancellation reason is required"});
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const payment=await c.query("SELECT * FROM supplier_payments WHERE id=$1 FOR UPDATE",[req.params.id]);
+  if(!payment.rowCount||payment.rows[0].status!=="posted")throw Object.assign(new Error("Only posted supplier payments can be reversed"),{statusCode:409});
+  const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[payment.rows[0].journal_entry_id]);
+  if(!original.rowCount)throw Object.assign(new Error("Original posted journal entry not found"),{statusCode:409});
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_payment_void',$2,CURRENT_DATE,'posted') RETURNING id",["VOID-"+payment.rows[0].reference_no,req.params.id]);
+  await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) SELECT $1,account_id,credit,debit FROM journal_lines WHERE journal_entry_id=$2",[reversal.rows[0].id,original.rows[0].id]);
+  await c.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
+  await c.query("UPDATE supplier_payments SET status='voided',void_reason=$2,voided_by=$3,voided_at=now() WHERE id=$1",[req.params.id,reason.trim(),req.user.id]);
+  await c.query("COMMIT");res.json({payment_id:req.params.id,status:"voided",reversal_journal_id:reversal.rows[0].id,reason:reason.trim()});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
 });
 
 export default router;
