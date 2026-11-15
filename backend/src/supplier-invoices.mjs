@@ -173,7 +173,7 @@ export async function supplierInvoiceRoutes(app,{db}){
   }catch(e){return fail(reply,e);}
  });
 
- app.get('/api/v1/reports/supplier-invoice-aging',auth(app,'REPORTS.READ'),async(_req,reply)=>{
+ app.get('/api/v1/reports/supplier-invoice-due-schedule',auth(app,'REPORTS.READ'),async(_req,reply)=>{
   try{
    return (await db.query(`
     SELECT s.id supplier_id,s.code supplier_code,s.name_ar supplier_name,
