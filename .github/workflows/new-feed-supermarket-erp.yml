@@ -264,6 +264,15 @@ jobs:
               RAISE EXCEPTION 'Fixed asset depreciation module schema is missing';
             END IF;
 
+            IF to_regclass('public.delivery_order_status_history') IS NULL
+              OR to_regclass('public.idx_delivery_status_history_order') IS NULL
+              OR NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='delivery_orders' AND column_name='status_updated_by'
+              ) THEN
+              RAISE EXCEPTION 'Delivery status history audit schema is missing';
+            END IF;
+
             IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
               OR NOT EXISTS (
                 SELECT 1 FROM role_permissions rp
