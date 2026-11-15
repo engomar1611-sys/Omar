@@ -277,6 +277,12 @@ jobs:
               RAISE EXCEPTION 'Cash movement GL and reversal audit schema is missing';
             END IF;
 
+            IF to_regclass('public.system_backups') IS NULL
+              OR to_regclass('public.idx_system_backups_created') IS NULL
+              OR NOT EXISTS (SELECT 1 FROM permissions WHERE code='backup.manage') THEN
+              RAISE EXCEPTION 'Database backup management schema or permission is missing';
+            END IF;
+
             IF to_regclass('public.delivery_order_status_history') IS NULL
               OR to_regclass('public.idx_delivery_status_history_order') IS NULL
               OR NOT EXISTS (
