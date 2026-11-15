@@ -5,8 +5,11 @@ const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 const validRef=v=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=50;
 router.get("/sales",async(_q,res,next)=>{try{const r=await pool.query("SELECT s.*,c.name customer_name,u.display_name cashier_name FROM sales s LEFT JOIN customers c ON c.id=s.customer_id JOIN users u ON u.id=s.cashier_id ORDER BY s.created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/sales/complete",async(req,res,next)=>{
- const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null}=req.body??{};
+ const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null,delivery=null}=req.body??{};
  const cashier_id=req.user.id;
+ const deliveryCustomerId=delivery?.customer_id||customer_id;
+ const deliveryValid=delivery===null||(delivery&&uuid.test(deliveryCustomerId||"")&&typeof delivery.address==="string"&&delivery.address.trim().length>0&&delivery.address.trim().length<=1000&&Number.isFinite(Number(delivery.delivery_fee||0))&&Number(delivery.delivery_fee||0)>=0&&["pos","phone","talabat","elmenus","breadfast","mrsool","generic"].includes(delivery.source_channel||"pos")&&(!delivery.external_order_reference||(typeof delivery.external_order_reference==="string"&&delivery.external_order_reference.length<=160)));
+ if(!deliveryValid)return res.status(400).json({error:"Invalid delivery details"});
  if(!validRef(reference_no)||!uuid.test(branch_id||"")||!uuid.test(cashier_id||"")||(customer_id&&!uuid.test(customer_id))||
  !Array.isArray(lines)||!lines.length||lines.length>200||lines.some(x=>!uuid.test(x.product_id||"")||!uuid.test(x.unit_id||"")||!Number.isFinite(Number(x.quantity))||Number(x.quantity)<=0||!Number.isFinite(Number(x.unit_price))||Number(x.unit_price)<0||!Number.isFinite(Number(x.discount_amount||0))||Number(x.discount_amount||0)<0)||
  !Array.isArray(payments)||!payments.length||payments.some(x=>!uuid.test(x.payment_method_id||"")||!Number.isFinite(Number(x.amount))||Number(x.amount)<=0))
@@ -19,7 +22,7 @@ router.post("/sales/complete",async(req,res,next)=>{
    const allowed=await client.query("SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id JOIN permissions p ON p.id=rp.permission_id WHERE ur.user_id=$1 AND p.code='sales.discount' LIMIT 1",[req.user.id]);
    if(!allowed.rowCount)throw Object.assign(new Error("User is not authorized to apply sales discounts"),{statusCode:403});
   }
-  const sale=await client.query("INSERT INTO sales(reference_no,branch_id,customer_id,cashier_id,status,channel,idempotency_key) VALUES($1,$2,$3,$4,'open','pos',$5) RETURNING *",[reference_no.trim(),branch_id,customer_id,cashier_id,idempotency_key]);
+  const sale=await client.query("INSERT INTO sales(reference_no,branch_id,customer_id,cashier_id,status,channel,idempotency_key) VALUES($1,$2,$3,$4,'open',$5,$6) RETURNING *",[reference_no.trim(),branch_id,delivery?deliveryCustomerId:customer_id,cashier_id,delivery?"delivery":"pos",idempotency_key]);
   let subtotal=0,discountTotal=0,cogs=0;
   for(const line of lines){
    const product=await client.query(`SELECT p.id,p.base_unit_id,p.tracks_expiry,COALESCE(pu.conversion_to_base,1) conversion,
@@ -67,8 +70,14 @@ router.post("/sales/complete",async(req,res,next)=>{
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.inventory,cogs]);
   }
   const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,grand_total=$4,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal,total]);
+  let deliveryOrder=null;
+  if(delivery){
+   const deliveryRef="DLV-"+reference_no.trim();
+   const d=await client.query("INSERT INTO delivery_orders(reference_no,sale_id,customer_id,address,delivery_fee,source_channel,external_order_reference) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[deliveryRef,sale.rows[0].id,deliveryCustomerId,delivery.address.trim(),Number(delivery.delivery_fee||0),delivery.source_channel||"pos",delivery.external_order_reference||null]);
+   deliveryOrder=d.rows[0];
+  }
   await client.query("COMMIT");
-  res.status(201).json({sale:done.rows[0],cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,journal_entry_id:journal.rows[0].id});
+  res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,journal_entry_id:journal.rows[0].id});
  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
 });
 export default router;
