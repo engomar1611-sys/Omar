@@ -3,6 +3,7 @@ const invalid = (reply, error = 'VALIDATION_ERROR') => reply.code(400).send({ er
 const conflict = (reply, error = 'BUSINESS_RULE') => reply.code(409).send({ error });
 const positive = value => Number.isFinite(Number(value)) && Number(value) > 0;
 const textOk = (value, max = 40) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
+const validDate = value => /^\\d{4}-\\d{2}-\\d{2}$/.test(String(value)) && !Number.isNaN(Date.parse(String(value) + 'T00:00:00Z'));
 
 async function transaction(db, callback) {
   const client = await db.connect();
@@ -20,7 +21,7 @@ async function transaction(db, callback) {
 }
 
 export function validateSupplierQuotePayload(body, requestLines) {
-  if (!body || !textOk(body.quoteNo) || !body.supplierId || (body.currencyCode && String(body.currencyCode).toUpperCase() !== 'EGP') || !Array.isArray(body.lines) ||
+  if (!body || !textOk(body.quoteNo) || !body.supplierId || (body.currencyCode && String(body.currencyCode).toUpperCase() !== 'EGP') || (body.validUntil && !validDate(body.validUntil)) || !Array.isArray(body.lines) ||
       body.lines.length !== requestLines.length) return false;
   const expected = new Map(requestLines.map(line => [line.id, line]));
   const seen = new Set();
@@ -134,10 +135,10 @@ export async function supplierQuotationRoutes(app, { db }) {
           return { conflict: 'REQUEST_NOT_OPEN_FOR_AWARD' };
         }
         const quote = await client.query(
-          'SELECT * FROM supplier_quotes WHERE id = $1 AND purchase_request_id = $2 FOR UPDATE',
+          'SELECT * FROM supplier_quotes WHERE id = $1 AND purchase_request_id = $2 AND (valid_until IS NULL OR valid_until >= CURRENT_DATE) FOR UPDATE',
           [request.params.quoteId, request.params.id]
         );
-        if (!quote.rowCount || quote.rows[0].status !== 'SUBMITTED') return { conflict: 'QUOTE_NOT_AWARDABLE' };
+        if (!quote.rowCount || quote.rows[0].status !== 'SUBMITTED') return { conflict: 'QUOTE_NOT_AWARDABLE_OR_EXPIRED' };
         const completeness = await client.query(`
           SELECT COUNT(*)::int line_count,
             COUNT(*) FILTER (WHERE ql.purchase_request_line_id IS NOT NULL)::int quoted_count
