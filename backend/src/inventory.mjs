@@ -36,8 +36,8 @@ export async function inventoryRoutes(app,{db}){
    const lines=await c.query('SELECT * FROM inventory_adjustment_lines WHERE adjustment_id=$1 ORDER BY id',[req.params.id]);
    let gain=0,loss=0;
    for(const l of lines.rows){
-    const bal=await c.query('SELECT quantity,average_unit_cost,quality_status FROM inventory_balances
-     WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+    const bal=await c.query(`SELECT quantity,average_unit_cost,quality_status FROM inventory_balances
+     WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
     const old=bal.rowCount?Number(bal.rows[0].quantity):0,delta=Number(l.quantity_delta),cost=bal.rowCount?Number(bal.rows[0].average_unit_cost):Number(l.unit_cost);
     const heldResult=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{held_qty:0}]};
@@ -224,14 +224,13 @@ export async function inventoryRoutes(app,{db}){
     const inventoryAccount=accounts.rows.find(x=>x.code==='1200')?.id,varianceAccount=accounts.rows.find(x=>x.code==='5400')?.id;
     let gain=0,loss=0,changed=0;
     for(const l of lines.rows){
-     const bal=await c.query('SELECT quantity,average_unit_cost,expiry_date,quality_status
-      FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+     const bal=await c.query(`SELECT quantity,average_unit_cost,expiry_date,quality_status
+      FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
      const current=bal.rowCount?Number(bal.rows[0].quantity):0,expected=Number(l.expected_qty),counted=Number(l.counted_qty);
      const heldResult=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
        WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{held_qty:0}]};
      const held=Number(heldResult.rows[0].held_qty);
      if(Math.abs(current-expected)>0.000001)throw Object.assign(new Error('تغير رصيد الصنف بعد أخذ لقطة الجرد؛ أعد الجرد لهذا المخزن'),{code:'P0001'});
-     const held=bal.rowCount?Number(bal.rows[0].held_qty):0;
      if(counted+0.000001<held)throw Object.assign(new Error('الكمية المعدودة أقل من الكمية المحجوزة للجودة؛ لا يمكن اعتماد الجرد'),{code:'P0001'});
      const delta=counted-expected;if(Math.abs(delta)<0.000001)continue;
      const cost=bal.rowCount?Number(bal.rows[0].average_unit_cost):Number(l.unit_cost);
