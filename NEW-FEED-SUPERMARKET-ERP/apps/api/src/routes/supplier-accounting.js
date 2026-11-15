@@ -18,6 +18,21 @@ router.get("/supplier-payment-methods",permission,async(_req,res,next)=>{try{con
  res.json({items:r.rows});
 }catch(e){next(e);}});
 
+router.get("/supplier-invoice-eligible-lines/:receiptId",permission,async(req,res,next)=>{
+ if(!uuid.test(req.params.receiptId))return res.status(400).json({error:"Invalid receipt id"});
+ try{
+  const receipt=await pool.query(`SELECT pr.id,pr.reference_no,pr.purchase_order_id,pr.inspection_status,
+   prl.id receipt_line_id,prl.product_id,p.sku,p.name_ar,prl.accepted_quantity,prl.unit_cost,
+   GREATEST(0,prl.accepted_quantity-COALESCE((SELECT SUM(sil.quantity) FROM supplier_invoice_lines sil
+    JOIN supplier_invoices si ON si.id=sil.invoice_id WHERE sil.receipt_line_id=prl.id AND si.status='posted'),0)) remaining_quantity
+   FROM purchase_receipts pr JOIN purchase_receipt_lines prl ON prl.receipt_id=pr.id
+   JOIN products p ON p.id=prl.product_id
+   WHERE pr.id=$1 AND pr.inspection_status='accepted' ORDER BY p.name_ar`,[req.params.receiptId]);
+  if(!receipt.rowCount)return res.status(404).json({error:"Accepted receipt not found"});
+  res.json({receipt:{id:receipt.rows[0].id,reference_no:receipt.rows[0].reference_no,purchase_order_id:receipt.rows[0].purchase_order_id},items:receipt.rows.filter(x=>Number(x.remaining_quantity)>0)});
+ }catch(e){next(e);}
+});
+
 router.post("/supplier-invoices",permission,async(req,res,next)=>{
  const {reference_no,supplier_invoice_no,supplier_id,purchase_order_id,invoice_date,due_date=null,lines}=req.body??{};
  if(!txt(reference_no,50)||!txt(supplier_invoice_no,100)||!uuid.test(supplier_id||"")||!uuid.test(purchase_order_id||"")||
