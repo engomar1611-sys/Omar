@@ -26,7 +26,7 @@ const api = fs.readFileSync(path.join(__dirname, '..', 'NEW-FEED-SUPERMARKET-ERP
 const installerProject = fs.readFileSync(path.join(__dirname, 'ServerInstaller.iss'), 'utf8');
 
 test('Windows service runs the supermarket ERP API entrypoint', () => {
-  assert.ok(service.includes('<arguments>src\\server.js</arguments>'));
+  assert.ok(service.includes('<arguments>apps\\api\\src\\server.js</arguments>'));
   assert.ok(service.includes('<workingdirectory>%BASE%\\backend</workingdirectory>'));
   assert.ok(workflow.includes('NEW-FEED-SUPERMARKET-ERP/apps/api/src'));
   assert.ok(!workflow.includes('Copy-Item backend/src'));
