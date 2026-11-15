@@ -57,7 +57,9 @@ router.get("/products", async (req,res,next) => {
   try {
     const { rows } = await pool.query(
       `SELECT p.*, c.name_ar AS category_name, u.code AS base_unit_code,
-              rp.amount AS retail_price,
+              rp.amount AS retail_price, pp.amount AS purchase_price,
+              primary_supplier.supplier_id, primary_supplier.supplier_name,
+              primary_supplier.supplier_code, primary_supplier.supplier_product_code,
               COALESCE((SELECT json_agg(pb.barcode ORDER BY pb.barcode)
                         FROM product_barcodes pb WHERE pb.product_id=p.id),'[]'::json) AS barcodes
        FROM products p LEFT JOIN categories c ON c.id=p.category_id
@@ -68,6 +70,16 @@ router.get("/products", async (req,res,next) => {
            AND valid_from<=now() AND (valid_to IS NULL OR valid_to>now())
          ORDER BY observed_at DESC,created_at DESC LIMIT 1
        ) rp ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT amount FROM product_prices
+         WHERE product_id=p.id AND price_type='purchase'
+         ORDER BY observed_at DESC,created_at DESC LIMIT 1
+       ) pp ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT ps.supplier_id,s.name supplier_name,s.code supplier_code,ps.supplier_product_code
+         FROM product_suppliers ps JOIN suppliers s ON s.id=ps.supplier_id
+         WHERE ps.product_id=p.id ORDER BY ps.is_primary DESC,s.name LIMIT 1
+       ) primary_supplier ON TRUE
        WHERE ($1::boolean OR p.is_active)
          AND ($2='' OR p.name_ar ILIKE '%'||$2||'%' OR COALESCE(p.name_en,'') ILIKE '%'||$2||'%'
               OR p.sku ILIKE '%'||$2||'%'
