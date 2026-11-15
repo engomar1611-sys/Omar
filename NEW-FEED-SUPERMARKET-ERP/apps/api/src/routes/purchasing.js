@@ -22,7 +22,7 @@ router.get("/purchase-receipts/:id",async(req,res,next)=>{if(!uuid.test(req.para
 router.get("/purchase-orders/:id",async(req,res,next)=>{if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid purchase order id"});try{
  const order=await pool.query("SELECT po.*,s.name supplier_name,b.name branch_name FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id JOIN branches b ON b.id=po.branch_id WHERE po.id=$1",[req.params.id]);
  if(!order.rowCount)return res.status(404).json({error:"Purchase order not found"});
- const lines=await pool.query("SELECT pol.*,p.sku,p.name_ar product_name,u.code unit_code FROM purchase_order_lines pol JOIN products p ON p.id=pol.product_id JOIN units u ON u.id=pol.unit_id WHERE pol.purchase_order_id=$1 ORDER BY p.name_ar",[req.params.id]);
+ const lines=await pool.query("SELECT pol.*,p.sku,p.name_ar product_name,u.code unit_code,COALESCE((SELECT json_agg(pb.barcode ORDER BY pb.barcode) FROM product_barcodes pb WHERE pb.product_id=p.id),'[]'::json) barcodes FROM purchase_order_lines pol JOIN products p ON p.id=pol.product_id JOIN units u ON u.id=pol.unit_id WHERE pol.purchase_order_id=$1 ORDER BY p.name_ar",[req.params.id]);
  res.json({purchase_order:order.rows[0],lines:lines.rows});
 }catch(e){next(e);}});
 router.get("/purchase-orders", async (_req,res,next) => {
