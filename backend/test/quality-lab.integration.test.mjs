@@ -94,6 +94,39 @@ test('quality lab specification, sample results and mandatory pass gate for raw 
     assert.equal(finalized.statusCode, 200, finalized.body);
     assert.equal(finalized.json().sample.status, 'PASSED');
 
+    const lateFail = await app.inject({
+      method: 'POST', url: '/api/v1/quality/samples', headers,
+      payload: { sampleNo: code('QCLATE'), sourceType: 'GOODS_RECEIPT', sourceId: receiptId, sourceLineId: receiptLine.id,
+        itemId: item.id, warehouseId: warehouse.id, lotNo: 'QC-' + suffix, stage: 'RAW_MATERIAL', sampleQuantity: 0.25 }
+    });
+    assert.equal(lateFail.statusCode, 201, lateFail.body);
+    const lateFailResults = await app.inject({
+      method: 'POST', url: '/api/v1/quality/samples/' + lateFail.json().sample.id + '/results', headers,
+      payload: { results: [{ parameterCode: 'MOISTURE', numericValue: 13 }, { parameterCode: 'PROTEIN', numericValue: 14 }] }
+    });
+    assert.equal(lateFailResults.statusCode, 200, lateFailResults.body);
+    const lateFailFinal = await app.inject({ method: 'POST', url: '/api/v1/quality/samples/' + lateFail.json().sample.id + '/finalize', headers, payload: {} });
+    assert.equal(lateFailFinal.json().sample.status, 'FAILED');
+    const blockedByLatest = await app.inject({
+      method: 'POST', url: '/api/v1/goods-receipts/' + receiptId + '/quality', headers,
+      payload: { inspections: [{ receiptLineId: receiptLine.id, result: 'PASS', acceptedQty: 5, rejectedQty: 0 }] }
+    });
+    assert.equal(blockedByLatest.statusCode, 409, blockedByLatest.body, 'a newer failed sample invalidates an older passed sample');
+
+    const finalPass = await app.inject({
+      method: 'POST', url: '/api/v1/quality/samples', headers,
+      payload: { sampleNo: code('QCFINAL'), sourceType: 'GOODS_RECEIPT', sourceId: receiptId, sourceLineId: receiptLine.id,
+        itemId: item.id, warehouseId: warehouse.id, lotNo: 'QC-' + suffix, stage: 'RAW_MATERIAL', sampleQuantity: 0.25 }
+    });
+    assert.equal(finalPass.statusCode, 201, finalPass.body);
+    const finalPassResults = await app.inject({
+      method: 'POST', url: '/api/v1/quality/samples/' + finalPass.json().sample.id + '/results', headers,
+      payload: { results: [{ parameterCode: 'MOISTURE', numericValue: 11.5 }, { parameterCode: 'PROTEIN', numericValue: 14 }] }
+    });
+    assert.equal(finalPassResults.statusCode, 200, finalPassResults.body);
+    const finalPassResult = await app.inject({ method: 'POST', url: '/api/v1/quality/samples/' + finalPass.json().sample.id + '/finalize', headers, payload: {} });
+    assert.equal(finalPassResult.json().sample.status, 'PASSED');
+
     const quality = await app.inject({
       method: 'POST', url: '/api/v1/goods-receipts/' + receiptId + '/quality', headers,
       payload: { inspections: [{ receiptLineId: receiptLine.id, result: 'PASS', acceptedQty: 5, rejectedQty: 0 }] }
