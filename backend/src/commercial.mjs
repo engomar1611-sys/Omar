@@ -112,7 +112,7 @@ export async function commercialRoutes(app,{db}){
       await c.query('UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[q,warehouseId,l.itemId,lot.lot_no]);
       await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
        VALUES($1,$2,$3,$4,'ADJUSTMENT_OUT',$5,$6,'SALES_INVOICE',$7,$8)`,
-       [`SI-${h.rows[0].id.slice(0,8)}-${i+1}-${++lineNo}`,b.warehouseId,l.itemId,lot.lot_no,q,cost,h.rows[0].id,req.authUser.user_id]);
+       [`SI-${h.rows[0].id.slice(0,8)}-${i+1}-${++lineNo}`,warehouseId,l.itemId,lot.lot_no,q,cost,h.rows[0].id,req.authUser.user_id]);
       const lineCost=q*cost,lineTotal=q*price;
       subtotal+=lineTotal;costTotal+=lineCost;
       await c.query(`INSERT INTO sales_invoice_lines(sales_invoice_id,item_id,lot_no,quantity,unit_price,unit_cost,line_total,cost_total,sales_order_line_id)
