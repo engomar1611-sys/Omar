@@ -36,9 +36,14 @@ export async function inventoryRoutes(app,{db}){
    const lines=await c.query('SELECT * FROM inventory_adjustment_lines WHERE adjustment_id=$1 ORDER BY id',[req.params.id]);
    let gain=0,loss=0;
    for(const l of lines.rows){
-    const bal=await c.query('SELECT quantity,average_unit_cost,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+    const bal=await c.query('SELECT b.quantity,b.average_unit_cost,b.quality_status,
+     COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
+       WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
+         AND qh.status IN ('PENDING_QC','QUARANTINED')),0) AS held_qty
+     FROM inventory_balances b WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 FOR UPDATE OF b',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
     const old=bal.rowCount?Number(bal.rows[0].quantity):0,delta=Number(l.quantity_delta),cost=bal.rowCount?Number(bal.rows[0].average_unit_cost):Number(l.unit_cost);
-    if(delta<0&&old+delta< -0.000001)throw Object.assign(new Error('التسوية ستؤدي إلى رصيد سالب'),{code:'P0001'});
+    const held=bal.rowCount?Number(bal.rows[0].held_qty):0;
+    if(delta<0&&old+delta<held-0.000001)throw Object.assign(new Error('التسوية ستؤدي إلى خصم كمية محجوزة للجودة أو إلى رصيد سالب'),{code:'P0001'});
     const qty=old+delta,avg=delta>0&&qty>0?((old*cost)+(delta*Number(l.unit_cost)))/qty:cost;
     await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
@@ -101,12 +106,16 @@ export async function inventoryRoutes(app,{db}){
     const lines=await c.query('SELECT * FROM inventory_transfer_lines WHERE transfer_id=$1 ORDER BY item_id,lot_no FOR UPDATE',[req.params.id]);
     if(!lines.rowCount)throw Object.assign(new Error('التحويل لا يحتوي على أصناف'),{code:'P0001'});
     for(const l of lines.rows){
-     const locked=await c.query(`SELECT warehouse_id,quantity,average_unit_cost,expiry_date,quality_status FROM inventory_balances
-      WHERE warehouse_id IN ($1,$2) AND item_id=$3 AND lot_no=$4 ORDER BY warehouse_id FOR UPDATE`,
+     const locked=await c.query(`SELECT b.warehouse_id,b.quantity,b.average_unit_cost,b.expiry_date,b.quality_status,
+       b.quantity-COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
+         WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
+           AND qh.status IN ('PENDING_QC','QUARANTINED')),0) AS available_quantity
+      FROM inventory_balances b
+      WHERE b.warehouse_id IN ($1,$2) AND b.item_id=$3 AND b.lot_no=$4 ORDER BY b.warehouse_id FOR UPDATE OF b`,
       [h.rows[0].source_warehouse_id,h.rows[0].destination_warehouse_id,l.item_id,l.lot_no]);
      const s=locked.rows.find(x=>x.warehouse_id===h.rows[0].source_warehouse_id);
      const d=locked.rows.find(x=>x.warehouse_id===h.rows[0].destination_warehouse_id);
-     if(!s||Number(s.quantity)+0.000001<Number(l.quantity))
+     if(!s||Number(s.available_quantity)+0.000001<Number(l.quantity))
       throw Object.assign(new Error('الرصيد غير كافٍ لإتمام التحويل'),{code:'P0001'});
      const qty=Number(l.quantity),cost=Number(s.average_unit_cost);
      if(d&&String(d.expiry_date??'')!==String(s.expiry_date??''))
@@ -215,9 +224,15 @@ export async function inventoryRoutes(app,{db}){
     const inventoryAccount=accounts.rows.find(x=>x.code==='1200')?.id,varianceAccount=accounts.rows.find(x=>x.code==='5400')?.id;
     let gain=0,loss=0,changed=0;
     for(const l of lines.rows){
-     const bal=await c.query('SELECT quantity,average_unit_cost,expiry_date,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+     const bal=await c.query('SELECT b.quantity,b.average_unit_cost,b.expiry_date,b.quality_status,
+       COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
+         WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
+           AND qh.status IN ('PENDING_QC','QUARANTINED')),0) AS held_qty
+      FROM inventory_balances b WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 FOR UPDATE OF b',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
      const current=bal.rowCount?Number(bal.rows[0].quantity):0,expected=Number(l.expected_qty),counted=Number(l.counted_qty);
      if(Math.abs(current-expected)>0.000001)throw Object.assign(new Error('تغير رصيد الصنف بعد أخذ لقطة الجرد؛ أعد الجرد لهذا المخزن'),{code:'P0001'});
+     const held=bal.rowCount?Number(bal.rows[0].held_qty):0;
+     if(counted+0.000001<held)throw Object.assign(new Error('الكمية المعدودة أقل من الكمية المحجوزة للجودة؛ لا يمكن اعتماد الجرد'),{code:'P0001'});
      const delta=counted-expected;if(Math.abs(delta)<0.000001)continue;
      const cost=bal.rowCount?Number(bal.rows[0].average_unit_cost):Number(l.unit_cost);
      const expiry=bal.rowCount?bal.rows[0].expiry_date:null;
