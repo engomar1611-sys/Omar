@@ -171,8 +171,9 @@ async function openPurchasing(){
   };
   const showReceive=async orderId=>{
    try{
-    const [detail,warehouses]=await Promise.all([api("/api/purchase-orders/"+orderId),api("/api/warehouses?branch_id="+branches.items.find(x=>x.id===detailBranch(orderId,orders.items))?.id)]);
-    const available=warehouses.items.length?warehouses.items: (await api("/api/warehouses")).items;
+    const detail=await api("/api/purchase-orders/"+orderId);
+    const warehouses=await api("/api/warehouses?branch_id="+detail.purchase_order.branch_id);
+    const available=warehouses.items;
     const section=$("purchaseAction");section.hidden=false;
     section.innerHTML='<h2>تسجيل استلام أمر '+escapeHtml(detail.purchase_order.reference_no)+'</h2><div class="form-grid"><label>رقم إذن الاستلام<input id="receiptReference" value="GRN-'+Date.now()+'"></label><label>المخزن<select id="receiptWarehouse">'+available.map(w=>'<option value="'+w.id+'">'+escapeHtml(w.name)+'</option>').join("")+'</select></label></div><div id="receiveLines"></div><button class="primary-btn" id="saveReceipt">حفظ الاستلام وتحويله للفحص</button>';
     $("receiveLines").innerHTML=detail.lines.map((l,i)=>'<div class="purchase-line" data-product="'+l.product_id+'"><b>'+escapeHtml(l.product_name)+' ('+escapeHtml(l.sku)+')</b><label>الكمية المستلمة<input class="receive-qty" type="number" min="0.000001" step="0.000001" value="'+l.quantity+'"></label><label>تكلفة الوحدة<input class="receive-cost" type="number" min="0" step="0.000001" value="'+l.unit_price+'"></label><label>رقم التشغيلة<input class="receive-lot"></label><label>الصلاحية<input class="receive-expiry" type="date" '+(l.tracks_expiry?"required":"")+'></label></div>').join("");
@@ -182,7 +183,6 @@ async function openPurchasing(){
     };
    }catch(e){toast(e.message);}
   };
-  const detailBranch=(id,list)=>list.find(x=>x.id===id)?.branch_id;
   const showInspection=async receiptId=>{
    try{
     const detail=await api("/api/purchase-receipts/"+receiptId),section=$("purchaseAction");section.hidden=false;
