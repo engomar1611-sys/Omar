@@ -141,6 +141,22 @@ async function loadOperationalModule(id){
   }
  }catch(e){$("liveModuleContent").innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'</div>';}
 }
+async function openBusinessMaster(kind){
+ const cfg=kind==="customers"?{title:"العملاء والولاء",url:"/api/customers",code:"كود العميل",name:"اسم العميل"}:{title:"الموردون",url:"/api/suppliers",code:"كود المورد",name:"اسم المورد"};
+ const root=$("moduleView");
+ root.innerHTML='<h1 class="module-title">'+cfg.title+'</h1><section class="purchase-panel"><h2>إضافة سجل جديد</h2><div class="form-grid"><label>'+cfg.code+'<input id="masterCode"></label><label>'+cfg.name+'<input id="masterName"></label><label>الهاتف<input id="masterPhone"></label><label>البريد الإلكتروني<input id="masterEmail"></label><label>العنوان<input id="masterAddress"></label></div><button class="primary-btn" id="saveMaster">حفظ</button></section><section class="purchase-panel"><h2>السجلات المسجلة</h2><div id="masterList" class="empty-state">جارٍ التحميل...</div></section>';
+ const refresh=async()=>{
+  const data=await api(cfg.url),rows=data.items||[];
+  $("masterList").innerHTML=rows.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>الكود</th><th>الاسم</th><th>الهاتف</th><th>البريد</th><th>العنوان</th><th>الحالة</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+escapeHtml(x.code)+'</td><td>'+escapeHtml(x.name)+'</td><td>'+escapeHtml(x.phone||"—")+'</td><td>'+escapeHtml(x.email||"—")+'</td><td>'+escapeHtml(x.address||"—")+'</td><td>'+ (x.is_active?"نشط":"موقوف")+'</td></tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد سجلات.</div>';
+ };
+ try{await refresh();}catch(e){$("masterList").textContent=e.message;}
+ $("saveMaster").onclick=async()=>{
+  const code=$("masterCode").value.trim(),name=$("masterName").value.trim();
+  if(!code||!name)return toast("أدخل الكود والاسم");
+  const body={code,name,phone:$("masterPhone").value.trim()||null,email:$("masterEmail").value.trim()||null,address:$("masterAddress").value.trim()||null};
+  try{await api(cfg.url,{method:"POST",body:JSON.stringify(body)});toast("تم حفظ السجل");["masterCode","masterName","masterPhone","masterEmail","masterAddress"].forEach(id=>$(id).value="");await refresh();}catch(e){toast(e.message);}
+ };
+}
 async function openPurchasing(){
  const root=$("moduleView");
  root.innerHTML='<h1 class="module-title">المشتريات والاستلام وفحص الجودة</h1><div id="purchaseWorkspace" class="empty-state">جارٍ تحميل بيانات المشتريات...</div>';
@@ -241,6 +257,7 @@ function openModule(id){
  if(id==="pos")return;
  if(id==="catalog"){openCatalog();return;}
  if(id==="purchasing"){openPurchasing();return;}
+ if(id==="customers"||id==="suppliers"){openBusinessMaster(id);return;}
  if(id==="users"){openUsers();return;}
  if(liveModuleConfig[id]){loadOperationalModule(id);return;}
  const d=moduleData[id];$("moduleView").innerHTML='<h1 class="module-title">'+escapeHtml(d[0])+'</h1><div class="empty-state">'+escapeHtml(d[2])+'</div>';
