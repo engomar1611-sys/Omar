@@ -115,7 +115,7 @@ router.post("/hr/payroll-runs/:id/reverse-payment",guarded("hr.payroll"),async(r
     const session=await c.query("SELECT id FROM cash_sessions WHERE cashbox_id=$1 AND cashier_id=$2 AND status='open' FOR UPDATE",[originalCash.rows[0].cashbox_id,req.user.id]);
     if(!session.rowCount)throw Object.assign(new Error("Open a cash session for the original cashbox before reversing this cash payroll payment"),{statusCode:409});
     await c.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,source_id,description,created_by) VALUES($1,$2,$3,'in',$4,'payroll_reversal',$5,$6,$7)",
-      [originalCash.rows[0].cashbox_id,session.rows[0].id,"REV-"+run.rows[0].payment_reference,run.rows[0].total_net,req.params.id,"Reversal of payroll "+run.rows[0].reference_no,req.user.id]);
+      [originalCash.rows[0].cashbox_id,session.rows[0].id,"REV-"+run.rows[0].id.replaceAll("-",""),run.rows[0].total_net,req.params.id,"Reversal of payroll "+run.rows[0].reference_no,req.user.id]);
   }else{
     const originalBank=await c.query("SELECT * FROM bank_transactions WHERE id=$1 AND source_type='payroll' AND source_id=$2 AND status='posted' FOR UPDATE",[run.rows[0].payment_bank_transaction_id,req.params.id]);
     if(!originalBank.rowCount)throw Object.assign(new Error("Original payroll bank movement is missing or already reversed"),{statusCode:409});
