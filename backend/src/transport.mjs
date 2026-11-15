@@ -99,7 +99,7 @@ export async function transportRoutes(app,{db}){
     let sequence=0;
     for(const item of b.deliveries){
      const delivery=await c.query("SELECT * FROM sales_deliveries WHERE id=$1 FOR UPDATE",[item.salesDeliveryId]);
-     if(!delivery.rowCount||delivery.rows[0].status!=='READY')throw Object.assign(new Error('كل أوامر التسليم يجب أن تكون بحالة READY قبل تحميل الرحلة'),{code:'P0001'});
+     if(!delivery.rowCount||!['READY','PARTIALLY_DELIVERED'].includes(delivery.rows[0].status))throw Object.assign(new Error('أوامر التسليم يجب أن تكون جاهزة أو متبقي بها كميات للتسليم'),{code:'P0001'});
      const active=await c.query("SELECT id FROM transport_trip_deliveries WHERE sales_delivery_id=$1 AND active_trip=TRUE",[item.salesDeliveryId]);
      if(active.rowCount)throw Object.assign(new Error('أمر التسليم مرتبط برحلة نشطة بالفعل'),{code:'P0001'});
      await c.query(`
@@ -128,11 +128,11 @@ export async function transportRoutes(app,{db}){
       (vehicle.rows[0].license_expiry&&vehicle.rows[0].license_expiry<valid.rows[0].today)||
       driver.rows[0].license_expiry<valid.rows[0].today)return {conflict:'VEHICLE_OR_DRIVER_NOT_LEGAL_TO_DISPATCH'};
     const rows=await c.query('SELECT td.sales_delivery_id,sd.status FROM transport_trip_deliveries td JOIN sales_deliveries sd ON sd.id=td.sales_delivery_id WHERE td.trip_id=$1 AND td.active_trip=TRUE FOR UPDATE OF td,sd',[req.params.id]);
-    if(!rows.rowCount||rows.rows.some(x=>x.status!=='READY'))return {conflict:'TRIP_DELIVERIES_NOT_READY'};
+    if(!rows.rowCount||rows.rows.some(x=>!['READY','PARTIALLY_DELIVERED'].includes(x.status)))return {conflict:'TRIP_DELIVERIES_NOT_READY'};
     for(const row of rows.rows){
      const lines=await c.query('SELECT id,planned_qty FROM sales_delivery_lines WHERE sales_delivery_id=$1 FOR UPDATE',[row.sales_delivery_id]);
      if(!lines.rowCount)throw Object.assign(new Error('أمر التسليم بلا بنود'),{code:'P0001'});
-     for(const line of lines.rows)await c.query('UPDATE sales_delivery_lines SET shipped_qty=planned_qty WHERE id=$1',[line.id]);
+     if(row.status==='READY')for(const line of lines.rows)await c.query('UPDATE sales_delivery_lines SET shipped_qty=planned_qty WHERE id=$1',[line.id]);
      await c.query("UPDATE sales_deliveries SET status='SHIPPED',shipped_by=$1,shipped_at=NOW() WHERE id=$2",[req.authUser.user_id,row.sales_delivery_id]);
     }
     const updated=await c.query("UPDATE transport_trips SET status='DISPATCHED',dispatched_at=NOW() WHERE id=$1 RETURNING *",[req.params.id]);
@@ -221,7 +221,7 @@ export async function transportRoutes(app,{db}){
       VALUES($1,$2,$3,$4)
       ON CONFLICT(trip_id,sales_delivery_id) DO UPDATE SET amount=EXCLUDED.amount,allocation_method=EXCLUDED.allocation_method,created_at=NOW()
      `,[req.params.id,d.sales_delivery_id,amount,method]);
-     await c.query('UPDATE sales_deliveries SET transport_cost=$1 WHERE id=$2',[amount,d.sales_delivery_id]);
+     await c.query('UPDATE sales_deliveries SET transport_cost=(SELECT COALESCE(SUM(amount),0) FROM transport_cost_allocations WHERE sales_delivery_id=$1) WHERE id=$1',[d.sales_delivery_id]);
     }
     return {tripId:req.params.id,totalCost:total,allocationMethod:method,allocatedAmount:allocated};
    });
@@ -241,7 +241,7 @@ export async function transportRoutes(app,{db}){
      WHERE td.trip_id=$1 AND td.active_trip=TRUE FOR UPDATE OF td,sd
     `,[req.params.id]);
     if(!deliveries.rowCount||deliveries.rows.some(x=>!x.pod_received_at||x.status!=='DELIVERED'))
-      return {conflict:'ALL_DELIVERIES_REQUIRE_POD_AND_FULL_CONFIRMATION'};
+      return {conflict:'ALL_DELIVERIES_REQUIRE_POD_AND_DELIVERY_CONFIRMATION'};
     await c.query("UPDATE transport_trips SET status='COMPLETED' WHERE id=$1",[req.params.id]);
     await c.query('UPDATE transport_vehicles SET current_odometer=$1 WHERE id=$2',[trip.rows[0].odometer_end,trip.rows[0].vehicle_id]);
     await c.query('UPDATE transport_trip_deliveries SET active_trip=FALSE WHERE trip_id=$1',[req.params.id]);
