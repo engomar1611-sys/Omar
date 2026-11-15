@@ -138,8 +138,8 @@ router.post("/supplier-payments",permission,async(req,res,next)=>{
   for(const a of allocations){
    const invoice=await c.query("SELECT id,supplier_id,subtotal,status FROM supplier_invoices WHERE id=$1 FOR UPDATE",[a.invoice_id]);
    if(!invoice.rowCount||invoice.rows[0].supplier_id!==supplier_id||invoice.rows[0].status!=="posted")throw Object.assign(new Error("Allocations must target posted invoices of the selected supplier"),{statusCode:409});
-   const prior=await c.query("SELECT COALESCE(SUM(spa.amount),0) paid FROM supplier_payment_allocations spa JOIN supplier_payments sp ON sp.id=spa.payment_id WHERE spa.invoice_id=$1 AND sp.status='posted'",[a.invoice_id]);
-   const balance=Number(invoice.rows[0].subtotal)-Number(prior.rows[0].paid);
+   const prior=await c.query("SELECT (SELECT COALESCE(SUM(spa.amount),0) FROM supplier_payment_allocations spa JOIN supplier_payments sp ON sp.id=spa.payment_id WHERE spa.invoice_id=$1 AND sp.status='posted') paid,(SELECT COALESCE(SUM(ra.amount),0) FROM supplier_return_allocations ra JOIN supplier_returns sr ON sr.id=ra.return_id WHERE ra.invoice_id=$1 AND sr.status='posted') credits",[a.invoice_id]);
+   const balance=Number(invoice.rows[0].subtotal)-Number(prior.rows[0].paid)-Number(prior.rows[0].credits);
    if(Number(a.amount)>balance+0.000001)throw Object.assign(new Error("Allocation exceeds invoice outstanding balance"),{statusCode:409});
    await c.query("INSERT INTO supplier_payment_allocations(payment_id,invoice_id,amount) VALUES($1,$2,$3)",[pay.rows[0].id,a.invoice_id,a.amount]);
    allocated+=Number(a.amount);
@@ -185,8 +185,8 @@ router.post("/supplier-invoices/:id/void",permission,async(req,res,next)=>{
   await c.query("BEGIN");
   const inv=await c.query("SELECT * FROM supplier_invoices WHERE id=$1 FOR UPDATE",[req.params.id]);
   if(!inv.rowCount||inv.rows[0].status!=="posted")throw Object.assign(new Error("Only posted supplier invoices can be voided"),{statusCode:409});
-  const allocated=await c.query("SELECT COALESCE(SUM(a.amount),0) amount FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.payment_id WHERE a.invoice_id=$1 AND p.status='posted'",[req.params.id]);
-  if(Number(allocated.rows[0].amount)>0.000001)throw Object.assign(new Error("Reverse posted supplier payments before voiding this invoice"),{statusCode:409});
+  const allocated=await c.query("SELECT (SELECT COALESCE(SUM(a.amount),0) FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.payment_id WHERE a.invoice_id=$1 AND p.status='posted') paid,(SELECT COALESCE(SUM(ra.amount),0) FROM supplier_return_allocations ra JOIN supplier_returns sr ON sr.id=ra.return_id WHERE ra.invoice_id=$1 AND sr.status='posted') credits",[req.params.id]);
+  if(Number(allocated.rows[0].paid)+Number(allocated.rows[0].credits)>0.000001)throw Object.assign(new Error("Reverse posted payments and supplier credit allocations before voiding this invoice"),{statusCode:409});
   const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
   if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
   const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[inv.rows[0].journal_entry_id]);
