@@ -1,6 +1,6 @@
 {
   "name": "new-feed-erp-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "NEW FEED ERP Windows employee client",
   "main": "main.cjs",
