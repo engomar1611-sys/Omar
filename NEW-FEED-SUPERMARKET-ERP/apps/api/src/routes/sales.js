@@ -1,5 +1,6 @@
 import {Router} from "express";
 import {pool} from "../db.js";
+import {requirePermission} from "../auth.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validRef=v=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=50;
@@ -9,12 +10,12 @@ router.get("/sales/discount-settings",async(_req,res,next)=>{
   res.json({settings:r.rows[0]||{min_order_amount:0,order_discount_type:"percent",order_discount_value:0,delivery_min_order_amount:0,delivery_discount_type:"percent",delivery_discount_value:0,is_active:true}});
  }catch(e){next(e);}
 });
-router.put("/sales/discount-settings",async(req,res,next)=>{
+router.put("/sales/discount-settings",requirePermission("sales.discount.manage"),async(req,res,next)=>{
  const {min_order_amount=0,order_discount_type="percent",order_discount_value=0,delivery_min_order_amount=0,delivery_discount_type="percent",delivery_discount_value=0}=req.body??{};
  const validNum=v=>Number.isFinite(Number(v))&&Number(v)>=0;
  if(!validNum(min_order_amount)||!validNum(order_discount_value)||!validNum(delivery_min_order_amount)||!validNum(delivery_discount_value)||
    !["amount","percent"].includes(order_discount_type)||!["amount","percent"].includes(delivery_discount_type)||
-   Number(order_discount_type==="percent"&&order_discount_value>100)||Number(delivery_discount_type==="percent"&&delivery_discount_value>100))
+   (order_discount_type==="percent"&&Number(order_discount_value)>100)||(delivery_discount_type==="percent"&&Number(delivery_discount_value)>100))
   return res.status(400).json({error:"Invalid discount thresholds or values"});
  const client=await pool.connect();
  try{
