@@ -142,6 +142,14 @@ export async function supplierInvoiceRoutes(app,{db}){
   }catch(e){return fail(reply,e);}
  });
 
+ app.post('/api/v1/supplier-invoices/:id/cancel',auth(app,'SUPPLIER_INVOICES.MANAGE'),async(req,reply)=>{
+  try{
+   const result=await db.query("UPDATE supplier_invoices SET status='CANCELLED' WHERE id=$1 AND status='DRAFT' RETURNING *",[req.params.id]);
+   if(!result.rowCount)return conflict(reply,'ONLY_DRAFT_INVOICES_CAN_BE_CANCELLED');
+   return result.rows[0];
+  }catch(e){return fail(reply,e);}
+ });
+
  app.post('/api/v1/supplier-invoices/:id/reject',auth(app,'SUPPLIER_INVOICES.APPROVE'),async(req,reply)=>{
   try{
    const result=await db.query(`
