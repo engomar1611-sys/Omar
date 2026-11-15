@@ -132,10 +132,14 @@ router.post("/purchase-orders/:id/receive", async (req,res,next) => {
       const product=await client.query("SELECT tracks_expiry FROM products WHERE id=$1",[line.product_id]);
       if(!product.rowCount) throw Object.assign(new Error("Product not found"),{code:"23503"});
       if(product.rows[0].tracks_expiry&&!line.expiry_date) throw Object.assign(new Error("Expiry date is required for this product"),{statusCode:400});
+      if(line.production_date&&!/^\d{4}-\d{2}-\d{2}$/.test(line.production_date))
+        throw Object.assign(new Error("Invalid production date"),{statusCode:400});
+      if(line.purchase_date&&!/^\d{4}-\d{2}-\d{2}$/.test(line.purchase_date))
+        throw Object.assign(new Error("Invalid purchase date"),{statusCode:400});
       const lot=await client.query(
-        `INSERT INTO stock_lots(product_id,warehouse_id,lot_number,expiry_date,quantity_on_hand,unit_cost,is_saleable)
-         VALUES($1,$2,$3,$4,0,$5,FALSE) RETURNING id`,
-        [line.product_id,warehouse_id,line.lot_number||null,line.expiry_date||null,line.unit_cost]
+        `INSERT INTO stock_lots(product_id,warehouse_id,lot_number,expiry_date,production_date,purchase_date,supplier_id,quantity_on_hand,unit_cost,is_saleable)
+         VALUES($1,$2,$3,$4,$5,COALESCE($6::date,CURRENT_DATE),$7,0,$8,FALSE) RETURNING id`,
+        [line.product_id,warehouse_id,line.lot_number||null,line.expiry_date||null,line.production_date||null,line.purchase_date||null,order.rows[0].supplier_id,line.unit_cost]
       );
       await client.query(
         `INSERT INTO purchase_receipt_lines(receipt_id,product_id,quantity,unit_cost,lot_number,expiry_date,stock_lot_id)
