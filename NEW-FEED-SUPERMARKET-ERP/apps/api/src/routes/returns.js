@@ -7,6 +7,19 @@ const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 const text=(v,n=120)=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=n;
 const fail=(res,status,error)=>res.status(status).json({error});
 
+export function calculateReturnAmounts({lineTotal,lineQuantity,returnQuantity,invoiceLineBase,orderDiscount,taxTotal}){
+  const values=[lineTotal,lineQuantity,returnQuantity,invoiceLineBase,orderDiscount,taxTotal].map(Number);
+  if(values.some(v=>!Number.isFinite(v)||v<0)||values[1]<=0||values[2]>values[1])
+    throw new RangeError("Invalid return amount inputs");
+  const [gross,quantity,returned,base,discount,tax]=values;
+  const taxableBase=Math.max(0,base-discount);
+  const discountFactor=base>0?taxableBase/base:0;
+  const refund=Number((gross*returned/quantity*discountFactor).toFixed(6));
+  const taxRefund=Number((taxableBase>0?refund*tax/taxableBase:0).toFixed(6));
+  return {refund,taxRefund};
+}
+
+
 router.get("/sales/returns",async(_req,res,next)=>{
   try{
     const r=await pool.query(
@@ -41,9 +54,7 @@ router.post("/sales/:saleId/returns",requirePermission("sales.void.line"),async(
     const lineBaseResult=await client.query("SELECT COALESCE(SUM(line_total),0) total FROM sale_lines WHERE sale_id=$1",[req.params.saleId]);
     const lineBase=Number(lineBaseResult.rows[0].total);
     const invoiceOrderDiscount=Number(sale.rows[0].order_discount_amount||0);
-    const taxableBase=Math.max(0,lineBase-invoiceOrderDiscount);
-    const invoiceDiscountFactor=lineBase>0?taxableBase/lineBase:0;
-    const taxRate=taxableBase>0?Number(sale.rows[0].tax_total||0)/taxableBase:0;
+    const originalTaxTotal=Number(sale.rows[0].tax_total||0);
     for(const item of lines){
       if(seen.has(item.sale_line_id)) throw Object.assign(new Error("Duplicate sale line"),{statusCode:400});
       seen.add(item.sale_line_id);
@@ -59,8 +70,10 @@ router.post("/sales/:saleId/returns",requirePermission("sales.void.line"),async(
       const row=q.rows[0],qty=Number(item.quantity);
       if(qty>Number(row.quantity)-Number(row.returned_qty)+0.000001)
         throw Object.assign(new Error("Return quantity exceeds the unreturned sold quantity"),{statusCode:409});
-      const refund=Number((Number(row.line_total)*qty/Number(row.quantity)*invoiceDiscountFactor).toFixed(6));
-      const taxRefund=Number((refund*taxRate).toFixed(6));
+      const {refund,taxRefund}=calculateReturnAmounts({
+        lineTotal:Number(row.line_total),lineQuantity:Number(row.quantity),returnQuantity:qty,
+        invoiceLineBase:lineBase,orderDiscount:invoiceOrderDiscount,taxTotal:originalTaxTotal
+      });
       resolved.push({row,qty,refund,taxRefund});
     }
     const ret=await client.query(
