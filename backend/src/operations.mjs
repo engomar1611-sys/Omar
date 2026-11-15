@@ -408,6 +408,8 @@ export async function operationsRoutes(app, { db }) {
           FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_entry_id=j.id
           LEFT JOIN gl_accounts a ON a.id=l.account_id
           WHERE (j.source_id=$1 AND j.source_type IN ('PRODUCTION_COST','PRODUCTION_COMPLETION'))
+             OR (j.source_type='PRODUCTION_COST_COMPONENT' AND j.source_id IN
+               (SELECT id FROM production_cost_components WHERE production_order_id=$1))
              OR (j.source_type='PRODUCTION_MATERIAL_ISSUE' AND j.source_id=(SELECT id FROM production_material_issues WHERE production_order_id=$1))
              OR (j.source_type='PRODUCTION_MATERIAL_ISSUE_REVERSAL' AND j.source_id=(SELECT id FROM production_material_issues WHERE production_order_id=$1))
           GROUP BY j.id ORDER BY j.created_at`,[req.params.id]),
