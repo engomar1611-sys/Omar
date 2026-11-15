@@ -83,6 +83,49 @@ jobs:
             IF NOT EXISTS (SELECT 1 FROM permissions WHERE code='supplier.accounting') THEN
               RAISE EXCEPTION 'Supplier accounting permission is missing';
             END IF;
+
+            IF (SELECT COUNT(*) FROM (
+              SELECT unnest(ARRAY[
+                'products','product_barcodes','product_units','stock_lots',
+                'purchase_orders','purchase_order_lines','purchase_receipts',
+                'purchase_receipt_lines','sales','sale_lines','sale_payments',
+                'payment_banks','journal_entries','journal_lines',
+                'stocktakes','stocktake_lines'
+              ]) AS table_name
+            ) required
+            WHERE to_regclass('public.'||required.table_name) IS NOT NULL) <> 16 THEN
+              RAISE EXCEPTION 'One or more core supermarket ERP tables are missing';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='stock_lots' AND column_name='production_date'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='stock_lots' AND column_name='purchase_date'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='stock_lots' AND column_name='expiry_date'
+            ) THEN
+              RAISE EXCEPTION 'Stock lot production, purchase or expiry date fields are missing';
+            END IF;
+
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sale_payments' AND column_name='transaction_reference'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sale_payments' AND column_name='card_last_four'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sale_payments' AND column_name='terminal_amount'
+            ) THEN
+              RAISE EXCEPTION 'Card terminal audit fields are missing';
+            END IF;
+
+            IF (SELECT COUNT(*) FROM payment_banks WHERE is_active) < 30 THEN
+              RAISE EXCEPTION 'Egyptian bank directory is incomplete';
+            END IF;
           END $$;
           SQL
 
