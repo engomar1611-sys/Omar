@@ -64,9 +64,21 @@ jobs:
               OR to_regclass('public.supplier_return_allocations') IS NULL THEN
               RAISE EXCEPTION 'Supplier accounting tables are missing';
             END IF;
-            IF (SELECT COUNT(*) FROM system_account_mappings
-                WHERE mapping_key IN ('grni','supplier_payables','purchase_price_variance')) <> 3 THEN
-              RAISE EXCEPTION 'Supplier accounting ledger mappings are incomplete';
+            IF (SELECT COUNT(*) FROM system_account_mappings m
+                JOIN accounts a ON a.id=m.account_id
+                WHERE (m.mapping_key='grni' AND a.code='2010')
+                   OR (m.mapping_key='supplier_payables' AND a.code='2000')
+                   OR (m.mapping_key='purchase_price_variance' AND a.code='5020')) <> 3 THEN
+              RAISE EXCEPTION 'Supplier accounting ledger mappings are incomplete or point to the wrong accounts';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='supplier_payments' AND column_name='status'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='supplier_payments' AND column_name='void_reason'
+            ) THEN
+              RAISE EXCEPTION 'Supplier payment reversal columns are missing';
             END IF;
             IF NOT EXISTS (SELECT 1 FROM permissions WHERE code='supplier.accounting') THEN
               RAISE EXCEPTION 'Supplier accounting permission is missing';
