@@ -44,6 +44,15 @@ app.get("/api/health", (_req, res) => res.json({
   timestamp: new Date().toISOString()
 }));
 
+app.get("/ready", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({ status: "ready", database: "connected", application: "NEW FEED SUPERMARKET ERP" });
+  } catch {
+    res.status(503).json({ status: "not_ready", database: "unavailable" });
+  }
+});
+
 app.get("/api/health/database", async (_req, res) => {
   try {
     const result = await pool.query("SELECT current_timestamp AS database_time");
