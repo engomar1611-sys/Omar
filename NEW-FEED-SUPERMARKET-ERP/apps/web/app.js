@@ -21,9 +21,9 @@ document.getElementById("bootstrapForm").addEventListener("submit",async e=>{
 });
 if(storedToken){document.getElementById("authGate").style.display="none";const name=sessionStorage.getItem("nf_user_name");const userLabel=document.querySelector(".user b");if(name&&userLabel)userLabel.textContent=name;}
 document.getElementById("logoutButton").onclick=()=>{sessionStorage.removeItem("nf_access_token");sessionStorage.removeItem("nf_user_name");location.reload();};
-let posProducts=[],posContext=null;
-const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["customers","♙","العملاء والولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات والخزينة"],["hr","♙","الموارد البشرية"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["orderChannels","↔","ربط تطبيقات الطلبات"],["ecommerce","▧","المتجر الإلكتروني"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
-const moduleData={catalog:["الأصناف والباركود",["كود الصنف","اسم الصنف","التصنيف","الوحدة الأساسية","باركود","حالة الوزن","الصلاحية"],"لا توجد أصناف مسجلة بعد. أضف بيانات الأصناف المعتمدة أو استوردها من ملف موثوق."],inventory:["المخازن والمخزون",["كود الصنف","الصنف","المخزن","التشغيلة","الصلاحية","الكمية","متوسط التكلفة"],"ستظهر أرصدة المخزون وحركاته بعد تهيئة المخازن وإدخال أرصدة افتتاحية معتمدة."],purchasing:["المشتريات وطلبات الشراء",["الرقم المرجعي","المورد","التاريخ","الحالة","القيمة"],"أنشئ طلب شراء، ثم اعتمده وأصدر أمر الشراء وسجل الاستلام وفحص الجودة."],sales:["المبيعات والفواتير",["الرقم المرجعي","التاريخ","الكاشير","العميل","الإجمالي","الحالة"],"تظهر فواتير البيع المكتملة والمرتجعات بعد ربط نقاط البيع بقاعدة البيانات."],customers:["العملاء والولاء",["كود العميل","اسم العميل","الهاتف","نقاط الولاء","الحالة"],"سجل العملاء وربطهم بالمبيعات ونظام الولاء."],suppliers:["الموردون",["كود المورد","اسم المورد","الهاتف","الرصيد","الحالة"],"سجل الموردين وربطهم بطلبات الشراء والاستلام والمستحقات."],accounting:["الحسابات والخزينة",["كود الحساب","اسم الحساب","نوع الحساب","الحالة"],"دليل الحسابات والقيود اليومية والخزائن والبنوك والتسويات."],hr:["الموارد البشرية",["كود الموظف","اسم الموظف","الوظيفة","الفرع","الحالة"],"ملفات الموظفين والورديات والحضور والإجازات والصلاحيات الوظيفية."],assets:["الأصول والصيانة",["كود الأصل","اسم الأصل","التصنيف","الموقع","الحالة"],"سجل الأصول والترقيم وطباعة ملصقات الباركود والصيانة."],delivery:["التوصيل",["رقم الطلب","العميل","العنوان","مندوب التوصيل","الحالة"],"إدارة طلبات التوصيل وتخصيص المندوب ومتابعة التسليم."],ecommerce:["المتجر الإلكتروني",["رقم الطلب","العميل","قناة الطلب","الدفع","الحالة"],"إدارة كتالوج المتجر والطلبات ومزامنتها مع المخزون ونقاط البيع."],users:["المستخدمون والصلاحيات",["اسم المستخدم","الاسم","الدور","الصلاحيات","الحالة"],"إدارة المستخدمين والأدوار والصلاحيات على مستوى الموديول والإجراء."],settings:["إعدادات النظام",["الإعداد","القيمة","الوصف"],"إعدادات الشركة والفروع والضرائب والترقيم والطباعة والنسخ الاحتياطي والاتصال."]};
+let posProducts=[],posContext=null,posDiscountSettings=null,productSearchTimer=null;
+const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["discounts","％","قواعد الخصم"],["customers","♙","العملاء والولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات والخزينة"],["hr","♙","الموارد البشرية"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["orderChannels","↔","ربط تطبيقات الطلبات"],["ecommerce","▧","المتجر الإلكتروني"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
+const moduleData={catalog:["الأصناف والباركود",["كود الصنف","اسم الصنف","التصنيف","الوحدة الأساسية","باركود","حالة الوزن","الصلاحية"],"لا توجد أصناف مسجلة بعد. أضف بيانات الأصناف المعتمدة أو استوردها من ملف موثوق."],inventory:["المخازن والمخزون",["كود الصنف","الصنف","المخزن","التشغيلة","الصلاحية","الكمية","متوسط التكلفة"],"ستظهر أرصدة المخزون وحركاته بعد تهيئة المخازن وإدخال أرصدة افتتاحية معتمدة."],purchasing:["المشتريات وطلبات الشراء",["الرقم المرجعي","المورد","التاريخ","الحالة","القيمة"],"أنشئ طلب شراء، ثم اعتمده وأصدر أمر الشراء وسجل الاستلام وفحص الجودة."],sales:["المبيعات والفواتير",["الرقم المرجعي","التاريخ","الكاشير","العميل","الإجمالي","الحالة"],"تظهر فواتير البيع المكتملة والمرتجعات بعد ربط نقاط البيع بقاعدة البيانات."],customers:["العملاء والولاء",["كود العميل","اسم العميل","الهاتف","نقاط الولاء","الحالة"],"سجل العملاء وربطهم بالمبيعات ونظام الولاء."],suppliers:["الموردون",["كود المورد","اسم المورد","الهاتف","الرصيد","الحالة"],"سجل الموردين وربطهم بطلبات الشراء والاستلام والمستحقات."],accounting:["الحسابات والخزينة",["كود الحساب","اسم الحساب","نوع الحساب","الحالة"],"دليل الحسابات والقيود اليومية والخزائن والبنوك والتسويات."],hr:["الموارد البشرية",["كود الموظف","اسم الموظف","الوظيفة","الفرع","الحالة"],"ملفات الموظفين والورديات والحضور والإجازات والصلاحيات الوظيفية."],assets:["الأصول والصيانة",["كود الأصل","اسم الأصل","التصنيف","الموقع","الحالة"],"سجل الأصول والترقيم وطباعة ملصقات الباركود والصيانة."],delivery:["التوصيل",["رقم الطلب","العميل","العنوان","مندوب التوصيل","الحالة"],"إدارة طلبات التوصيل وتخصيص المندوب ومتابعة التسليم."],ecommerce:["المتجر الإلكتروني",["رقم الطلب","العميل","قناة الطلب","الدفع","الحالة"],"إدارة كتالوج المتجر والطلبات ومزامنتها مع المخزون ونقاط البيع."],users:["المستخدمون والصلاحيات",["اسم المستخدم","الاسم","الدور","الصلاحيات","الحالة"],"إدارة المستخدمين والأدوار والصلاحيات على مستوى الموديول والإجراء."],settings:["إعدادات النظام",["الإعداد","القيمة","الوصف"],"إعدادات الشركة والفروع والضرائب والترقيم والطباعة والنسخ الاحتياطي والاتصال."],discounts:["قواعد الخصم",["الحد الأدنى","نوع الخصم","القيمة"],"إعداد خصومات تلقائية للطلبات ورسوم التوصيل."]};
 let cart=[],activeCategory="الكل";
 const $=id=>document.getElementById(id),money=n=>Number(n).toFixed(2);
 function toast(msg){const t=document.createElement("div");t.className="toast";t.textContent=msg;document.body.append(t);setTimeout(()=>t.remove(),2600)}
@@ -57,16 +57,21 @@ function addProduct(id){
 }
 function renderCart(){
  const sub=cart.reduce((s,x)=>s+x.price*x.qty,0),pct=Math.min(100,Math.max(0,Number($("discountInput").value)||0)),disc=sub*pct/100;
+ const cfg=posDiscountSettings,eligible=Math.max(0,sub-disc);
+ const orderDiscount=cfg&&eligible+0.000001>=Number(cfg.min_order_amount||0)?Math.min(eligible,cfg.order_discount_type==="percent"?eligible*Number(cfg.order_discount_value||0)/100:Number(cfg.order_discount_value||0)):0;
+ const rawDelivery=$("saleIsDelivery")?.checked?Number($("saleDeliveryFee").value||0):0;
+ const deliveryDiscount=cfg&&$("saleIsDelivery")?.checked&&eligible+0.000001>=Number(cfg.delivery_min_order_amount||0)?Math.min(rawDelivery,cfg.delivery_discount_type==="percent"?rawDelivery*Number(cfg.delivery_discount_value||0)/100:Number(cfg.delivery_discount_value||0)):0;
  $("cartLines").innerHTML=cart.map((x,i)=>'<div class="cart-line"><span>'+(i+1)+'</span><b>'+escapeHtml(x.name)+'</b><span class="qty-control"><button data-dec="'+x.id+'">−</button>'+x.qty+'<button data-inc="'+x.id+'">+</button></span><span>'+money(x.price)+'</span><b>'+money(x.price*x.qty)+'</b><button class="remove-line" data-del="'+x.id+'">×</button></div>').join("")||'<div class="empty-state">أضف الأصناف إلى فاتورة البيع</div>';
- const deliveryCharge=$("saleIsDelivery")?.checked?Number($("saleDeliveryFee").value||0):0;$("itemCount").textContent=cart.reduce((s,x)=>s+x.qty,0);$("subtotal").textContent=money(sub);$("discountValue").textContent=money(disc);$("grandTotal").textContent=money(sub-disc+deliveryCharge)+" ج.م";
+ const deliveryCharge=rawDelivery-deliveryDiscount;$("itemCount").textContent=cart.reduce((s,x)=>s+x.qty,0);$("subtotal").textContent=money(sub);$("discountValue").textContent=money(disc+orderDiscount+deliveryDiscount);$("grandTotal").textContent=money(sub-disc-orderDiscount+deliveryCharge)+" ج.م";
+ const hint=$("autoDiscountHint");if(hint)hint.textContent=(orderDiscount>0?"خصم الطلب: "+money(orderDiscount)+" ج.م ":"")+(deliveryDiscount>0?"خصم التوصيل: "+money(deliveryDiscount)+" ج.م":"");
  document.querySelectorAll("[data-inc]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.inc);if(x){x.qty=Number((x.qty+quantityStep(x)).toFixed(6));renderCart();}});
  document.querySelectorAll("[data-dec]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.dec);if(x){x.qty=Number((x.qty-quantityStep(x)).toFixed(6));if(x.qty<=0)cart=cart.filter(y=>y.id!==x.id);renderCart();}});
  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{cart=cart.filter(x=>x.id!==b.dataset.del);renderCart();});
 }
 async function loadPosData(){
  try{
-  const [context,catalog,customers]=await Promise.all([api("/api/pos/context"),api("/api/products?limit=200"),api("/api/customers")]);
-  posContext=context;posProducts=catalog.items||[];const customerSelect=$("saleDeliveryCustomer");if(customerSelect)customerSelect.innerHTML='<option value="">اختر العميل</option>'+(customers.items||[]).map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.name)+' — '+escapeHtml(x.phone||x.code)+'</option>').join("");
+  const [context,catalog,customers,discounts]=await Promise.all([api("/api/pos/context"),api("/api/products?limit=200"),api("/api/customers"),api("/api/sales/discount-settings")]);
+  posContext=context;posProducts=catalog.items||[];posDiscountSettings=discounts.settings||null;const customerSelect=$("saleDeliveryCustomer");if(customerSelect)customerSelect.innerHTML='<option value="">اختر العميل</option>'+(customers.items||[]).map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.name)+' — '+escapeHtml(x.phone||x.code)+'</option>').join("");
   $("paymentMethod").innerHTML=context.payment_methods.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name_ar)+'</option>').join("");
   renderCategories();renderProducts();
  }catch(e){$("productGrid").innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'<br>تحقق من تهيئة الفرع والصلاحيات والأسعار.</div>';}
@@ -144,18 +149,36 @@ async function loadOperationalModule(id){
 async function openBusinessMaster(kind){
  const cfg=kind==="customers"?{title:"العملاء والولاء",url:"/api/customers",code:"كود العميل",name:"اسم العميل"}:{title:"الموردون",url:"/api/suppliers",code:"كود المورد",name:"اسم المورد"};
  const root=$("moduleView");
- root.innerHTML='<h1 class="module-title">'+cfg.title+'</h1><section class="purchase-panel"><h2>إضافة سجل جديد</h2><div class="form-grid"><label>'+cfg.code+'<input id="masterCode"></label><label>'+cfg.name+'<input id="masterName"></label><label>الهاتف<input id="masterPhone"></label><label>البريد الإلكتروني<input id="masterEmail"></label><label>العنوان<input id="masterAddress"></label></div><button class="primary-btn" id="saveMaster">حفظ</button></section><section class="purchase-panel"><h2>السجلات المسجلة</h2><div id="masterList" class="empty-state">جارٍ التحميل...</div></section>';
+ root.innerHTML='<h1 class="module-title">'+cfg.title+'</h1><section class="purchase-panel"><h2>إضافة سجل جديد</h2><div class="form-grid"><label>'+cfg.code+'<input id="masterCode"></label><label>'+cfg.name+'<input id="masterName"></label><label>الهاتف<input id="masterPhone"></label><label>البريد الإلكتروني<input id="masterEmail"></label><label>العنوان بالتفصيل<input id="masterAddress"></label>'+(kind==="suppliers"?'<label>الرقم الضريبي<input id="masterTax"></label>':'')+'</div><button class="primary-btn" id="saveMaster">حفظ</button></section><section class="purchase-panel"><h2>السجلات المسجلة</h2><div id="masterList" class="empty-state">جارٍ التحميل...</div></section>'+(kind==="suppliers"?'<section class="purchase-panel"><h2>ربط منتجات المورد</h2><div class="form-grid"><label>المورد<select id="supplierLinkId"></select></label><label>الصنف<select id="supplierProductId"></select></label><label>كود الصنف لدى المورد<input id="supplierProductCode"></label><label>آخر سعر شراء (ج.م)<input id="supplierLastPrice" type="number" min="0" step="0.000001"></label></div><button class="primary-btn" id="linkSupplierProduct">ربط الصنف بالمورد</button><div id="supplierProductRows" class="muted"></div></section>':'');
+ let suppliers=[],catalog=[];
  const refresh=async()=>{
   const data=await api(cfg.url),rows=data.items||[];
-  $("masterList").innerHTML=rows.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>الكود</th><th>الاسم</th><th>الهاتف</th><th>البريد</th><th>العنوان</th><th>الحالة</th></tr></thead><tbody>'+rows.map(x=>'<tr><td>'+escapeHtml(x.code)+'</td><td>'+escapeHtml(x.name)+'</td><td>'+escapeHtml(x.phone||"—")+'</td><td>'+escapeHtml(x.email||"—")+'</td><td>'+escapeHtml(x.address||"—")+'</td><td>'+ (x.is_active?"نشط":"موقوف")+'</td></tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد سجلات.</div>';
+  suppliers=rows;
+  $("masterList").innerHTML=rows.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>الرقم</th><th>الكود</th><th>الاسم</th><th>الهاتف</th><th>البريد</th><th>العنوان</th><th>الحالة</th>'+(kind==="suppliers"?'<th>المنتجات</th>':'')+'</tr></thead><tbody>'+rows.map(x=>'<tr><td>'+escapeHtml(kind==="suppliers"?x.supplier_number:x.customer_number)+'</td><td>'+escapeHtml(x.code)+'</td><td>'+escapeHtml(x.name)+'</td><td>'+escapeHtml(x.phone||"—")+'</td><td>'+escapeHtml(x.email||"—")+'</td><td>'+escapeHtml(x.address||"—")+'</td><td>'+(x.is_active===false?"موقوف":"نشط")+'</td>'+(kind==="suppliers"?'<td><button class="small-btn" data-supplier-products="'+x.id+'">عرض المنتجات</button></td>':'')+'</tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد سجلات.</div>';
+  if(kind==="suppliers"){
+   $("supplierLinkId").innerHTML='<option value="">اختر المورد</option>'+rows.map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name)+' — '+escapeHtml(x.supplier_number)+'</option>').join("");
+  }
+  document.querySelectorAll("[data-supplier-products]").forEach(b=>b.onclick=async()=>{try{const d=await api("/api/suppliers/"+b.dataset.supplierProducts+"/products");$("supplierProductRows").innerHTML=d.items.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>الصنف</th><th>كود المورد</th><th>آخر سعر شراء</th><th>الوحدة</th></tr></thead><tbody>'+d.items.map(p=>'<tr><td>'+escapeHtml(p.name_ar)+' ('+escapeHtml(p.sku)+')</td><td>'+escapeHtml(p.supplier_product_code||"—")+'</td><td>'+money(p.last_purchase_price||0)+'</td><td>'+escapeHtml(p.base_unit_code)+'</td></tr>').join("")+'</tbody></table></div>':'لا توجد أصناف مرتبطة بهذا المورد';}catch(e){toast(e.message);}});
  };
- try{await refresh();}catch(e){$("masterList").textContent=e.message;}
+ try{await refresh();if(kind==="suppliers"){const d=await api("/api/products?limit=200");catalog=d.items||[];$("supplierProductId").innerHTML='<option value="">اختر الصنف</option>'+catalog.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name_ar)+' ('+escapeHtml(p.sku)+')</option>').join("");}}catch(e){$("masterList").textContent=e.message;}
  $("saveMaster").onclick=async()=>{
   const code=$("masterCode").value.trim(),name=$("masterName").value.trim();
   if(!code||!name)return toast("أدخل الكود والاسم");
   const body={code,name,phone:$("masterPhone").value.trim()||null,email:$("masterEmail").value.trim()||null,address:$("masterAddress").value.trim()||null};
-  try{await api(cfg.url,{method:"POST",body:JSON.stringify(body)});toast("تم حفظ السجل");["masterCode","masterName","masterPhone","masterEmail","masterAddress"].forEach(id=>$(id).value="");await refresh();}catch(e){toast(e.message);}
+  if(kind==="suppliers")body.tax_number=$("masterTax").value.trim()||null;
+  try{await api(cfg.url,{method:"POST",body:JSON.stringify(body)});toast("تم حفظ السجل وإسناد الرقم التلقائي");["masterCode","masterName","masterPhone","masterEmail","masterAddress","masterTax"].forEach(id=>{if($(id))$(id).value="";});await refresh();}catch(e){toast(e.message);}
  };
+ if(kind==="suppliers")$("linkSupplierProduct").onclick=async()=>{
+  const supplier_id=$("supplierLinkId").value,product_id=$("supplierProductId").value,price=$("supplierLastPrice").value;
+  if(!supplier_id||!product_id)return toast("اختر المورد والصنف");
+  try{await api("/api/suppliers/"+supplier_id+"/products",{method:"POST",body:JSON.stringify({product_id,supplier_product_code:$("supplierProductCode").value.trim()||null,last_purchase_price:price===""?null:Number(price)})});toast("تم ربط الصنف بالمورد");$("supplierProductCode").value="";$("supplierLastPrice").value="";const d=await api("/api/suppliers/"+supplier_id+"/products");$("supplierProductRows").innerHTML=d.items.map(p=>'<div>'+escapeHtml(p.name_ar)+' — '+escapeHtml(p.sku)+'</div>').join("");}catch(e){toast(e.message);}
+ };
+}
+async function openDiscountSettings(){
+ const root=$("moduleView");
+ root.innerHTML='<h1 class="module-title">قواعد الخصم التلقائي</h1><p class="muted">تُطبق القواعد تلقائيًا عند تحقق الحد الأدنى. خصم الطلب يُخصم من قيمة المنتجات، وخصم التوصيل يُخصم من رسوم التوصيل فقط.</p><section class="purchase-panel"><h2>خصم الطلبات</h2><div class="form-grid"><label>الحد الأدنى لقيمة الطلب (ج.م)<input id="minOrderAmount" type="number" min="0" step="0.01"></label><label>نوع الخصم<select id="orderDiscountType"><option value="percent">نسبة مئوية %</option><option value="amount">مبلغ ثابت ج.م</option></select></label><label>قيمة الخصم<input id="orderDiscountValue" type="number" min="0" step="0.01"></label></div></section><section class="purchase-panel"><h2>خصم التوصيل</h2><div class="form-grid"><label>الحد الأدنى لقيمة الطلب للتوصيل (ج.م)<input id="deliveryMinOrder" type="number" min="0" step="0.01"></label><label>نوع الخصم<select id="deliveryDiscountType"><option value="percent">نسبة مئوية %</option><option value="amount">مبلغ ثابت ج.م</option></select></label><label>قيمة الخصم<input id="deliveryDiscountValue" type="number" min="0" step="0.01"></label></div><button class="primary-btn" id="saveDiscountSettings">حفظ قواعد الخصم</button></section>';
+ try{const d=await api("/api/sales/discount-settings"),s=d.settings;$("minOrderAmount").value=s.min_order_amount||0;$("orderDiscountType").value=s.order_discount_type||"percent";$("orderDiscountValue").value=s.order_discount_value||0;$("deliveryMinOrder").value=s.delivery_min_order_amount||0;$("deliveryDiscountType").value=s.delivery_discount_type||"percent";$("deliveryDiscountValue").value=s.delivery_discount_value||0;}catch(e){toast(e.message);}
+ $("saveDiscountSettings").onclick=async()=>{const body={min_order_amount:Number($("minOrderAmount").value),order_discount_type:$("orderDiscountType").value,order_discount_value:Number($("orderDiscountValue").value),delivery_min_order_amount:Number($("deliveryMinOrder").value),delivery_discount_type:$("deliveryDiscountType").value,delivery_discount_value:Number($("deliveryDiscountValue").value)};try{await api("/api/sales/discount-settings",{method:"PUT",body:JSON.stringify(body)});posDiscountSettings=body;toast("تم حفظ قواعد الخصم");}catch(e){toast(e.message);}};
 }
 async function openPurchasing(){
  const root=$("moduleView");
@@ -299,6 +322,7 @@ function openModule(id){
  const title=modules.find(x=>x[0]===id)?.[2]||"نقطة البيع";$("screenTitle").textContent=title;
  if(id==="pos")return;
  if(id==="catalog"){openCatalog();return;}
+ if(id==="discounts"){openDiscountSettings();return;}
  if(id==="purchasing"){openPurchasing();return;}
  if(id==="customers"||id==="suppliers"){openBusinessMaster(id);return;}
  if(id==="users"){openUsers();return;}
@@ -310,19 +334,35 @@ function openModule(id){
 
 $("saleIsDelivery").addEventListener("change",()=>{$("saleDeliveryFields").classList.toggle("hidden",!$("saleIsDelivery").checked);});
 $("saleDeliveryFee").addEventListener("input",renderCart);
-$("productSearch").addEventListener("input",renderProducts);$("discountInput").addEventListener("input",renderCart);
+$("productSearch").addEventListener("input",()=>{
+ renderProducts();clearTimeout(productSearchTimer);
+ const q=$("productSearch").value.trim();
+ if(q.length<2)return;
+ productSearchTimer=setTimeout(async()=>{try{const d=await api("/api/products?limit=200&q="+encodeURIComponent(q));posProducts=d.items||[];renderProducts();}catch(e){toast(e.message);}},250);
+});
+$("productSearch").addEventListener("keydown",async e=>{
+ if(e.key!=="Enter")return;e.preventDefault();const q=$("productSearch").value.trim();if(!q)return;
+ try{const d=await api("/api/products?limit=10&q="+encodeURIComponent(q));const exact=(d.items||[]).find(p=>String(p.sku).toLowerCase()===q.toLowerCase()||(p.barcodes||[]).some(b=>String(b).toLowerCase()===q.toLowerCase()));
+ if(exact){addProduct(exact.id);$("productSearch").value="";renderProducts();}else if(d.items?.length===1){addProduct(d.items[0].id);$("productSearch").value="";renderProducts();}else toast("لم يتم العثور على باركود مطابق؛ اختر الصنف من النتائج");}
+ catch(err){toast(err.message);}
+});
+$("discountInput").addEventListener("input",renderCart);
 $("clearCart").onclick=()=>{cart=[];renderCart();toast("تم إفراغ السلة المحلية")};
 $("discountFocus").onclick=()=>{$("discountInput").focus();$("discountInput").select()};
 $("holdSale").onclick=()=>toast("التعليق المحلي للفاتورة: سيتم ربط الحفظ بالخادم في مرحلة التكامل");
 $("returnSale").onclick=()=>toast("المرتجعات تتطلب فاتورة أصلية وفحص مخزن واعتمادًا ماليًا");
 $("printReceipt").onclick=()=>toast("الطباعة الفعلية تتطلب ربط طابعة الإيصالات");
 $("noteSale").onclick=()=>{const n=prompt("ملاحظة الفاتورة");if(n)toast("تم إدخال الملاحظة لهذه الجلسة")};
-$("scanButton").onclick=()=>{const code=prompt("أدخل أو امسح الباركود");if(code){const p=posProducts.find(x=>String(x.sku)===code||(x.barcodes||[]).includes(code));if(p)addProduct(p.id);else toast("الباركود غير مسجل في كتالوج قاعدة البيانات")}};
+$("scanButton").onclick=()=>{$("productSearch").focus();$("productSearch").select();toast("امسح الباركود بقارئ متصل بلوحة المفاتيح ثم اضغط Enter");};
 $("completeSale").onclick=async()=>{
  if(!cart.length)return toast("السلة فارغة");
  if(!posContext)return toast("بيانات نقطة البيع غير جاهزة");
  const pct=Math.min(100,Math.max(0,Number($("discountInput").value)||0));
- const deliveryEnabled=$("saleIsDelivery").checked;const deliveryFee=deliveryEnabled?Number($("saleDeliveryFee").value||0):0;const total=cart.reduce((s,x)=>s+x.price*x.qty,0)*(1-pct/100)+deliveryFee;
+ const deliveryEnabled=$("saleIsDelivery").checked;const deliveryFee=deliveryEnabled?Number($("saleDeliveryFee").value||0):0;
+ const subTotal=cart.reduce((s,x)=>s+x.price*x.qty,0),manualDiscount=subTotal*pct/100,eligible=Math.max(0,subTotal-manualDiscount),cfg=posDiscountSettings;
+ const orderDiscount=cfg&&eligible+0.000001>=Number(cfg.min_order_amount||0)?Math.min(eligible,cfg.order_discount_type==="percent"?eligible*Number(cfg.order_discount_value||0)/100:Number(cfg.order_discount_value||0)):0;
+ const deliveryDiscount=cfg&&deliveryEnabled&&eligible+0.000001>=Number(cfg.delivery_min_order_amount||0)?Math.min(deliveryFee,cfg.delivery_discount_type==="percent"?deliveryFee*Number(cfg.delivery_discount_value||0)/100:Number(cfg.delivery_discount_value||0)):0;
+ const total=eligible-orderDiscount+deliveryFee-deliveryDiscount;
  const payment_method_id=$("paymentMethod").value;
  if(!payment_method_id)return toast("اختر طريقة الدفع");
  const lines=cart.map(x=>({product_id:x.product_id,unit_id:x.unit_id,quantity:x.qty,unit_price:x.price,discount_amount:Number((x.price*x.qty*pct/100).toFixed(6))}));
@@ -330,7 +370,7 @@ $("completeSale").onclick=async()=>{
   const delivery=deliveryEnabled?{customer_id:$("saleDeliveryCustomer").value,address:$("saleDeliveryAddress").value.trim(),delivery_fee:deliveryFee,source_channel:"pos"}:null;
  if(deliveryEnabled&&(!delivery.customer_id||!delivery.address||!Number.isFinite(delivery.delivery_fee)||delivery.delivery_fee<0))return toast("أدخل عميل التوصيل والعنوان ورسوم توصيل صحيحة");
  const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,customer_id:delivery?.customer_id||null,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],delivery,idempotency_key:(crypto.randomUUID?crypto.randomUUID():"NF-"+Date.now()+"-"+Math.random().toString(36).slice(2))})});
-  toast("تم حفظ الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+(result.delivery?" — طلب توصيل "+result.delivery.reference_no:""));
+  toast("تم حفظ الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+(result.discounts?.order_discount_amount?" — خصم الطلب "+money(result.discounts.order_discount_amount):"")+(result.discounts?.delivery_discount_amount?" — خصم التوصيل "+money(result.discounts.delivery_discount_amount):"")+(result.delivery?" — طلب توصيل "+result.delivery.reference_no:""));
   cart=[];$("discountInput").value="0";$("saleIsDelivery").checked=false;$("saleDeliveryFields").classList.add("hidden");$("saleDeliveryCustomer").value="";$("saleDeliveryAddress").value="";$("saleDeliveryFee").value="0";renderCart();
  }catch(e){toast(e.message);}
 };
