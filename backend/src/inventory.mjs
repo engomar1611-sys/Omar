@@ -42,7 +42,9 @@ export async function inventoryRoutes(app,{db}){
     const heldResult=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{held_qty:0}]};
     const held=Number(heldResult.rows[0].held_qty);
-    if(delta<0&&old+delta<held-0.000001)throw Object.assign(new Error('التسوية ستؤدي إلى خصم كمية محجوزة للجودة أو إلى رصيد سالب'),{code:'P0001'});
+    const reservedResult=bal.rowCount?await c.query(`SELECT COALESCE(SUM(reserved_qty),0) reserved_qty FROM sales_order_reservations WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status='RESERVED'`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{reserved_qty:0}]};
+    const reserved=Number(reservedResult.rows[0].reserved_qty);
+    if(delta<0&&old+delta<held+reserved-0.000001)throw Object.assign(new Error('التسوية ستخصم كمية محجوزة للجودة أو لأوامر البيع أو تؤدي إلى رصيد سالب'),{code:'P0001'});
     const qty=old+delta,avg=delta>0&&qty>0?((old*cost)+(delta*Number(l.unit_cost)))/qty:cost;
     await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
@@ -153,7 +155,8 @@ export async function inventoryRoutes(app,{db}){
      const held=await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,
       [h.rows[0].source_warehouse_id,l.item_id,l.lot_no]);
-     const available=s&&s.quality_status==='RELEASED'?Number(s.quantity)-Number(held.rows[0].held_qty):0;
+     const reserved=await c.query(`SELECT COALESCE(SUM(reserved_qty),0) reserved_qty FROM sales_order_reservations WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status='RESERVED'`,[h.rows[0].source_warehouse_id,l.item_id,l.lot_no]);
+     const available=s&&s.quality_status==='RELEASED'?Number(s.quantity)-Number(held.rows[0].held_qty)-Number(reserved.rows[0].reserved_qty):0;
      if(!s||available+0.000001<Number(l.quantity))
       throw Object.assign(new Error('الرصيد غير كافٍ لإتمام التحويل'),{code:'P0001'});
      const qty=Number(l.quantity),cost=Number(s.average_unit_cost);
