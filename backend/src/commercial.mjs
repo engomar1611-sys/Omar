@@ -102,8 +102,7 @@ export async function commercialRoutes(app,{db}){
       -COALESCE((SELECT SUM(a.amount) FROM receipt_allocations a
         JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED'
         JOIN sales_invoices x ON x.id=a.sales_invoice_id WHERE x.customer_id=$1),0)
-      -COALESCE((SELECT SUM(l.quantity*l.unit_price) FROM sales_returns sr
-        JOIN sales_return_lines l ON l.sales_return_id=sr.id
+      -COALESCE((SELECT SUM(COALESCE(sr.net_amount,sr.gross_amount)) FROM sales_returns sr
         JOIN sales_invoices x ON x.id=sr.sales_invoice_id
         WHERE x.customer_id=$1 AND sr.status='APPROVED'),0) due
       FROM sales_invoices WHERE customer_id=$1 AND status IN ('POSTED','PARTIALLY_PAID','PAID')`,[b.customerId]);
@@ -196,9 +195,18 @@ export async function commercialRoutes(app,{db}){
     const h=await c.query('SELECT * FROM sales_returns WHERE id=$1 FOR UPDATE',[req.params.id]);
     if(!h.rowCount||h.rows[0].status!=='PENDING_ACCOUNTING')throw Object.assign(new Error('المرتجع لم يجتز اعتماد المخزن'),{code:'P0001'});
     const lines=await c.query('SELECT * FROM sales_return_lines WHERE sales_return_id=$1',[req.params.id]);
-    let amount=0,cost=0;
+    const totals=await c.query(`SELECT
+      COALESCE(SUM(l.quantity*l.unit_price),0)::numeric gross_amount,
+      CASE WHEN i.subtotal>0 THEN ROUND(COALESCE(SUM(l.quantity*l.unit_price),0)*i.discount_amount/i.subtotal,6)
+        ELSE 0::numeric END discount_amount
+      FROM sales_returns r JOIN sales_invoices i ON i.id=r.sales_invoice_id
+      JOIN sales_return_lines l ON l.sales_return_id=r.id
+      WHERE r.id=$1 GROUP BY i.subtotal,i.discount_amount`,[req.params.id]);
+    const grossAmount=Number(totals.rows[0].gross_amount),discountAmount=Number(totals.rows[0].discount_amount);
+    const amount=Math.max(0,grossAmount-discountAmount);
+    let cost=0;
     for(const l of lines.rows){
-     amount+=Number(l.quantity)*Number(l.unit_price);cost+=Number(l.quantity)*Number(l.unit_cost);
+     cost+=Number(l.quantity)*Number(l.unit_cost);
      const bal=await c.query('SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
      const old=bal.rowCount?Number(bal.rows[0].quantity):0,avg=bal.rowCount?Number(bal.rows[0].average_unit_cost):0,newQty=old+Number(l.quantity),newAvg=newQty?(old*avg+Number(l.quantity)*Number(l.unit_cost))/newQty:0;
      await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost)
@@ -212,8 +220,10 @@ export async function commercialRoutes(app,{db}){
     const ar=await account(c,'1100'),sales=await account(c,'4000'),inventory=await account(c,'1200'),cogs=await account(c,'5000');
     const jl=[];if(amount){jl.push({account:sales,debit:amount});jl.push({account:ar,credit:amount});}if(cost){jl.push({account:inventory,debit:cost});jl.push({account:cogs,credit:cost});}
     if(jl.length)await journal(c,{no:'J-SR-'+h.rows[0].return_no,sourceType:'SALES_RETURN',sourceId:req.params.id,description:'مرتجع مبيعات '+h.rows[0].return_no,actor:req.authUser.user_id,lines:jl});
-    await c.query(`UPDATE sales_returns SET status='APPROVED',accounting_approved_by=$1,accounting_approved_at=NOW() WHERE id=$2`,[req.authUser.user_id,req.params.id]);
-    return {returnId:req.params.id,amount,cost,status:'APPROVED'};
+    await c.query(`UPDATE sales_returns SET gross_amount=$1,discount_amount=$2,net_amount=$3,
+      status='APPROVED',accounting_approved_by=$4,accounting_approved_at=NOW() WHERE id=$5`,
+      [grossAmount,discountAmount,amount,req.authUser.user_id,req.params.id]);
+    return {returnId:req.params.id,grossAmount,discountAmount,amount,cost,status:'APPROVED'};
    });return out;
   }catch(e){return fail(rep,e);}
  });
@@ -724,11 +734,10 @@ export async function commercialRoutes(app,{db}){
     GROUP BY r.id,r.receipt_date,r.receipt_no
     UNION ALL
     SELECT COALESCE(sr.accounting_approved_at::date,sr.created_at::date),'SALES_RETURN',sr.return_no,
-      'مرتجع مبيعات معتمد',0::numeric,SUM(rl.quantity*rl.unit_price)::numeric
+      'مرتجع مبيعات معتمد',0::numeric,COALESCE(sr.net_amount,sr.gross_amount)::numeric
     FROM sales_returns sr JOIN sales_invoices i ON i.id=sr.sales_invoice_id
-      JOIN customers c ON c.id=i.customer_id JOIN sales_return_lines rl ON rl.sales_return_id=sr.id
+      JOIN customers c ON c.id=i.customer_id
     WHERE c.code=$1 AND sr.status='APPROVED'
-    GROUP BY sr.id,sr.accounting_approved_at,sr.created_at,sr.return_no
   ), opening AS (
     SELECT COALESCE(SUM(debit-credit),0)::numeric balance FROM transactions
     WHERE $2::date IS NOT NULL AND transaction_date<$2::date
@@ -769,9 +778,8 @@ export async function commercialRoutes(app,{db}){
     FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id
     WHERE r.status='POSTED' GROUP BY a.sales_invoice_id
   ), returned AS (
-    SELECT sr.sales_invoice_id,SUM(rl.quantity*rl.unit_price)::numeric returned_amount
-    FROM sales_returns sr JOIN sales_return_lines rl ON rl.sales_return_id=sr.id
-    WHERE sr.status='APPROVED' GROUP BY sr.sales_invoice_id
+    SELECT sr.sales_invoice_id,SUM(COALESCE(sr.net_amount,sr.gross_amount))::numeric returned_amount
+    FROM sales_returns sr WHERE sr.status='APPROVED' GROUP BY sr.sales_invoice_id
   ), balances AS (
     SELECT i.id invoice_id,i.invoice_no,i.invoice_date,COALESCE(i.due_date,i.invoice_date) due_date,c.code customer_code,c.name_ar customer_name,
       i.total_amount::numeric invoice_amount,COALESCE(p.paid_amount,0)::numeric paid_amount,
