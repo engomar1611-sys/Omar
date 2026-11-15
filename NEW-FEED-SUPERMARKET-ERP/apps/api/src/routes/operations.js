@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 import { completeSaleHandler } from "./sales.js";
+import { calculateMonthlyDepreciation } from "../domain/assets.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const txt=(v,n=180)=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=n;
@@ -26,7 +27,70 @@ router.post("/employees",async(req,res,next)=>{const {employee_code,branch_id,fu
 
 // Fixed assets and maintenance
 router.get("/assets",async(_q,res,next)=>{try{const r=await pool.query("SELECT a.*,b.name branch_name FROM fixed_assets a JOIN branches b ON b.id=a.branch_id ORDER BY a.asset_code");res.json({items:r.rows});}catch(e){next(e);}});
-router.post("/assets",async(req,res,next)=>{const {asset_code,name,branch_id,category=null,purchase_date=null,purchase_cost=0,serial_number=null}=req.body??{};if(!txt(asset_code,50)||!txt(name)||!uuid.test(branch_id||"")||!num(purchase_cost))return fail(res,"Invalid asset fields");try{const r=await pool.query("INSERT INTO fixed_assets(asset_code,name,branch_id,category,purchase_date,purchase_cost,serial_number) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[asset_code,name,branch_id,category,purchase_date,purchase_cost,serial_number]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
+router.post("/assets",async(req,res,next)=>{const {asset_code,name,branch_id,category=null,purchase_date=null,purchase_cost=0,serial_number=null,useful_life_months=null,residual_value=0,depreciation_start_date=purchase_date}=req.body??{};if(!txt(asset_code,50)||!txt(name)||!uuid.test(branch_id||"")||!num(purchase_cost)||!num(residual_value)||Number(residual_value)>Number(purchase_cost)||(useful_life_months!==null&&(!Number.isInteger(Number(useful_life_months))||Number(useful_life_months)<=0))||(depreciation_start_date&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(depreciation_start_date)))return fail(res,"Invalid asset or depreciation fields");try{const r=await pool.query("INSERT INTO fixed_assets(asset_code,name,branch_id,category,purchase_date,purchase_cost,serial_number,useful_life_months,residual_value,depreciation_start_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",[asset_code,name,branch_id,category,purchase_date,purchase_cost,serial_number,useful_life_months,residual_value,depreciation_start_date]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
+router.get("/assets/depreciation/runs",async(_req,res,next)=>{try{const r=await pool.query("SELECT r.*,u.display_name created_by_name FROM asset_depreciation_runs r LEFT JOIN users u ON u.id=r.created_by ORDER BY r.period_month DESC LIMIT 120");res.json({items:r.rows});}catch(e){next(e);}});
+router.post("/assets/depreciation/run",async(req,res,next)=>{
+ const {period_month,reference_no}=req.body??{};
+ if(!/^\\d{4}-\\d{2}-01$/.test(period_month||"")||!txt(reference_no,60))return fail(res,"A first-of-month date and unique reference are required");
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const closed=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND $1::date BETWEEN starts_on AND ends_on LIMIT 1",[period_month]);
+  if(closed.rowCount)throw Object.assign(new Error("The selected depreciation period is closed"),{statusCode:409});
+  const assets=await c.query("SELECT * FROM fixed_assets WHERE status='active' AND useful_life_months>0 AND depreciation_start_date IS NOT NULL AND depreciation_start_date<=($1::date+INTERVAL '1 month - 1 day') AND accumulated_depreciation<purchase_cost-residual_value ORDER BY asset_code FOR UPDATE",[period_month]);
+  const entries=[];
+  for(const asset of assets.rows){
+    const amountValue=calculateMonthlyDepreciation({purchaseCost:Number(asset.purchase_cost),residualValue:Number(asset.residual_value),usefulLifeMonths:Number(asset.useful_life_months),accumulatedDepreciation:Number(asset.accumulated_depreciation),depreciationStartDate:String(asset.depreciation_start_date).slice(0,10),periodMonth:period_month});
+    if(amountValue>0)entries.push({asset,amount:amountValue,before:Number(asset.accumulated_depreciation),after:Number(asset.accumulated_depreciation)+amountValue});
+  }
+  if(!entries.length)throw Object.assign(new Error("No active depreciable assets are due in this month"),{statusCode:409});
+  const maps=await c.query("SELECT m.mapping_key,m.account_id,a.account_type FROM system_account_mappings m JOIN accounts a ON a.id=m.account_id WHERE m.mapping_key=ANY($1::varchar[])",[["depreciation_expense","accumulated_depreciation"]]);
+  const map=Object.fromEntries(maps.rows.map(x=>[x.mapping_key,x]));
+  if(!map.depreciation_expense||map.depreciation_expense.account_type!=="expense"||!map.accumulated_depreciation||map.accumulated_depreciation.account_type!=="asset")
+    throw Object.assign(new Error("Depreciation expense and accumulated depreciation account mappings are missing or invalid"),{statusCode:409});
+  const total=Number(entries.reduce((sum,x)=>sum+x.amount,0).toFixed(6));
+  const run=await c.query("INSERT INTO asset_depreciation_runs(reference_no,period_month,status,total_amount,created_by) VALUES($1,$2,'posted',$3,$4) RETURNING *",[reference_no,period_month,total,req.user.id]);
+  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'asset_depreciation',$2,$3,'posted') RETURNING id",["JE-DEP-"+run.rows[0].id.slice(0,24),run.rows[0].id,period_month]);
+  await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0),($1,$4,0,$3)",[je.rows[0].id,map.depreciation_expense.account_id,total,map.accumulated_depreciation.account_id]);
+  for(const entry of entries){
+    await c.query("INSERT INTO asset_depreciation_lines(run_id,asset_id,period_month,amount,accumulated_before,accumulated_after) VALUES($1,$2,$3,$4,$5,$6)",[run.rows[0].id,entry.asset.id,period_month,entry.amount,entry.before,entry.after]);
+    await c.query("UPDATE fixed_assets SET accumulated_depreciation=$2 WHERE id=$1",[entry.asset.id,entry.after]);
+  }
+  const saved=await c.query("UPDATE asset_depreciation_runs SET journal_entry_id=$2 WHERE id=$1 RETURNING *",[run.rows[0].id,je.rows[0].id]);
+  await c.query("COMMIT");
+  res.status(201).json({run:saved.rows[0],asset_count:entries.length,journal_entry_id:je.rows[0].id});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});if(e.code==="23505")return res.status(409).json({error:"A depreciation run or reference already exists for this month"});next(e);}finally{c.release();}
+});
+router.post("/assets/depreciation/runs/:id/reverse",async(req,res,next)=>{
+ const {reason}=req.body??{};
+ if(!uuid.test(req.params.id)||!txt(reason,1000))return fail(res,"A depreciation reversal reason is required");
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const run=await c.query("SELECT * FROM asset_depreciation_runs WHERE id=$1 AND status='posted' FOR UPDATE",[req.params.id]);
+  if(!run.rowCount)throw Object.assign(new Error("Posted depreciation run not found or already reversed"),{statusCode:409});
+  const closed=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(closed.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const lines=await c.query("SELECT * FROM asset_depreciation_lines WHERE run_id=$1 FOR UPDATE",[req.params.id]);
+  for(const line of lines.rows){
+    const later=await c.query("SELECT 1 FROM asset_depreciation_lines l JOIN asset_depreciation_runs r ON r.id=l.run_id WHERE l.asset_id=$1 AND l.period_month>$2 AND r.status='posted' LIMIT 1",[line.asset_id,run.rows[0].period_month]);
+    if(later.rowCount)throw Object.assign(new Error("A later depreciation run exists for an asset in this batch; reverse later periods first"),{statusCode:409});
+    const asset=await c.query("SELECT accumulated_depreciation FROM fixed_assets WHERE id=$1 FOR UPDATE",[line.asset_id]);
+    if(!asset.rowCount||Math.abs(Number(asset.rows[0].accumulated_depreciation)-Number(line.accumulated_after))>0.000001)
+      throw Object.assign(new Error("Asset accumulated depreciation changed after this run; manual reconciliation is required"),{statusCode:409});
+  }
+  const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[run.rows[0].journal_entry_id]);
+  if(!original.rowCount)throw Object.assign(new Error("Original depreciation journal is missing or already reversed"),{statusCode:409});
+  const originalLines=await c.query("SELECT account_id,debit,credit FROM journal_lines WHERE journal_entry_id=$1",[original.rows[0].id]);
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'asset_depreciation_reversal',$2,CURRENT_DATE,'posted') RETURNING id",["JE-DEP-REV-"+run.rows[0].id.slice(0,24),req.params.id]);
+  for(const line of originalLines.rows)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,$4)",[reversal.rows[0].id,line.account_id,line.credit,line.debit]);
+  for(const line of lines.rows)await c.query("UPDATE fixed_assets SET accumulated_depreciation=accumulated_depreciation-$2 WHERE id=$1",[line.asset_id,line.amount]);
+  await c.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
+  const saved=await c.query("UPDATE asset_depreciation_runs SET status='reversed',reversal_journal_entry_id=$2,reversed_by=$3,reversed_at=now(),reversal_reason=$4 WHERE id=$1 RETURNING *",[req.params.id,reversal.rows[0].id,req.user.id,reason.trim()]);
+  await c.query("COMMIT");
+  res.json({run:saved.rows[0],reversal_journal_entry_id:reversal.rows[0].id});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
 router.post("/assets/:id/maintenance",async(req,res,next)=>{const {reference_no,description,scheduled_at=null}=req.body??{};if(!uuid.test(req.params.id)||!txt(reference_no,50)||!txt(description))return fail(res,"Invalid maintenance request");try{const r=await pool.query("INSERT INTO asset_maintenance(asset_id,reference_no,description,scheduled_at) VALUES($1,$2,$3,$4) RETURNING *",[req.params.id,reference_no,description,scheduled_at]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
 
 // Delivery and ecommerce intake
