@@ -59,6 +59,12 @@ router.post("/purchase-orders", async (req,res,next) => {
          VALUES($1,$2,$3,$4,$5)`,
         [po.rows[0].id,line.product_id,line.unit_id,line.quantity,line.unit_price]
       );
+      await client.query(
+        `INSERT INTO product_suppliers(supplier_id,product_id,last_purchase_price)
+         VALUES($1,$2,$3)
+         ON CONFLICT(supplier_id,product_id) DO UPDATE SET last_purchase_price=EXCLUDED.last_purchase_price`,
+        [supplier_id,line.product_id,line.unit_price]
+      );
     }
     await client.query("COMMIT");
     res.status(201).json({purchase_order:po.rows[0],line_count:lines.length});
