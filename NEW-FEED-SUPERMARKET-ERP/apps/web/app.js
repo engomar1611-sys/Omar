@@ -141,6 +141,69 @@ async function loadOperationalModule(id){
   }
  }catch(e){$("liveModuleContent").innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'</div>';}
 }
+async function openPurchasing(){
+ const root=$("moduleView");
+ root.innerHTML='<h1 class="module-title">المشتريات والاستلام وفحص الجودة</h1><div id="purchaseWorkspace" class="empty-state">جارٍ تحميل بيانات المشتريات...</div>';
+ try{
+  const [suppliers,branches,products,orders,receipts]=await Promise.all([
+   api("/api/suppliers"),api("/api/branches"),api("/api/products?limit=200"),api("/api/purchase-orders"),api("/api/purchase-receipts")
+  ]);
+  const host=$("purchaseWorkspace");
+  const supplierOpts=suppliers.items.map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name)+' — '+escapeHtml(x.code)+'</option>').join("");
+  const branchOpts=branches.items.map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name)+'</option>').join("");
+  const productOpts=products.items.map(x=>'<option value="'+x.id+'" data-unit="'+x.base_unit_id+'" data-name="'+escapeHtml(x.name_ar)+'" data-expiry="'+x.tracks_expiry+'">'+escapeHtml(x.name_ar)+' ('+escapeHtml(x.sku)+')</option>').join("");
+  host.innerHTML='<section class="purchase-panel"><h2>إنشاء طلب شراء</h2><div class="form-grid"><label>الرقم المرجعي<input id="poReference" value="PO-'+Date.now()+'"></label><label>المورد<select id="poSupplier">'+supplierOpts+'</select></label><label>الفرع<select id="poBranch">'+branchOpts+'</select></label></div><div id="poLines"></div><div class="module-toolbar"><button class="small-btn" id="addPoLine">إضافة صنف</button><button class="primary-btn" id="createPo">حفظ وإرسال طلب الشراء</button></div></section><section class="purchase-panel"><h2>أوامر الشراء</h2><div id="poList"></div></section><section class="purchase-panel"><h2>استلامات وفحص الجودة</h2><div id="receiptList"></div></section><section class="purchase-panel" id="purchaseAction" hidden></section>';
+  let lineNo=0;
+  const addLine=()=>{
+   const id=++lineNo,wrap=document.createElement("div");wrap.className="purchase-line";wrap.dataset.line=id;
+   wrap.innerHTML='<label>الصنف<select class="po-product">'+productOpts+'</select></label><label>الكمية<input class="po-qty" type="number" min="0.000001" step="0.000001" value="1"></label><label>سعر الشراء للوحدة (ج.م)<input class="po-price" type="number" min="0" step="0.000001" value="0"></label><button class="small-btn remove-po-line">حذف</button>';
+   wrap.querySelector(".remove-po-line").onclick=()=>wrap.remove();
+   $("poLines").appendChild(wrap);
+  };
+  const renderOrders=()=>{
+   $("poList").innerHTML=orders.items.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>المرجع</th><th>المورد</th><th>الفرع</th><th>الحالة</th><th>التاريخ</th><th>إجراءات</th></tr></thead><tbody>'+orders.items.map(o=>'<tr><td>'+escapeHtml(o.reference_no)+'</td><td>'+escapeHtml(o.supplier_name)+'</td><td>'+escapeHtml(o.branch_name)+'</td><td>'+escapeHtml(o.status)+'</td><td>'+escapeHtml(formatModuleValue(o.created_at))+'</td><td>'+(o.status==="submitted"?'<button class="small-btn" data-approve-po="'+o.id+'">اعتماد</button>':"")+(["approved","ordered","part_received"].includes(o.status)?' <button class="small-btn" data-receive-po="'+o.id+'">تسجيل استلام</button>':"")+'</td></tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد أوامر شراء.</div>';
+   document.querySelectorAll("[data-approve-po]").forEach(b=>b.onclick=async()=>{try{await api("/api/purchase-orders/"+b.dataset.approvePo+"/approve",{method:"POST"});toast("تم اعتماد أمر الشراء");await openPurchasing();}catch(e){toast(e.message);}});
+   document.querySelectorAll("[data-receive-po]").forEach(b=>b.onclick=()=>showReceive(b.dataset.receivePo));
+  };
+  const renderReceipts=()=>{
+   $("receiptList").innerHTML=receipts.items.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>مرجع الاستلام</th><th>أمر الشراء</th><th>المورد</th><th>المخزن</th><th>الفحص</th><th>إجراء</th></tr></thead><tbody>'+receipts.items.map(x=>'<tr><td>'+escapeHtml(x.reference_no)+'</td><td>'+escapeHtml(x.purchase_order_reference)+'</td><td>'+escapeHtml(x.supplier_name)+'</td><td>'+escapeHtml(x.warehouse_name)+'</td><td>'+escapeHtml(x.inspection_status)+'</td><td>'+(x.inspection_status==="pending_inspection"?'<button class="small-btn" data-inspect-receipt="'+x.id+'">فحص واعتماد مخزني</button>':"")+'</td></tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد استلامات مسجلة.</div>';
+   document.querySelectorAll("[data-inspect-receipt]").forEach(b=>b.onclick=()=>showInspection(b.dataset.inspectReceipt));
+  };
+  const showReceive=async orderId=>{
+   try{
+    const [detail,warehouses]=await Promise.all([api("/api/purchase-orders/"+orderId),api("/api/warehouses?branch_id="+branches.items.find(x=>x.id===detailBranch(orderId,orders.items))?.id)]);
+    const available=warehouses.items.length?warehouses.items: (await api("/api/warehouses")).items;
+    const section=$("purchaseAction");section.hidden=false;
+    section.innerHTML='<h2>تسجيل استلام أمر '+escapeHtml(detail.purchase_order.reference_no)+'</h2><div class="form-grid"><label>رقم إذن الاستلام<input id="receiptReference" value="GRN-'+Date.now()+'"></label><label>المخزن<select id="receiptWarehouse">'+available.map(w=>'<option value="'+w.id+'">'+escapeHtml(w.name)+'</option>').join("")+'</select></label></div><div id="receiveLines"></div><button class="primary-btn" id="saveReceipt">حفظ الاستلام وتحويله للفحص</button>';
+    $("receiveLines").innerHTML=detail.lines.map((l,i)=>'<div class="purchase-line" data-product="'+l.product_id+'"><b>'+escapeHtml(l.product_name)+' ('+escapeHtml(l.sku)+')</b><label>الكمية المستلمة<input class="receive-qty" type="number" min="0.000001" step="0.000001" value="'+l.quantity+'"></label><label>تكلفة الوحدة<input class="receive-cost" type="number" min="0" step="0.000001" value="'+l.unit_price+'"></label><label>رقم التشغيلة<input class="receive-lot"></label><label>الصلاحية<input class="receive-expiry" type="date" '+(l.tracks_expiry?"required":"")+'></label></div>').join("");
+    $("saveReceipt").onclick=async()=>{
+     const lines=[...$("receiveLines").querySelectorAll(".purchase-line")].map(el=>({product_id:el.dataset.product,quantity:Number(el.querySelector(".receive-qty").value),unit_cost:Number(el.querySelector(".receive-cost").value),lot_number:el.querySelector(".receive-lot").value||null,expiry_date:el.querySelector(".receive-expiry").value||null}));
+     try{const result=await api("/api/purchase-orders/"+orderId+"/receive",{method:"POST",body:JSON.stringify({reference_no:$("receiptReference").value.trim(),warehouse_id:$("receiptWarehouse").value,lines})});toast("تم تسجيل الاستلام؛ البضاعة محجوزة حتى الفحص");await openPurchasing();await showInspection(result.receipt.id);}catch(e){toast(e.message);}
+    };
+   }catch(e){toast(e.message);}
+  };
+  const detailBranch=(id,list)=>list.find(x=>x.id===id)?.branch_id;
+  const showInspection=async receiptId=>{
+   try{
+    const detail=await api("/api/purchase-receipts/"+receiptId),section=$("purchaseAction");section.hidden=false;
+    section.innerHTML='<h2>فحص استلام '+escapeHtml(detail.receipt.reference_no)+'</h2><p>يجب توزيع الكمية المستلمة بالكامل بين المقبول والمرفوض. لا تصبح الكمية متاحة للبيع إلا بعد الاعتماد.</p><div id="inspectionLines"></div><button class="primary-btn" id="approveInspection">اعتماد نتيجة الفحص</button>';
+    $("inspectionLines").innerHTML=detail.lines.map(l=>'<div class="purchase-line" data-line="'+l.id+'"><b>'+escapeHtml(l.product_name)+' ('+escapeHtml(l.sku)+')</b><span>المستلم: '+formatModuleValue(l.quantity)+'</span><label>مقبول<input class="accepted-qty" type="number" min="0" step="0.000001" value="'+l.quantity+'"></label><label>مرفوض<input class="rejected-qty" type="number" min="0" step="0.000001" value="0"></label></div>').join("");
+    $("approveInspection").onclick=async()=>{
+     const lines=[...$("inspectionLines").querySelectorAll(".purchase-line")].map(el=>({receipt_line_id:el.dataset.line,accepted_quantity:Number(el.querySelector(".accepted-qty").value),rejected_quantity:Number(el.querySelector(".rejected-qty").value)}));
+     try{await api("/api/purchase-receipts/"+receiptId+"/inspect",{method:"POST",body:JSON.stringify({lines})});toast("تم اعتماد فحص الاستلام وتحديث المخزون");await openPurchasing();}catch(e){toast(e.message);}
+    };
+   }catch(e){toast(e.message);}
+  };
+  addLine();$("addPoLine").onclick=addLine;
+  $("createPo").onclick=async()=>{
+   const lines=[...$("poLines").querySelectorAll(".purchase-line")].map(el=>{const select=el.querySelector(".po-product"),option=select.selectedOptions[0];return{product_id:select.value,unit_id:option?.dataset.unit,quantity:Number(el.querySelector(".po-qty").value),unit_price:Number(el.querySelector(".po-price").value)};});
+   if(lines.some(x=>!x.product_id||!x.unit_id))return toast("اختر الصنف والوحدة الأساسية");
+   try{await api("/api/purchase-orders",{method:"POST",body:JSON.stringify({reference_no:$("poReference").value.trim(),supplier_id:$("poSupplier").value,branch_id:$("poBranch").value,lines})});toast("تم إنشاء طلب الشراء وإرساله للاعتماد");await openPurchasing();}catch(e){toast(e.message);}
+  };
+  renderOrders();renderReceipts();
+ }catch(e){hostError(root,e.message);}
+}
+function hostError(root,message){root.innerHTML='<div class="empty-state">'+escapeHtml(message)+'</div>';}
 async function openUsers(){
  const root=$("moduleView");
  root.innerHTML='<h1 class="module-title">المستخدمون والصلاحيات</h1><div id="usersContent" class="empty-state">جارٍ تحميل المستخدمين...</div>';
@@ -177,6 +240,7 @@ function openModule(id){
  const title=modules.find(x=>x[0]===id)?.[2]||"نقطة البيع";$("screenTitle").textContent=title;
  if(id==="pos")return;
  if(id==="catalog"){openCatalog();return;}
+ if(id==="purchasing"){openPurchasing();return;}
  if(id==="users"){openUsers();return;}
  if(liveModuleConfig[id]){loadOperationalModule(id);return;}
  const d=moduleData[id];$("moduleView").innerHTML='<h1 class="module-title">'+escapeHtml(d[0])+'</h1><div class="empty-state">'+escapeHtml(d[2])+'</div>';
