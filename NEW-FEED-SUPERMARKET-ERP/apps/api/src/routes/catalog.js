@@ -94,6 +94,34 @@ router.get("/products", async (req,res,next) => {
   } catch(e) { next(e); }
 });
 
+router.put("/products/:id/supplier",requirePermission("catalog.edit"),async(req,res,next)=>{
+  const {supplier_id=null,supplier_product_code=null,last_purchase_price=null}=req.body??{};
+  if(!uuid.test(req.params.id)||(supplier_id!==null&&!uuid.test(supplier_id))||
+     (supplier_product_code!==null&&(typeof supplier_product_code!=="string"||supplier_product_code.length>100))||
+     (last_purchase_price!==null&&(!Number.isFinite(Number(last_purchase_price))||Number(last_purchase_price)<0)))
+    return res.status(400).json({error:"Invalid product supplier fields"});
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const product=await client.query("SELECT id FROM products WHERE id=$1 FOR UPDATE",[req.params.id]);
+    if(!product.rowCount)throw Object.assign(new Error("Product not found"),{statusCode:404});
+    if(supplier_id){
+      const supplier=await client.query("SELECT id FROM suppliers WHERE id=$1 AND is_active=true",[supplier_id]);
+      if(!supplier.rowCount)throw Object.assign(new Error("Supplier not found or inactive"),{statusCode:400});
+      await client.query("UPDATE product_suppliers SET is_primary=false WHERE product_id=$1",[req.params.id]);
+      const saved=await client.query(`INSERT INTO product_suppliers(supplier_id,product_id,supplier_product_code,last_purchase_price,is_primary)
+        VALUES($1,$2,$3,$4,true)
+        ON CONFLICT(supplier_id,product_id) DO UPDATE SET supplier_product_code=EXCLUDED.supplier_product_code,
+        last_purchase_price=COALESCE(EXCLUDED.last_purchase_price,product_suppliers.last_purchase_price),is_primary=true
+        RETURNING *`,[supplier_id,req.params.id,supplier_product_code,last_purchase_price]);
+      await client.query("COMMIT");return res.json({supplier:saved.rows[0]});
+    }
+    await client.query("UPDATE product_suppliers SET is_primary=false WHERE product_id=$1",[req.params.id]);
+    await client.query("COMMIT");res.json({supplier:null});
+  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}
+  finally{client.release();}
+});
+
 router.patch("/products/:id", async(req,res,next) => {
   if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid product id"});
   const {sku,name_ar,name_en=null,category_id=null,brand_id=null,base_unit_id,is_weighted,tracks_expiry,pack_size=null,pack_unit_id=null,variant_description=null,is_active=true}=req.body??{};
