@@ -119,9 +119,8 @@ export async function salesQuotesOrdersRoutes(app, { db }) {
     if(!textOk(body.orderNo))return invalid(reply);
     try {
       const result=await tx(db,async client=>{
-        const quote=await client.query('SELECT * FROM customer_quotations WHERE id=$1 FOR UPDATE',[request.params.id]);
-        if(!quote.rowCount||quote.rows[0].status!=='APPROVED')return {conflict:'QUOTATION_NOT_APPROVED'};
-        if(quote.rows[0].valid_until&&quote.rows[0].valid_until.toISOString?.().slice(0,10)<new Date().toISOString().slice(0,10))return {conflict:'QUOTATION_EXPIRED'};
+        const quote=await client.query("SELECT * FROM customer_quotations WHERE id=$1 AND status='APPROVED' AND (valid_until IS NULL OR valid_until>=CURRENT_DATE) FOR UPDATE",[request.params.id]);
+        if(!quote.rowCount)return {conflict:'QUOTATION_NOT_APPROVED_OR_EXPIRED'};
         const lines=await client.query('SELECT * FROM customer_quotation_lines WHERE quotation_id=$1 ORDER BY line_no',[request.params.id]);
         if(!lines.rowCount)return {conflict:'EMPTY_QUOTATION'};
         const order=await client.query(`
