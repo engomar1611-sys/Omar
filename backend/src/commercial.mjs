@@ -100,11 +100,12 @@ export async function commercialRoutes(app,{db}){
     const outstanding=await c.query(`SELECT
       COALESCE(SUM(total_amount),0)
       -COALESCE((SELECT SUM(a.amount) FROM receipt_allocations a
-        JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED'
+        JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED' AND r.receipt_date<=CURRENT_DATE
         JOIN sales_invoices x ON x.id=a.sales_invoice_id WHERE x.customer_id=$1),0)
       -COALESCE((SELECT SUM(COALESCE(sr.net_amount,sr.gross_amount)) FROM sales_returns sr
         JOIN sales_invoices x ON x.id=sr.sales_invoice_id
-        WHERE x.customer_id=$1 AND sr.status='APPROVED'),0) due
+        WHERE x.customer_id=$1 AND sr.status='APPROVED'
+          AND COALESCE(sr.accounting_approved_at::date,sr.created_at::date)<=CURRENT_DATE),0) due
       FROM sales_invoices WHERE customer_id=$1 AND status IN ('POSTED','PARTIALLY_PAID','PAID')`,[b.customerId]);
     if(Number(cust.rows[0].credit_limit)>0&&Number(outstanding.rows[0].due)+total>Number(cust.rows[0].credit_limit))throw Object.assign(new Error('تجاوز الحد الائتماني للعميل'),{code:'P0001'});
     await c.query(`UPDATE sales_invoices SET subtotal=$1,total_amount=$2,cost_amount=$3,status='POSTED',posted_at=NOW() WHERE id=$4`,[subtotal,total,costTotal,h.rows[0].id]);
@@ -776,10 +777,12 @@ export async function commercialRoutes(app,{db}){
   try{return (await db.query(`WITH paid AS (
     SELECT a.sales_invoice_id,SUM(a.amount)::numeric paid_amount
     FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id
-    WHERE r.status='POSTED' GROUP BY a.sales_invoice_id
+    WHERE r.status='POSTED' AND r.receipt_date<=$1::date GROUP BY a.sales_invoice_id
   ), returned AS (
     SELECT sr.sales_invoice_id,SUM(COALESCE(sr.net_amount,sr.gross_amount))::numeric returned_amount
-    FROM sales_returns sr WHERE sr.status='APPROVED' GROUP BY sr.sales_invoice_id
+    FROM sales_returns sr
+    WHERE sr.status='APPROVED' AND COALESCE(sr.accounting_approved_at::date,sr.created_at::date)<=$1::date
+    GROUP BY sr.sales_invoice_id
   ), balances AS (
     SELECT i.id invoice_id,i.invoice_no,i.invoice_date,COALESCE(i.due_date,i.invoice_date) due_date,c.code customer_code,c.name_ar customer_name,
       i.total_amount::numeric invoice_amount,COALESCE(p.paid_amount,0)::numeric paid_amount,
