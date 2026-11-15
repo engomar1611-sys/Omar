@@ -111,9 +111,9 @@ router.get("/supplier-payments",permission,async(_req,res,next)=>{try{
 
 router.post("/supplier-payments",permission,async(req,res,next)=>{
  const {reference_no,supplier_id,payment_method_id,amount,payment_date,payment_reference=null,bank_id=null,transaction_reference=null,card_last_four=null,allocations}=req.body??{};
- if(!txt(reference_no,50)||!uuid.test(supplier_id||"")||!uuid.test(payment_method_id||"")||!num(amount)||
+ if(!txt(reference_no,50)||!uuid.test(supplier_id||"")||!uuid.test(payment_method_id||"")||!num(amount)||(payment_reference!==null&&!txt(payment_reference,120))||
    !/^\d{4}-\d{2}-\d{2}$/.test(payment_date||"")||!Array.isArray(allocations)||!allocations.length||allocations.length>300||
-   allocations.some(x=>!uuid.test(x.invoice_id||"")||!num(x.amount))||
+   allocations.some(x=>!uuid.test(x.invoice_id||"")||!num(x.amount))||new Set(allocations.map(x=>x.invoice_id)).size!==allocations.length||
    (bank_id&&!uuid.test(bank_id))||(transaction_reference&&!txt(transaction_reference,120))||
    (card_last_four!==null&&!/^[0-9]{4}$/.test(String(card_last_four))))
   return res.status(400).json({error:"Invalid supplier payment fields"});
