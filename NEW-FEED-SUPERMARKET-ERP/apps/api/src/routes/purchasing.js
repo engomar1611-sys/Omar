@@ -10,7 +10,7 @@ router.get("/purchase-receipts",async(_req,res,next)=>{try{
  const r=await pool.query(`SELECT pr.*,po.reference_no purchase_order_reference,s.name supplier_name,w.name warehouse_name
  FROM purchase_receipts pr JOIN purchase_orders po ON po.id=pr.purchase_order_id
  JOIN suppliers s ON s.id=po.supplier_id JOIN warehouses w ON w.id=pr.warehouse_id
- ORDER BY pr.created_at DESC LIMIT 200`);
+ ORDER BY pr.received_at DESC LIMIT 200`);
  res.json({items:r.rows});
 }catch(e){next(e);}});
 router.get("/purchase-receipts/:id",async(req,res,next)=>{if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid receipt id"});try{
