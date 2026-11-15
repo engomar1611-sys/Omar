@@ -8,7 +8,7 @@ const txt=(v,n=100)=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=n;
 const num=v=>Number.isFinite(Number(v))&&Number(v)>0;
 const permission=requirePermission("supplier.accounting");
 
-router.get("/supplier-invoices",permission,async(req,res,next)=>{try{
+router.get("/supplier-payment-methods",permission,async(_req,res,next)=>{try{const r=await pool.query("SELECT id,code,name_ar,account_id FROM payment_methods WHERE is_active=true AND account_id IS NOT NULL ORDER BY code");res.json({items:r.rows});}catch(e){next(e);}});\n\nrouter.get("/supplier-invoices",permission,async(req,res,next)=>{try{
  const r=await pool.query(`SELECT i.*,s.name supplier_name,po.reference_no purchase_order_reference,
    COALESCE(SUM(a.amount),0) paid_amount
    FROM supplier_invoices i JOIN suppliers s ON s.id=i.supplier_id
