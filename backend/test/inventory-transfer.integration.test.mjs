@@ -49,6 +49,20 @@ test('PostgreSQL inventory transfer: approval, lot/expiry preservation, weighted
   assert.equal(rejected.statusCode,409,rejected.body);
   const after=await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[source.id,item.id,lot]);
   assert.equal(Number(after.rows[0].quantity),6,'failed transfer must roll back without negative stock');
+  const pendingLot='PENDING-QC-'+suffix;
+  await pool.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,expiry_date,quantity,average_unit_cost,quality_status)
+    VALUES($1,$2,$3,'2027-12-31',2,5,'PENDING_QC')`,[source.id,item.id,pendingLot]);
+  const pendingDraft=await app.inject({method:'POST',url:'/api/v1/inventory/transfers',headers,payload:{
+    transferNo:code('PENDING'),sourceWarehouseId:source.id,destinationWarehouseId:dest.id,
+    reason:'منع تحويل تشغيلة لم تعتمد الجودة',lines:[{itemId:item.id,lotNo:pendingLot,quantity:1}]
+  }});
+  assert.equal(pendingDraft.statusCode,201,pendingDraft.body);
+  const pendingApproval=await app.inject({method:'POST',url:'/api/v1/inventory/transfers/'+pendingDraft.json().id+'/approve',headers,payload:{}});
+  assert.equal(pendingApproval.statusCode,409,
+    'inventory transfer must reject PENDING_QC lots even when they have no quantity-specific hold');
+  const pendingBalance=await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[source.id,item.id,pendingLot]);
+  assert.equal(Number(pendingBalance.rows[0].quantity),2);
+
   const list=await app.inject({method:'GET',url:'/api/v1/inventory/transfers',headers});
   assert.equal(list.statusCode,200,list.body);
   assert.ok(list.json().some(x=>x.id===id&&x.lines.length===1));

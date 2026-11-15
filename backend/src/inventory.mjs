@@ -46,7 +46,11 @@ export async function inventoryRoutes(app,{db}){
     const qty=old+delta,avg=delta>0&&qty>0?((old*cost)+(delta*Number(l.unit_cost)))/qty:cost;
     await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost,quality_status)
      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
-     [h.rows[0].warehouse_id,l.item_id,l.lot_no,qty,avg,bal.rowCount?bal.rows[0].quality_status:'PENDING_QC']);
+     [h.rows[0].warehouse_id,l.item_id,l.lot_no,qty,avg,bal.rowCount?bal.rows[0].quality_status:'RELEASED']);
+    if(delta>0)await c.query(`INSERT INTO inventory_quality_holds
+      (warehouse_id,item_id,lot_no,sales_return_id,sales_return_line_id,source_type,source_id,source_line_id,held_qty,status)
+      VALUES($1,$2,$3,NULL,NULL,'INVENTORY_ADJUSTMENT',$4,$5,$6,'PENDING_QC')`,
+      [h.rows[0].warehouse_id,l.item_id,l.lot_no,req.params.id,l.id,delta]);
     const movement=delta>0?'ADJUSTMENT_IN':'ADJUSTMENT_OUT';
     await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,quantity_out,unit_cost,reference_type,reference_id,created_by)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,'INVENTORY_ADJUSTMENT',$9,$10)`,
@@ -68,6 +72,41 @@ export async function inventoryRoutes(app,{db}){
    await c.query(`UPDATE inventory_adjustments SET status='POSTED',approved_by=$1,approved_at=NOW() WHERE id=$2`,[req.authUser.user_id,req.params.id]);
    return {id:req.params.id,status:'POSTED',gain,loss};
   });return result;}catch(e){return fail(rep,e);}
+ });
+ app.get('/api/v1/quality/inventory-holds',{preHandler:[app.authenticate,app.requirePermission('QUALITY.READ')]},async(_req,rep)=>{
+  try{return (await db.query(`SELECT h.id,h.warehouse_id,h.item_id,h.lot_no,h.source_type,h.source_id,h.source_line_id,
+    h.held_qty,h.status,h.created_at,h.inspected_by,h.inspected_at,
+    w.code warehouse_code,i.code item_code,i.name_ar item_name,
+    CASE WHEN h.source_type='INVENTORY_ADJUSTMENT' THEN a.adjustment_no
+      WHEN h.source_type='INVENTORY_COUNT' THEN c.count_no END source_no,
+    u.display_name inspector_name
+    FROM inventory_quality_holds h
+    JOIN warehouses w ON w.id=h.warehouse_id JOIN items i ON i.id=h.item_id
+    LEFT JOIN inventory_adjustments a ON h.source_type='INVENTORY_ADJUSTMENT' AND a.id=h.source_id
+    LEFT JOIN inventory_counts c ON h.source_type='INVENTORY_COUNT' AND c.id=h.source_id
+    LEFT JOIN users u ON u.id=h.inspected_by
+    WHERE h.source_type IN ('INVENTORY_ADJUSTMENT','INVENTORY_COUNT')
+      AND h.status IN ('PENDING_QC','QUARANTINED')
+    ORDER BY h.created_at DESC LIMIT 500`)).rows;}
+  catch(e){return fail(rep,e);}
+ });
+ app.post('/api/v1/quality/inventory-holds/:id/inspect',{preHandler:[app.authenticate,app.requirePermission('QUALITY.INVENTORY_HOLD_INSPECT')]},async(req,rep)=>{
+  const b=req.body??{};
+  if(!['PASS','FAIL'].includes(b.result)||(b.parameters!=null&&(typeof b.parameters!=='object'||Array.isArray(b.parameters)||new TextEncoder().encode(JSON.stringify(b.parameters)).length>8192))||(b.notes!=null&&(typeof b.notes!=='string'||b.notes.length>2000)))return rep.code(400).send({error:'VALIDATION_ERROR'});
+  try{return await tx(db,async c=>{
+    const h=await c.query('SELECT * FROM inventory_quality_holds WHERE id=$1 FOR UPDATE',[req.params.id]);
+    if(!h.rowCount||!['INVENTORY_ADJUSTMENT','INVENTORY_COUNT'].includes(h.rows[0].source_type)||!['PENDING_QC','QUARANTINED'].includes(h.rows[0].status))
+      throw Object.assign(new Error('كمية العزل غير متاحة للفحص أو سبق الإفراج عنها'),{code:'P0001'});
+    const attempt=await c.query('SELECT COALESCE(MAX(attempt_no),0)+1 attempt_no FROM inventory_quality_inspections WHERE quality_hold_id=$1',[req.params.id]);
+    const status=b.result==='PASS'?'RELEASED':'QUARANTINED';
+    await c.query(`INSERT INTO inventory_quality_inspections(quality_hold_id,attempt_no,result,parameters,notes,inventory_status,inspected_by)
+      VALUES($1,$2,$3,$4::jsonb,$5,$6,$7)`,
+      [req.params.id,attempt.rows[0].attempt_no,b.result,JSON.stringify(b.parameters??{}),b.notes?.trim()||null,status,req.authUser.user_id]);
+    await c.query('UPDATE inventory_quality_holds SET status=$1,inspected_by=$2,inspected_at=NOW() WHERE id=$3',
+      [status,req.authUser.user_id,req.params.id]);
+    return {holdId:req.params.id,sourceType:h.rows[0].source_type,result:b.result,inventoryStatus:status,
+      heldQuantity:Number(h.rows[0].held_qty),availableForUse:status==='RELEASED'};
+  });}catch(e){return fail(rep,e);}
  });
  app.get('/api/v1/inventory/transfers',{preHandler:[app.authenticate,app.requirePermission('INVENTORY.READ')]},async(req,rep)=>{
   try{return (await db.query(`SELECT t.*,sw.code source_warehouse_code,dw.code destination_warehouse_code,
@@ -114,7 +153,7 @@ export async function inventoryRoutes(app,{db}){
      const held=await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,
       [h.rows[0].source_warehouse_id,l.item_id,l.lot_no]);
-     const available=s?Number(s.quantity)-Number(held.rows[0].held_qty):0;
+     const available=s&&s.quality_status==='RELEASED'?Number(s.quantity)-Number(held.rows[0].held_qty):0;
      if(!s||available+0.000001<Number(l.quantity))
       throw Object.assign(new Error('الرصيد غير كافٍ لإتمام التحويل'),{code:'P0001'});
      const qty=Number(l.quantity),cost=Number(s.average_unit_cost);
@@ -235,12 +274,16 @@ export async function inventoryRoutes(app,{db}){
      const delta=counted-expected;if(Math.abs(delta)<0.000001)continue;
      const cost=bal.rowCount?Number(bal.rows[0].average_unit_cost):Number(l.unit_cost);
      const expiry=bal.rowCount?bal.rows[0].expiry_date:null;
-     const quality=bal.rowCount?bal.rows[0].quality_status:'PENDING_QC';
+     const quality=bal.rowCount?bal.rows[0].quality_status:'RELEASED';
      const newQty=counted,newAvg=delta>0&&newQty>0?((current*cost)+(delta*Number(l.unit_cost)))/newQty:cost;
      await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,expiry_date,quantity,average_unit_cost,quality_status)
       VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE
       SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,
       [h.rows[0].warehouse_id,l.item_id,l.lot_no,expiry,newQty,newAvg,quality]);
+     if(delta>0)await c.query(`INSERT INTO inventory_quality_holds
+      (warehouse_id,item_id,lot_no,sales_return_id,sales_return_line_id,source_type,source_id,source_line_id,held_qty,status)
+      VALUES($1,$2,$3,NULL,NULL,'INVENTORY_COUNT',$4,$5,$6,'PENDING_QC')`,
+      [h.rows[0].warehouse_id,l.item_id,l.lot_no,req.params.id,l.id,delta]);
      const movement=delta>0?'ADJUSTMENT_IN':'ADJUSTMENT_OUT';
      await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,quantity_out,unit_cost,reference_type,reference_id,created_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'INVENTORY_COUNT',$9,$10)`,

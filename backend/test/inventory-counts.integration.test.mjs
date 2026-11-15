@@ -42,7 +42,27 @@ test('PostgreSQL inventory cycle count: snapshot, blind count, new lot, approval
   const byItem=new Map(balances.rows.map(x=>[x.item_id,x]));
   assert.equal(Number(byItem.get(item.id).quantity),8);
   assert.equal(Number(byItem.get(newItem.id).quantity),3);
-  assert.equal(byItem.get(newItem.id).quality_status,'PENDING_QC');
+  assert.equal(byItem.get(newItem.id).quality_status,'RELEASED',
+    'the lot-level state remains released while the newly counted quantity is isolated by a source-linked hold');
+  const countHold=(await pool.query(`SELECT id,status,held_qty FROM inventory_quality_holds
+    WHERE source_type='INVENTORY_COUNT' AND source_id=$1 AND source_line_id=$2`,[countId,addMissing.json().id])).rows[0];
+  assert.ok(countHold);
+  assert.equal(countHold.status,'PENDING_QC');
+  assert.equal(Number(countHold.held_qty),3);
+  const balancesBeforeInspection=await app.inject({method:'GET',url:'/api/v1/inventory/balances?warehouseId='+warehouse.id,headers});
+  assert.equal(balancesBeforeInspection.statusCode,200,balancesBeforeInspection.body);
+  const newLotBeforeInspection=balancesBeforeInspection.json().find(x=>x.item_id===newItem.id);
+  assert.equal(Number(newLotBeforeInspection.quality_held_qty),3);
+  assert.equal(Number(newLotBeforeInspection.available_quantity),0);
+  const inspection=await app.inject({method:'POST',url:'/api/v1/quality/inventory-holds/'+countHold.id+'/inspect',headers,
+    payload:{result:'PASS',parameters:{moisture:10.5},notes:'اجتاز فحص عينة الجرد'}});
+  assert.equal(inspection.statusCode,200,inspection.body);
+  assert.equal(inspection.json().inventoryStatus,'RELEASED');
+  const balancesAfterInspection=await app.inject({method:'GET',url:'/api/v1/inventory/balances?warehouseId='+warehouse.id,headers});
+  assert.equal(balancesAfterInspection.statusCode,200,balancesAfterInspection.body);
+  const newLotAfterInspection=balancesAfterInspection.json().find(x=>x.item_id===newItem.id);
+  assert.equal(Number(newLotAfterInspection.quality_held_qty),0);
+  assert.equal(Number(newLotAfterInspection.available_quantity),3);
   const movements=await pool.query("SELECT movement_type,quantity_in,quantity_out FROM stock_movements WHERE reference_type='INVENTORY_COUNT' AND reference_id=$1",[countId]);
   assert.equal(movements.rowCount,2);
   const journal=await pool.query("SELECT id,total_debit,total_credit FROM journal_entries WHERE source_type='INVENTORY_COUNT' AND source_id=$1 AND status='POSTED'",[countId]);

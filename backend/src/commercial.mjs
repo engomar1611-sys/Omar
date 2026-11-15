@@ -91,7 +91,9 @@ export async function commercialRoutes(app,{db}){
      let lineNo=0;
      for(const lot of lots.rows){
       if(remaining<=0.000001)break;
+      if(Number(lot.quantity)<=0.000001)continue;
       const q=Math.min(remaining,Number(lot.quantity)),cost=Number(lot.average_unit_cost);
+      if(q<=0.000001)continue;
       await c.query('UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[q,b.warehouseId,l.itemId,lot.lot_no]);
       await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
        VALUES($1,$2,$3,$4,'ADJUSTMENT_OUT',$5,$6,'SALES_INVOICE',$7,$8)`,
@@ -232,8 +234,8 @@ export async function commercialRoutes(app,{db}){
      await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost)
       VALUES($1,$2,$3,$4,$5) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE
       SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,[h.rows[0].warehouse_id,l.item_id,l.lot_no,newQty,newAvg]);
-     await c.query(`INSERT INTO inventory_quality_holds(warehouse_id,item_id,lot_no,sales_return_id,sales_return_line_id,held_qty)
-      VALUES($1,$2,$3,$4,$5,$6)`,[h.rows[0].warehouse_id,l.item_id,l.lot_no,req.params.id,l.id,l.quantity]);
+     await c.query(`INSERT INTO inventory_quality_holds(warehouse_id,item_id,lot_no,sales_return_id,sales_return_line_id,source_type,source_id,source_line_id,held_qty)
+      VALUES($1,$2,$3,$4,$5,'SALES_RETURN',$4,$5,$6)`,[h.rows[0].warehouse_id,l.item_id,l.lot_no,req.params.id,l.id,l.quantity]);
      await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
       VALUES($1,$2,$3,$4,'ADJUSTMENT_IN',$5,$6,'SALES_RETURN',$7,$8)`,[`SR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,l.quantity,l.unit_cost,req.params.id,req.authUser.user_id]);
     }
@@ -671,9 +673,11 @@ export async function commercialRoutes(app,{db}){
       SUM(subtotal)::numeric subtotal,SUM(discount_amount)::numeric discounts,
       SUM(total_amount)::numeric net_sales,SUM(cost_amount)::numeric cost_of_sales,
       0::numeric returns_amount,0::numeric returned_cost
-    FROM sales_invoices WHERE status IN ('POSTED','PARTIALLY_PAID','PAID')
-      AND ($1::date IS NULL OR invoice_date >= $1) AND ($2::date IS NULL OR invoice_date <= $2)
-    GROUP BY invoice_date
+    FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+    WHERE i.status IN ('POSTED','PARTIALLY_PAID','PAID')
+      AND ($1::date IS NULL OR i.invoice_date >= $1) AND ($2::date IS NULL OR i.invoice_date <= $2)
+      AND ($3::text IS NULL OR c.code=$3)
+    GROUP BY i.invoice_date
    ), return_rows AS (
     SELECT COALESCE(sr.accounting_approved_at::date,sr.created_at::date) report_date,
       0::int invoice_count,COUNT(*)::int return_count,
@@ -684,6 +688,8 @@ export async function commercialRoutes(app,{db}){
       SUM(COALESCE(sr.net_amount,COALESCE(sr.gross_amount,ret.gross_amount,0)))::numeric returns_amount,
       SUM(COALESCE(ret.return_cost,0))::numeric returned_cost
     FROM sales_returns sr
+    JOIN sales_invoices i ON i.id=sr.sales_invoice_id
+    JOIN customers c ON c.id=i.customer_id
     LEFT JOIN LATERAL (
       SELECT SUM(l.quantity*l.unit_price)::numeric gross_amount,
         SUM(l.quantity*l.unit_cost)::numeric return_cost
@@ -692,6 +698,7 @@ export async function commercialRoutes(app,{db}){
     WHERE sr.status='APPROVED'
       AND ($1::date IS NULL OR COALESCE(sr.accounting_approved_at::date,sr.created_at::date) >= $1)
       AND ($2::date IS NULL OR COALESCE(sr.accounting_approved_at::date,sr.created_at::date) <= $2)
+      AND ($3::text IS NULL OR c.code=$3)
     GROUP BY COALESCE(sr.accounting_approved_at::date,sr.created_at::date)
    ), movements AS (
     SELECT * FROM invoice_rows
@@ -703,7 +710,7 @@ export async function commercialRoutes(app,{db}){
      SUM(net_sales)::numeric net_sales,SUM(cost_of_sales)::numeric cost_of_sales,
      SUM(net_sales-cost_of_sales)::numeric gross_margin,
      SUM(returns_amount)::numeric returns_amount,SUM(returned_cost)::numeric returned_cost
-   FROM movements GROUP BY report_date ORDER BY report_date DESC`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
+   FROM movements GROUP BY report_date ORDER BY report_date DESC`,[req.query?.from??null,req.query?.to??null,req.query?.customerCode??null])).rows;}catch(e){return fail(rep,e);}
  });
 
  app.get('/api/v1/reports/supplier-aging',auth(app,'REPORTS.READ'),async(req,rep)=>{

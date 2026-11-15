@@ -55,7 +55,22 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(approvedAdjustment.json().status,'POSTED');
     const postedBalance=await pool.query('SELECT quantity,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,finished.id,'ADJLOT-'+suffix]);
     assert.equal(Number(postedBalance.rows[0].quantity),2);
-    assert.equal(postedBalance.rows[0].quality_status,'PENDING_QC');
+    assert.equal(postedBalance.rows[0].quality_status,'RELEASED');
+    const adjustmentHold=(await pool.query(`SELECT status,held_qty FROM inventory_quality_holds
+      WHERE source_type='INVENTORY_ADJUSTMENT' AND source_id=$1`,[adjustmentId])).rows[0];
+    assert.ok(adjustmentHold);
+    assert.equal(adjustmentHold.status,'PENDING_QC');
+    assert.equal(Number(adjustmentHold.held_qty),2);
+
+    const heldRawAdjustment=await app.inject({method:'POST',url:'/api/v1/inventory/adjustments',headers,payload:{
+      adjustmentNo:code('ADJRAW'),warehouseId:warehouse.id,reason:'تشغيلة خامة مضافة بانتظار الجودة',
+      lines:[{itemId:raw.id,lotNo:'HELD-RAW-'+suffix,quantityDelta:2,unitCost:6}]
+    }});
+    assert.equal(heldRawAdjustment.statusCode,201,heldRawAdjustment.body);
+    const heldRawApproved=await app.inject({method:'POST',url:'/api/v1/inventory/adjustments/'+heldRawAdjustment.json().id+'/approve',headers,payload:{}});
+    assert.equal(heldRawApproved.statusCode,200,heldRawApproved.body);
+    await pool.query("UPDATE inventory_balances SET expiry_date='2026-01-01' WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3",
+      [warehouse.id,raw.id,'HELD-RAW-'+suffix]);
 
     const formulation = await app.inject({method:'POST',url:'/api/v1/formulations',headers,payload:{
       feedProductId:product.id,versionNo:1,lines:[{itemId:raw.id,percentage:100}]
@@ -106,7 +121,8 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     const consumed = await pool.query('SELECT lot_no,quantity FROM production_consumptions WHERE production_order_id=$1 ORDER BY lot_no',[orderId]);
     assert.deepEqual(consumed.rows.map(x=>[x.lot_no,Number(x.quantity)]),[['EARLY',3],['LATE',7]]);
     const rawBalances = await pool.query('SELECT lot_no,quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 ORDER BY lot_no',[warehouse.id,raw.id]);
-    assert.deepEqual(rawBalances.rows.map(x=>[x.lot_no,Number(x.quantity)]),[['EARLY',0],['LATE',13]]);
+    assert.deepEqual(rawBalances.rows.map(x=>[x.lot_no,Number(x.quantity)]),[['EARLY',0],['HELD-RAW-'+suffix,2],['LATE',13]],
+      'a fully held earlier-expiry lot must be skipped while FEFO issues available released lots');
 
     const productionOutputLot = (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no;
     await pool.query('UPDATE inventory_balances SET quantity=quantity-1 WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',

@@ -107,7 +107,9 @@ async function issueProductionMaterials(c, order, issueQty, userId) {
     if(available+0.000001<required) throw Object.assign(new Error('رصيد المخزون المفرج عنه غير كافٍ لأحد مكونات التركيبة'),{code:'P0001'});
     for(const lot of lots.rows){
       if(required<=0.000001) break;
+      if(Number(lot.quantity)<=0.000001) continue;
       const used=Math.min(required,Number(lot.quantity)),average=Number(lot.average_unit_cost),cost=used*average;
+      if(used<=0.000001) continue;
       await c.query(`UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4`,[used,order.warehouse_id,line.item_id,lot.lot_no]);
       await c.query(`INSERT INTO production_consumptions(production_order_id,item_id,lot_no,quantity,average_unit_cost,extended_cost) VALUES($1,$2,$3,$4,$5,$6)`,[order.id,line.item_id,lot.lot_no,used,average,cost]);
       sequence++;
