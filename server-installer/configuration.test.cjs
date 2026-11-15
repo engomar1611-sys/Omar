@@ -36,6 +36,8 @@ test('Windows installer runs the NEW FEED ERP migrations and first-admin bootstr
   assert.match(installer, /BOOTSTRAP_ADMIN_NAME/);
   assert.match(installer, /BOOTSTRAP_ADMIN_PASSWORD/);
   assert.match(installer, /Length -lt 14/);
+  assert.match(installer, /\$service refresh/);
+  assert.match(installer, /\$service install/);
   assert.match(backendPackage.scripts.migrate, /migrate\.mjs/);
   assert.match(backendPackage.scripts['bootstrap:admin'], /bootstrap-admin\.mjs/);
 });
