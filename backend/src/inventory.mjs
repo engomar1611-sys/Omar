@@ -273,7 +273,9 @@ export async function inventoryRoutes(app,{db}){
        WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{held_qty:0}]};
      const held=Number(heldResult.rows[0].held_qty);
      if(Math.abs(current-expected)>0.000001)throw Object.assign(new Error('تغير رصيد الصنف بعد أخذ لقطة الجرد؛ أعد الجرد لهذا المخزن'),{code:'P0001'});
-     if(counted+0.000001<held)throw Object.assign(new Error('الكمية المعدودة أقل من الكمية المحجوزة للجودة؛ لا يمكن اعتماد الجرد'),{code:'P0001'});
+     const reservedResult=bal.rowCount?await c.query(`SELECT COALESCE(SUM(reserved_qty),0) reserved_qty FROM sales_order_reservations WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status='RESERVED'`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{reserved_qty:0}]};
+     const reserved=Number(reservedResult.rows[0].reserved_qty);
+     if(counted+0.000001<held+reserved)throw Object.assign(new Error('الكمية المعدودة أقل من الكميات المحجوزة للجودة وأوامر البيع؛ لا يمكن اعتماد الجرد'),{code:'P0001'});
      const delta=counted-expected;if(Math.abs(delta)<0.000001)continue;
      const cost=bal.rowCount?Number(bal.rows[0].average_unit_cost):Number(l.unit_cost);
      const expiry=bal.rowCount?bal.rows[0].expiry_date:null;
