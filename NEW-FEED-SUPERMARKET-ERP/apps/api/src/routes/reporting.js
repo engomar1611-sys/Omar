@@ -158,7 +158,7 @@ router.get("/reports/accounting",async(req,res,next)=>{
  }catch(e){next(e);}
 });
 
-router.get("/reports/delivery",async(req,res,next)=>{
+router.get("/reports/delivery",requirePermission("delivery.report"),async(req,res,next)=>{
  const range=dates(req,res);if(!range)return;
  try{
   const [rows,summary,channels]=await Promise.all([
