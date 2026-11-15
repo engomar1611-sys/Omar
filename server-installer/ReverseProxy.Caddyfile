@@ -1,6 +1,7 @@
-# استبدل erp.example.com باسم DNS حقيقي يشير إلى عنوان السيرفر العام.
-# Caddy يصدر ويجدد شهادة HTTPS تلقائياً عند صحة DNS وإتاحة المنافذ 80 و443.
-erp.example.com {
+# Local network profile: create a DNS record (or hosts-file entry) for erp.lan
+# pointing to the Windows server LAN IP. Caddy creates an internal TLS certificate.
+erp.lan {
+    tls internal
     encode zstd gzip
 
     header {
@@ -12,3 +13,6 @@ erp.example.com {
 
     reverse_proxy 127.0.0.1:3000
 }
+
+# For public internet access later, replace erp.lan with a domain you own,
+# remove "tls internal", point public DNS to this server, and allow TCP 80/443.
