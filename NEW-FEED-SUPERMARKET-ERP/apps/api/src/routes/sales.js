@@ -147,9 +147,9 @@ router.post("/sales/complete",async(req,res,next)=>{
   const taxableBase=Math.max(0,subtotal-discountTotal-orderDiscount);
   let taxTotal=0,taxAccountId=null;
   if(tax_code_id){
-    const tax=await client.query("SELECT tc.rate,tc.account_id,a.account_type FROM tax_codes tc LEFT JOIN accounts a ON a.id=tc.account_id WHERE tc.id=$1 AND tc.is_active=true FOR SHARE OF tc",[tax_code_id]);
+    const tax=await client.query("SELECT tc.rate,tc.account_id,a.account_type,a.is_active FROM tax_codes tc LEFT JOIN accounts a ON a.id=tc.account_id WHERE tc.id=$1 AND tc.is_active=true FOR SHARE OF tc",[tax_code_id]);
     if(!tax.rowCount)throw Object.assign(new Error("Selected tax code is inactive or unavailable"),{statusCode:400});
-    if(Number(tax.rows[0].rate)>0&&(!tax.rows[0].account_id||tax.rows[0].account_type!=="liability"))throw Object.assign(new Error("Selected tax code must be linked to a liability account"),{statusCode:409});
+    if(Number(tax.rows[0].rate)>0&&(!tax.rows[0].account_id||tax.rows[0].account_type!=="liability"||tax.rows[0].is_active!==true))throw Object.assign(new Error("Selected tax code must be linked to a liability account"),{statusCode:409});
     taxTotal=taxableBase*Number(tax.rows[0].rate)/100;taxAccountId=tax.rows[0].account_id;
   }
   const netSales=subtotal-discountTotal-orderDiscount+netDeliveryFee;
