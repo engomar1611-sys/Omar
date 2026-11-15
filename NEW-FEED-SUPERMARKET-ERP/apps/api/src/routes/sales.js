@@ -192,6 +192,18 @@ router.post("/sales/complete",async(req,res,next)=>{
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.inventory,cogs]);
   }
   const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,delivery_fee=$4,tax_total=$5,tax_code_id=$6,grand_total=$7,order_discount_amount=$8,delivery_discount_amount=$9,delivery_fee_before_discount=$10,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal+orderDiscount,netDeliveryFee,taxTotal,tax_code_id,total,orderDiscount,deliveryDiscount,deliveryFee]);
+  let loyaltyEarned=0;
+  const loyalty=await client.query("SELECT points_per_egp FROM loyalty_program_settings WHERE id=1 AND is_active=true");
+  const loyaltyCustomer=delivery?deliveryCustomerId:customer_id;
+  if(loyaltyCustomer&&loyalty.rowCount){
+    loyaltyEarned=Math.floor(Math.max(0,subtotal-discountTotal-orderDiscount)*Number(loyalty.rows[0].points_per_egp));
+    if(loyaltyEarned>0){
+      const customer=await client.query("SELECT id FROM customers WHERE id=$1 AND is_active=true FOR UPDATE",[loyaltyCustomer]);
+      if(!customer.rowCount)throw Object.assign(new Error("Loyalty customer is inactive or unavailable"),{statusCode:409});
+      await client.query("UPDATE customers SET loyalty_points=loyalty_points+$2 WHERE id=$1",[loyaltyCustomer,loyaltyEarned]);
+      await client.query("INSERT INTO customer_loyalty_transactions(customer_id,reference_no,transaction_type,points,source_type,source_id,notes,created_by) VALUES($1,$2,'earn',$3,'sale',$4,'Automatic points from completed sale',$5)",[loyaltyCustomer,"LOY-"+sale.rows[0].reference_no,loyaltyEarned,sale.rows[0].id,cashier_id]);
+    }
+  }
   let deliveryOrder=null;
   if(delivery){
    const deliveryRef="DLV-"+reference_no.trim();
@@ -199,7 +211,7 @@ router.post("/sales/complete",async(req,res,next)=>{
    deliveryOrder=d.rows[0];
   }
   await client.query("COMMIT");
-  res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,discounts:{order_discount_amount:Number(orderDiscount.toFixed(6)),delivery_discount_amount:Number(deliveryDiscount.toFixed(6)),delivery_fee_before_discount:deliveryFee,delivery_fee_after_discount:netDeliveryFee},cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,tax_total:Number(taxTotal.toFixed(6)),tax_code_id,journal_entry_id:journal.rows[0].id});
+  res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,loyalty_earned:loyaltyEarned,discounts:{order_discount_amount:Number(orderDiscount.toFixed(6)),delivery_discount_amount:Number(deliveryDiscount.toFixed(6)),delivery_fee_before_discount:deliveryFee,delivery_fee_after_discount:netDeliveryFee},cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,tax_total:Number(taxTotal.toFixed(6)),tax_code_id,journal_entry_id:journal.rows[0].id});
  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
 });
 export default router;
