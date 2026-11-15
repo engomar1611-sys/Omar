@@ -381,7 +381,8 @@ async function openStocktake(id){
  }catch(e){hostError(root,e.message);}
 }
 function reportTable(title,items,columns){
- return '<section class="purchase-panel"><h2>'+escapeHtml(title)+'</h2>'+(items&&items.length?'<div class="table-scroll"><table class="module-table"><thead><tr>'+columns.map(c=>'<th>'+escapeHtml(c[1])+'</th>').join("")+'</tr></thead><tbody>'+items.map(row=>'<tr>'+columns.map(c=>'<td>'+escapeHtml(formatModuleValue(row[c[0]]))+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد بيانات في الفترة المحددة.</div>')+'</section>';
+ const id="rpt"+(++reportExportSequence);reportExportData.set(id,{title,rows:items||[],columns});
+ return '<section class="purchase-panel"><div class="module-toolbar"><h2>'+escapeHtml(title)+'</h2>'+(items&&items.length?'<button class="small-btn" data-export-report="'+id+'">تصدير Excel/CSV</button>':'')+'</div>'+(items&&items.length?'<div class="table-scroll"><table class="module-table"><thead><tr>'+columns.map(c=>'<th>'+escapeHtml(c[1])+'</th>').join("")+'</tr></thead><tbody>'+items.map(row=>'<tr>'+columns.map(c=>'<td>'+escapeHtml(formatModuleValue(row[c[0]]))+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد بيانات في الفترة المحددة.</div>')+'</section>';
 }
 async function openReports(){
  const root=$("moduleView"),today=new Date().toLocaleDateString("en-CA");
