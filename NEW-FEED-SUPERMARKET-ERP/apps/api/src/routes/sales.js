@@ -1,6 +1,7 @@
 import {Router} from "express";
 import {pool} from "../db.js";
 import {requirePermission} from "../auth.js";
+import {calculateLoyaltyRedemption} from "../domain/loyalty.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validRef=v=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=50;
@@ -100,7 +101,7 @@ router.post("/sales/:id/void",requirePermission("sales.void.invoice"),async(req,
 });
 
 router.post("/sales/complete",async(req,res,next)=>{
- const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null,delivery=null,tax_code_id=null}=req.body??{};
+ const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null,delivery=null,tax_code_id=null,loyalty_points_to_redeem=0}=req.body??{};
  const cashier_id=req.user.id;
  const deliveryCustomerId=delivery?.customer_id||customer_id;
  const deliveryValid=delivery===null||(delivery&&uuid.test(deliveryCustomerId||"")&&typeof delivery.address==="string"&&delivery.address.trim().length>0&&delivery.address.trim().length<=1000&&Number.isFinite(Number(delivery.delivery_fee||0))&&Number(delivery.delivery_fee||0)>=0&&["pos","phone","talabat","elmenus","breadfast","mrsool","generic"].includes(delivery.source_channel||"pos")&&(!delivery.external_order_reference||(typeof delivery.external_order_reference==="string"&&delivery.external_order_reference.length<=160)));
@@ -155,7 +156,22 @@ router.post("/sales/complete",async(req,res,next)=>{
     deliveryDiscount=Math.min(deliveryFee,Math.max(0,deliveryDiscount));
   }
   const netDeliveryFee=deliveryFee-deliveryDiscount;
-  const taxableBase=Math.max(0,subtotal-discountTotal-orderDiscount);
+  if(!Number.isSafeInteger(Number(loyalty_points_to_redeem))||Number(loyalty_points_to_redeem)<0||Number(loyalty_points_to_redeem)>1000000000)
+    throw Object.assign(new Error("Loyalty points to redeem must be a non-negative whole number"),{statusCode:400});
+  let loyaltyPointsRedeemed=0,loyaltyDiscount=0,loyaltyCustomerId=delivery?deliveryCustomerId:customer_id;
+  if(Number(loyalty_points_to_redeem)>0){
+    if(!loyaltyCustomerId)throw Object.assign(new Error("Select a customer before redeeming loyalty points"),{statusCode:400});
+    const policy=await client.query("SELECT egp_per_point FROM loyalty_program_settings WHERE id=1 AND is_active=true FOR SHARE");
+    if(!policy.rowCount||Number(policy.rows[0].egp_per_point)<=0)
+      throw Object.assign(new Error("Loyalty point redemption is not enabled"),{statusCode:409});
+    const customer=await client.query("SELECT loyalty_points FROM customers WHERE id=$1 AND is_active=true FOR UPDATE",[loyaltyCustomerId]);
+    if(!customer.rowCount)throw Object.assign(new Error("Loyalty customer is inactive or unavailable"),{statusCode:409});
+    try{
+      const redemption=calculateLoyaltyRedemption({pointsRequested:Number(loyalty_points_to_redeem),availablePoints:Number(customer.rows[0].loyalty_points),egpPerPoint:Number(policy.rows[0].egp_per_point),eligibleAmount:Math.max(0,subtotal-discountTotal-orderDiscount)});
+      loyaltyPointsRedeemed=redemption.points;loyaltyDiscount=redemption.discount;
+    }catch(error){throw Object.assign(error,{statusCode:400});}
+  }
+  const taxableBase=Math.max(0,subtotal-discountTotal-orderDiscount-loyaltyDiscount);
   let taxTotal=0,taxAccountId=null;
   if(tax_code_id){
     const tax=await client.query("SELECT tc.rate,tc.account_id,a.account_type,a.is_active FROM tax_codes tc LEFT JOIN accounts a ON a.id=tc.account_id WHERE tc.id=$1 AND tc.is_active=true FOR SHARE OF tc",[tax_code_id]);
@@ -163,7 +179,7 @@ router.post("/sales/complete",async(req,res,next)=>{
     if(Number(tax.rows[0].rate)>0&&(!tax.rows[0].account_id||tax.rows[0].account_type!=="liability"||tax.rows[0].is_active!==true))throw Object.assign(new Error("Selected tax code must be linked to a liability account"),{statusCode:409});
     taxTotal=taxableBase*Number(tax.rows[0].rate)/100;taxAccountId=tax.rows[0].account_id;
   }
-  const netSales=subtotal-discountTotal-orderDiscount+netDeliveryFee;
+  const netSales=subtotal-discountTotal-orderDiscount-loyaltyDiscount+netDeliveryFee;
   const total=netSales+taxTotal,paymentTotal=payments.reduce((s,x)=>s+Number(x.amount),0);
   if(Math.abs(paymentTotal-total)>0.01)throw Object.assign(new Error("Payment total must equal the sale total"),{statusCode:400});
   const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
@@ -202,10 +218,15 @@ router.post("/sales/complete",async(req,res,next)=>{
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journal.rows[0].id,accountMap.cogs,cogs]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.inventory,cogs]);
   }
-  const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,delivery_fee=$4,tax_total=$5,tax_code_id=$6,grand_total=$7,order_discount_amount=$8,delivery_discount_amount=$9,delivery_fee_before_discount=$10,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal+orderDiscount,netDeliveryFee,taxTotal,tax_code_id,total,orderDiscount,deliveryDiscount,deliveryFee]);
+  const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,delivery_fee=$4,tax_total=$5,tax_code_id=$6,grand_total=$7,order_discount_amount=$8,delivery_discount_amount=$9,delivery_fee_before_discount=$10,loyalty_points_redeemed=$11,loyalty_discount_amount=$12,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal+orderDiscount+loyaltyDiscount,netDeliveryFee,taxTotal,tax_code_id,total,orderDiscount+loyaltyDiscount,deliveryDiscount,deliveryFee,loyaltyPointsRedeemed,loyaltyDiscount]);
+  if(loyaltyPointsRedeemed>0){
+    await client.query("UPDATE customers SET loyalty_points=loyalty_points-$2 WHERE id=$1",[loyaltyCustomerId,loyaltyPointsRedeemed]);
+    await client.query("INSERT INTO customer_loyalty_transactions(customer_id,reference_no,transaction_type,points,source_type,source_id,notes,created_by) VALUES($1,$2,'redeem',$3,'sale',$4,'Points redeemed as POS invoice discount',$5)",
+      [loyaltyCustomerId,"LOY-REDEEM-"+sale.rows[0].reference_no,loyaltyPointsRedeemed,sale.rows[0].id,cashier_id]);
+  }
   let loyaltyEarned=0;
   const loyalty=await client.query("SELECT points_per_egp FROM loyalty_program_settings WHERE id=1 AND is_active=true");
-  const loyaltyCustomer=delivery?deliveryCustomerId:customer_id;
+  const loyaltyCustomer=loyaltyCustomerId;
   if(loyaltyCustomer&&loyalty.rowCount){
     loyaltyEarned=Math.floor(Math.max(0,subtotal-discountTotal-orderDiscount)*Number(loyalty.rows[0].points_per_egp));
     if(loyaltyEarned>0){
@@ -222,7 +243,7 @@ router.post("/sales/complete",async(req,res,next)=>{
    deliveryOrder=d.rows[0];
   }
   await client.query("COMMIT");
-  res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,loyalty_earned:loyaltyEarned,discounts:{order_discount_amount:Number(orderDiscount.toFixed(6)),delivery_discount_amount:Number(deliveryDiscount.toFixed(6)),delivery_fee_before_discount:deliveryFee,delivery_fee_after_discount:netDeliveryFee},cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,tax_total:Number(taxTotal.toFixed(6)),tax_code_id,journal_entry_id:journal.rows[0].id});
+  res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,loyalty_earned:loyaltyEarned,loyalty_redeemed:{points:loyaltyPointsRedeemed,discount_amount:Number(loyaltyDiscount.toFixed(6))},discounts:{order_discount_amount:Number(orderDiscount.toFixed(6)),loyalty_discount_amount:Number(loyaltyDiscount.toFixed(6)),delivery_discount_amount:Number(deliveryDiscount.toFixed(6)),delivery_fee_before_discount:deliveryFee,delivery_fee_after_discount:netDeliveryFee},cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,tax_total:Number(taxTotal.toFixed(6)),tax_code_id,journal_entry_id:journal.rows[0].id});
  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
 });
 export default router;
