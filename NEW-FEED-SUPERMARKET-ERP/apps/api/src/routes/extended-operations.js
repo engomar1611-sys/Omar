@@ -152,8 +152,53 @@ router.post("/bank/transfers",guarded("bank.manage"),async(req,res,next)=>{
 router.get("/bank/accounts",guarded("bank.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT ba.*,b.name branch_name FROM bank_accounts ba JOIN branches b ON b.id=ba.branch_id WHERE ba.is_active ORDER BY ba.bank_name,ba.account_name");res.json({items:r.rows});}catch(e){next(e);}});
 // Bank ledger transactions are auditable operational records. General-ledger posting is not implied by this endpoint.
 router.get("/bank/transactions",guarded("bank.manage"),async(req,res,next)=>{try{const r=await pool.query("SELECT bt.*,ba.code bank_code,ba.bank_name,ba.account_name FROM bank_transactions bt JOIN bank_accounts ba ON ba.id=bt.bank_account_id ORDER BY bt.transaction_date DESC,bt.created_at DESC LIMIT 1000");res.json({items:r.rows});}catch(e){next(e);}});
-router.post("/bank/transactions",guarded("bank.manage"),async(req,res,next)=>{const {bank_account_id,reference_no,transaction_date=new Date().toISOString().slice(0,10),direction,amount:amt,description=null}=req.body??{};if(!uuid.test(bank_account_id||"")||!txt(reference_no,60)||!date(transaction_date)||!["in","out"].includes(direction)||!Number.isFinite(Number(amt))||Number(amt)<=0)return bad(res,"Invalid bank transaction");try{const r=await pool.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[bank_account_id,reference_no,transaction_date,direction,amt,description,req.user.id]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
-router.post("/bank/transactions/:id/reverse",guarded("bank.manage"),async(req,res,next)=>{if(!uuid.test(req.params.id))return bad(res,"Invalid bank transaction id");const c=await pool.connect();try{await c.query("BEGIN");const tx=await c.query("SELECT * FROM bank_transactions WHERE id=$1 AND status='posted' FOR UPDATE",[req.params.id]);if(!tx.rowCount)throw Object.assign(new Error("Transaction not found or already reversed"),{statusCode:409});let reversed=[tx.rows[0]];if(tx.rows[0].source_type==="transfer"){const peer=await c.query("SELECT * FROM bank_transactions WHERE id=$1 AND status='posted' FOR UPDATE",[tx.rows[0].source_id]);if(!peer.rowCount)throw Object.assign(new Error("Transfer counterpart is missing or already reversed; manual reconciliation is required"),{statusCode:409});reversed.push(peer.rows[0]);}for(const item of reversed)await c.query("UPDATE bank_transactions SET status='reversed',reversed_by=$2,reversed_at=now() WHERE id=$1",[item.id,req.user.id]);await c.query("COMMIT");res.json({reversed_ids:reversed.map(x=>x.id),count:reversed.length});}catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}});
+router.post("/bank/transactions",guarded("bank.manage"),async(req,res,next)=>{
+ const {bank_account_id,reference_no,transaction_date=new Date().toISOString().slice(0,10),direction,amount:amt,description=null,offset_account_id}=req.body??{};
+ if(!uuid.test(bank_account_id||"")||!uuid.test(offset_account_id||"")||!txt(reference_no,60)||!date(transaction_date)||!["in","out"].includes(direction)||!Number.isFinite(Number(amt))||Number(amt)<=0)return bad(res,"Bank account, offset ledger account, date, direction and positive amount are required");
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND $1::date BETWEEN starts_on AND ends_on LIMIT 1",[transaction_date]);
+  if(period.rowCount)throw Object.assign(new Error("The selected accounting period is closed"),{statusCode:409});
+  const bank=await c.query("SELECT id,currency,ledger_account_id FROM bank_accounts WHERE id=$1 AND is_active FOR SHARE",[bank_account_id]);
+  const contra=await c.query("SELECT id,account_type FROM accounts WHERE id=$1 AND is_active",[offset_account_id]);
+  if(!bank.rowCount||bank.rows[0].currency!=="EGP"||!bank.rows[0].ledger_account_id)throw Object.assign(new Error("An active EGP bank account with ledger mapping is required"),{statusCode:400});
+  if(!contra.rowCount||contra.rows[0].id===bank.rows[0].ledger_account_id)throw Object.assign(new Error("A valid different offset ledger account is required"),{statusCode:400});
+  const tx=await c.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[bank_account_id,reference_no,transaction_date,direction,amt,description,req.user.id]);
+  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'bank_transaction',$2,$3,'posted') RETURNING id",["JE-BK-"+reference_no,tx.rows[0].id,transaction_date]);
+  if(direction==="in")await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0),($1,$4,0,$3)",[je.rows[0].id,bank.rows[0].ledger_account_id,amt,offset_account_id]);
+  else await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0),($1,$4,0,$3)",[je.rows[0].id,offset_account_id,amt,bank.rows[0].ledger_account_id]);
+  const saved=await c.query("UPDATE bank_transactions SET journal_entry_id=$2 WHERE id=$1 RETURNING *",[tx.rows[0].id,je.rows[0].id]);
+  await c.query("COMMIT");res.status(201).json({transaction:saved.rows[0],journal_entry_id:je.rows[0].id});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
+router.post("/bank/transactions/:id/reverse",guarded("bank.manage"),async(req,res,next)=>{
+ if(!uuid.test(req.params.id))return bad(res,"Invalid bank transaction id");
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const tx=await c.query("SELECT * FROM bank_transactions WHERE id=$1 AND status='posted' FOR UPDATE",[req.params.id]);
+  if(!tx.rowCount)throw Object.assign(new Error("Transaction not found or already reversed"),{statusCode:409});
+  if(tx.rows[0].source_type==="payroll")throw Object.assign(new Error("Payroll bank payments must be reversed through payroll controls"),{statusCode:409});
+  let reversed=[tx.rows[0]];
+  if(tx.rows[0].source_type==="transfer"){
+   const peer=await c.query("SELECT * FROM bank_transactions WHERE id=$1 AND status='posted' FOR UPDATE",[tx.rows[0].source_id]);
+   if(!peer.rowCount)throw Object.assign(new Error("Transfer counterpart is missing or already reversed; manual reconciliation is required"),{statusCode:409});
+   reversed.push(peer.rows[0]);
+  }
+  const journalId=tx.rows[0].journal_entry_id;
+  if(!journalId)throw Object.assign(new Error("Original bank transaction has no linked journal entry and cannot be automatically reversed"),{statusCode:409});
+  const original=await c.query("SELECT account_id,debit,credit FROM journal_lines WHERE journal_entry_id=$1",[journalId]);
+  if(!original.rowCount)throw Object.assign(new Error("Original bank journal lines are missing"),{statusCode:409});
+  const dateCheck=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(dateCheck.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'bank_transaction_reversal',$2,CURRENT_DATE,'posted') RETURNING id",["JE-BKR-"+req.params.id,req.params.id]);
+  for(const line of original.rows)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,$4)",[reversal.rows[0].id,line.account_id,line.credit,line.debit]);
+  for(const item of reversed)await c.query("UPDATE bank_transactions SET status='reversed',reversed_by=$2,reversed_at=now() WHERE id=$1",[item.id,req.user.id]);
+  await c.query("COMMIT");
+  res.json({reversed_ids:reversed.map(x=>x.id),count:reversed.length,reversal_journal_entry_id:reversal.rows[0].id});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
 
 // Company identity and tax code setup. Tax codes are configuration only until explicitly selected by a sales workflow.
 router.get("/settings/company",guarded("settings.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT setting_key,setting_value,updated_at FROM company_settings ORDER BY setting_key");res.json({items:r.rows});}catch(e){next(e);}});
