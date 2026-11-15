@@ -95,17 +95,14 @@ async function issueProductionMaterials(c, order, issueQty, userId) {
   const issue=header.rows[0]; let totalCost=0, sequence=0; const issued=[];
   for(const line of lines.rows){
     let required=issueQty*Number(line.percentage)/100;
-    const lots=await c.query(`SELECT b.lot_no,
-      b.quantity-COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
-        WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
-          AND qh.status IN ('PENDING_QC','QUARANTINED')),0) AS quantity,
-      b.average_unit_cost
+    const lots=await c.query(`SELECT b.lot_no,b.quantity,b.average_unit_cost
       FROM inventory_balances b
-      WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.quality_status='RELEASED'
-        AND b.quantity-COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
-          WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
-            AND qh.status IN ('PENDING_QC','QUARANTINED')),0)>0
+      WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.quantity>0 AND b.quality_status='RELEASED'
       ORDER BY b.expiry_date ASC NULLS LAST,b.lot_no ASC FOR UPDATE OF b`,[order.warehouse_id,line.item_id]);
+    const held=await c.query(`SELECT lot_no,COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
+      WHERE warehouse_id=$1 AND item_id=$2 AND status IN ('PENDING_QC','QUARANTINED') GROUP BY lot_no`,[order.warehouse_id,line.item_id]);
+    const heldByLot=new Map(held.rows.map(x=>[x.lot_no,Number(x.held_qty)]));
+    for(const lot of lots.rows)lot.quantity=Math.max(0,Number(lot.quantity)-(heldByLot.get(lot.lot_no)??0));
     const available=lots.rows.reduce((sum,lot)=>sum+Number(lot.quantity),0);
     if(available+0.000001<required) throw Object.assign(new Error('رصيد المخزون المفرج عنه غير كافٍ لأحد مكونات التركيبة'),{code:'P0001'});
     for(const lot of lots.rows){
