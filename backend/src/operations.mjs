@@ -562,8 +562,13 @@ export async function operationsRoutes(app, { db }) {
         WHERE p.id=$1 FOR UPDATE OF p,b`,[b.productionOrderId]);
       if(!h.rowCount||h.rows[0].status!=='COMPLETED'||h.rows[0].quality_status!=='RELEASED')
         throw Object.assign(new Error('يجب أن يكون أمر الإنتاج مكتملاً والمنتج النهائي مجتازاً للجودة'),{code:'P0001'});
-      if(Number(b.quantity)>Number(h.rows[0].balance_qty)+0.000001)
-        throw Object.assign(new Error('كمية الهالك تتجاوز رصيد التشغيلة المتاح'),{code:'P0001'});
+      const held=await c.query(`SELECT COALESCE(SUM(qh.held_qty),0) held_qty FROM inventory_quality_holds qh
+        JOIN production_outputs o ON o.item_id=qh.item_id AND o.lot_no=qh.lot_no
+        WHERE o.production_order_id=$1 AND qh.warehouse_id=(SELECT warehouse_id FROM production_orders WHERE id=$1)
+          AND qh.status IN ('PENDING_QC','QUARANTINED')`,[b.productionOrderId]);
+      const available=Number(h.rows[0].balance_qty)-Number(held.rows[0].held_qty);
+      if(Number(b.quantity)>available+0.000001)
+        throw Object.assign(new Error('كمية الهالك تتجاوز الرصيد المتاح بعد استبعاد كميات الجودة المحجوزة'),{code:'P0001'});
       const created=await c.query(`INSERT INTO production_losses(production_order_id,loss_type,quantity,reason,created_by)
         VALUES($1,$2,$3,$4,$5) RETURNING *`,[b.productionOrderId,b.lossType,b.quantity,b.reason.trim(),req.authUser.user_id]);
       return {...created.rows[0],status:'PENDING_APPROVAL'};
@@ -578,8 +583,12 @@ export async function operationsRoutes(app, { db }) {
         JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no
         WHERE p.id=$1 FOR UPDATE OF p,b`,[loss.rows[0].production_order_id]);
       if(!data.rowCount||data.rows[0].quality_status!=='RELEASED')throw Object.assign(new Error('التشغيلة غير متاحة للصرف؛ يجب اجتياز فحص الجودة'),{code:'P0001'});
-      const row=data.rows[0],qty=Number(loss.rows[0].quantity),available=Number(row.quantity),cost=Number(row.average_unit_cost);
-      if(qty>available+0.000001)throw Object.assign(new Error('الرصيد المتاح لا يكفي لاعتماد الهالك'),{code:'P0001'});
+      const row=data.rows[0],qty=Number(loss.rows[0].quantity),cost=Number(row.average_unit_cost);
+      const held=await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
+        WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,
+        [row.warehouse_id,row.item_id,row.lot_no]);
+      const available=Number(row.quantity)-Number(held.rows[0].held_qty);
+      if(qty>available+0.000001)throw Object.assign(new Error('الرصيد المتاح لا يكفي لاعتماد الهالك بعد استبعاد كميات الجودة المحجوزة'),{code:'P0001'});
       const period=await c.query('SELECT status FROM accounting_periods WHERE CURRENT_DATE BETWEEN start_date AND end_date FOR UPDATE');
       if(period.rowCount&&period.rows.some(x=>x.status!=='OPEN'))throw Object.assign(new Error('الفترة المحاسبية مغلقة'),{code:'P0001'});
       const accounts=await c.query("SELECT id,code FROM gl_accounts WHERE code IN ('1200','5420') AND is_active=TRUE");
