@@ -292,6 +292,24 @@ jobs:
               RAISE EXCEPTION 'Delivery status history audit schema is missing';
             END IF;
 
+            IF NOT EXISTS (SELECT 1 FROM permissions WHERE code='sales.void.line')
+              OR NOT EXISTS (SELECT 1 FROM permissions WHERE code='sales.void.invoice')
+              OR NOT EXISTS (SELECT 1 FROM permissions WHERE code='returns.view')
+              OR NOT EXISTS (
+                SELECT 1 FROM role_permissions rp JOIN roles r ON r.id=rp.role_id JOIN permissions p ON p.id=rp.permission_id
+                WHERE r.code='CASHIER' AND p.code='sales.manage'
+              )
+              OR NOT EXISTS (
+                SELECT 1 FROM role_permissions rp JOIN roles r ON r.id=rp.role_id JOIN permissions p ON p.id=rp.permission_id
+                WHERE r.code='STOCK_KEEPER' AND p.code='returns.inspect'
+              )
+              OR NOT EXISTS (
+                SELECT 1 FROM role_permissions rp JOIN roles r ON r.id=rp.role_id JOIN permissions p ON p.id=rp.permission_id
+                WHERE r.code='ACCOUNTANT' AND p.code='returns.approve'
+              ) THEN
+              RAISE EXCEPTION 'Operational role permission defaults are incomplete';
+            END IF;
+
             IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
               OR NOT EXISTS (
                 SELECT 1 FROM role_permissions rp
