@@ -277,6 +277,16 @@ jobs:
               RAISE EXCEPTION 'Cash movement GL and reversal audit schema is missing';
             END IF;
 
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sale_return_refunds' AND column_name='settlement_bank_account_id'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sale_return_refunds' AND column_name='bank_transaction_id'
+            ) OR to_regclass('public.idx_sale_return_refunds_bank_transaction') IS NULL THEN
+              RAISE EXCEPTION 'Card refund merchant settlement audit schema is missing';
+            END IF;
+
             IF to_regclass('public.system_backups') IS NULL
               OR to_regclass('public.idx_system_backups_created') IS NULL
               OR NOT EXISTS (SELECT 1 FROM permissions WHERE code='backup.manage') THEN
