@@ -347,7 +347,8 @@ export async function commercialRoutes(app,{db}){
        WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 AND b.quality_status='RELEASED' FOR UPDATE OF b`,[b.warehouseId,l.itemId,l.lotNo??'']);
     const held=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[b.warehouseId,l.itemId,l.lotNo??'']):{rows:[{held_qty:0}]};
-    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty):0;
+    const reserved=bal.rowCount?await c.query(`SELECT COALESCE(SUM(reserved_qty),0) reserved_qty FROM sales_order_reservations WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status='RESERVED'`,[b.warehouseId,l.itemId,l.lotNo??'']):{rows:[{reserved_qty:0}]};
+    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty)-Number(reserved.rows[0].reserved_qty):0;
     if(!bal.rowCount||available<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لمرتجع المشتريات'),{code:'P0001'});
     await c.query('INSERT INTO purchase_return_lines(purchase_return_id,item_id,lot_no,quantity,unit_cost) VALUES($1,$2,$3,$4,$5)',[h.rows[0].id,l.itemId,l.lotNo??'',l.quantity,bal.rows[0].average_unit_cost]);
    }
@@ -363,7 +364,8 @@ export async function commercialRoutes(app,{db}){
     const bal=await c.query("SELECT b.quantity,b.average_unit_cost FROM inventory_balances b WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 AND b.quality_status='RELEASED' FOR UPDATE OF b",[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
     const held=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{held_qty:0}]};
-    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty):0;
+    const reserved=bal.rowCount?await c.query(`SELECT COALESCE(SUM(reserved_qty),0) reserved_qty FROM sales_order_reservations WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status='RESERVED'`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{reserved_qty:0}]};
+    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty)-Number(reserved.rows[0].reserved_qty):0;
     if(!bal.rowCount||available+0.000001<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لاعتماد المرتجع'),{code:'P0001'});
     const cost=Number(bal.rows[0].average_unit_cost);
     await c.query('UPDATE purchase_return_lines SET unit_cost=$1 WHERE id=$2',[cost,l.id]);
