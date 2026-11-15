@@ -331,6 +331,19 @@ jobs:
               RAISE EXCEPTION 'Super administrator is missing one or more permissions';
             END IF;
 
+            IF NOT EXISTS (
+              SELECT 1 FROM role_permissions rp JOIN roles r ON r.id=rp.role_id JOIN permissions p ON p.id=rp.permission_id
+              WHERE r.code='ACCOUNTANT' AND p.code='bank.report'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM role_permissions rp JOIN roles r ON r.id=rp.role_id JOIN permissions p ON p.id=rp.permission_id
+              WHERE r.code='BRANCH_MANAGER' AND p.code='delivery.report'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM role_permissions rp JOIN roles r ON r.id=rp.role_id JOIN permissions p ON p.id=rp.permission_id
+              WHERE r.code='ACCOUNTANT' AND p.code='reports.export'
+            ) THEN
+              RAISE EXCEPTION 'Reporting role permission defaults are incomplete';
+            END IF;
+
             IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
               OR NOT EXISTS (
                 SELECT 1 FROM role_permissions rp
