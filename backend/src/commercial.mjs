@@ -432,9 +432,11 @@ export async function commercialRoutes(app,{db}){
    if(!h.rowCount||!['POSTED','PARTIALLY_PAID','PAID'].includes(h.rows[0].status))throw Object.assign(new Error('الفاتورة غير قابلة للعكس'),{code:'P0001'});
    const deps=await c.query(`SELECT
     (SELECT COUNT(*) FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED' WHERE a.sales_invoice_id=$1) receipts,
-    (SELECT COUNT(*) FROM sales_return_lines l JOIN sales_returns r ON r.id=l.sales_return_id WHERE r.sales_invoice_id=$1 AND r.status<>'REJECTED') returns`,[req.params.id]);
+    (SELECT COUNT(*) FROM sales_return_lines l JOIN sales_returns r ON r.id=l.sales_return_id WHERE r.sales_invoice_id=$1 AND r.status<>'REJECTED') returns,
+    (SELECT COUNT(*) FROM sales_deliveries d WHERE d.sales_invoice_id=$1 AND d.status<>'CANCELLED') deliveries`,[req.params.id]);
    if(Number(deps.rows[0].receipts)>0)throw Object.assign(new Error('اعكس سندات القبض المرتبطة أولاً'),{code:'P0001'});
    if(Number(deps.rows[0].returns)>0)throw Object.assign(new Error('لا يمكن عكس فاتورة لها مرتجعات غير مرفوضة'),{code:'P0001'});
+   if(Number(deps.rows[0].deliveries)>0)throw Object.assign(new Error('لا يمكن عكس الفاتورة قبل إلغاء أوامر التسليم غير المشحونة؛ أوامر التسليم المشحونة أو المسلمة يجب تسويتها بمرتجع مبيعات'),{code:'P0001'});
    const lines=await c.query('SELECT * FROM sales_invoice_lines WHERE sales_invoice_id=$1 ORDER BY id',[req.params.id]);
    for(const l of lines.rows){
     const bal=await c.query('SELECT quantity,average_unit_cost,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 FOR UPDATE',[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
