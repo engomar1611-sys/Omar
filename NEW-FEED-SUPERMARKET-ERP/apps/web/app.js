@@ -133,7 +133,8 @@ function parseImportCsv(text){
  for(let i=0;i<text.length;i++){const ch=text[i],next=text[i+1];if(ch==='"'&&quoted&&next==='"'){cell+='"';i++;}else if(ch==='"'){quoted=!quoted;}else if(ch===","&&!quoted){row.push(cell);cell="";}else if((ch==="\n"||ch==="\r")&&!quoted){if(ch==="\r"&&next==="\n")i++;row.push(cell);if(row.some(x=>x.trim()!==""))rows.push(row);row=[];cell="";}else cell+=ch;}
  row.push(cell);if(row.some(x=>x.trim()!==""))rows.push(row);
  if(rows.length<2)throw new Error("ملف CSV يجب أن يحتوي على صف عناوين وصف بيانات واحد على الأقل");
- const headers=rows.shift().map(x=>x.replace(/^\uFEFF/,"").trim());
+ const aliases={"كود الصنف":"sku","اسم الصنف":"name_ar","الاسم الإنجليزي":"name_en","كود التصنيف":"category_code","كود الوحدة":"base_unit_code","كود الماركة":"brand_code","حجم العبوة":"pack_size","وحدة العبوة":"pack_unit_code","يباع بالوزن":"is_weighted","يتطلب صلاحية":"tracks_expiry","باركود المصنع":"manufacturer_barcode","سعر الجمهور":"retail_price","سعر الشراء":"purchase_price","كود المورد":"supplier_code","كود الصنف لدى المورد":"supplier_product_code","مصدر السعر":"price_source","نوع مصدر السعر":"price_source_type","رابط المصدر":"source_url"};
+ const headers=rows.shift().map(x=>{const h=x.replace(/^\uFEFF/,"").trim();return aliases[h]||h;});
  return rows.map(values=>{const obj={};headers.forEach((h,i)=>{let v=(values[i]||"").trim();if(v==="")return;if(["is_weighted","tracks_expiry"].includes(h))obj[h]=["1","true","yes","نعم"].includes(v.toLowerCase());else if(["pack_size","retail_price","purchase_price"].includes(h))obj[h]=Number(v);else obj[h]=v;});return obj;});
 }
 function showImportForm(){
