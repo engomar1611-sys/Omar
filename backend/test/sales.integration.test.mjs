@@ -112,6 +112,35 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     );
     assert.equal(Number(afterSale.rows[0].quantity), 10);
 
+    const creditCustomer = (await pool.query(
+      'INSERT INTO customers(code,name_ar,credit_limit) VALUES($1,$2,30) RETURNING id',
+      [code('CL-CUST'), 'عميل حد ائتماني اختبار']
+    )).rows[0];
+    const creditInvoice = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('CL-INV1'),customerId:creditCustomer.id,warehouseId:warehouse.id,
+        lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:20}]}
+    });
+    assert.equal(creditInvoice.statusCode,201,creditInvoice.body);
+    const creditReceipt = await app.inject({
+      method:'POST',url:'/api/v1/accounting/receipts',headers,
+      payload:{receiptNo:code('CL-RC'),customerId:creditCustomer.id,amount:15,paymentMethod:'CASH',
+        allocations:[{invoiceId:creditInvoice.json().id,amount:15}]}
+    });
+    assert.equal(creditReceipt.statusCode,201,creditReceipt.body);
+    const reverseCreditReceipt = await app.inject({
+      method:'POST',url:'/api/v1/accounting/receipts/'+creditReceipt.json().receipt.id+'/reverse',
+      headers,payload:{reason:'اختبار إعادة احتساب الحد الائتماني بعد عكس التحصيل'}
+    });
+    assert.equal(reverseCreditReceipt.statusCode,200,reverseCreditReceipt.body);
+    const creditLimitMustCountReversedReceipt = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('CL-INV2'),customerId:creditCustomer.id,warehouseId:warehouse.id,
+        lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:15}]}
+    });
+    assert.equal(creditLimitMustCountReversedReceipt.statusCode,409,
+      'reversed receipts must not reduce customer credit exposure');
+
     const saleJournal = await pool.query(
       "SELECT total_debit,total_credit FROM journal_entries WHERE source_type='SALES_INVOICE' AND source_id=$1 AND status='POSTED'",
       [invoiceId]
