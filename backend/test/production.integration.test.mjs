@@ -55,7 +55,12 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(approvedAdjustment.json().status,'POSTED');
     const postedBalance=await pool.query('SELECT quantity,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,finished.id,'ADJLOT-'+suffix]);
     assert.equal(Number(postedBalance.rows[0].quantity),2);
-    assert.equal(postedBalance.rows[0].quality_status,'PENDING_QC');
+    assert.equal(postedBalance.rows[0].quality_status,'RELEASED');
+    const adjustmentHold=(await pool.query(`SELECT status,held_qty FROM inventory_quality_holds
+      WHERE source_type='INVENTORY_ADJUSTMENT' AND source_id=$1`,[adjustmentId])).rows[0];
+    assert.ok(adjustmentHold);
+    assert.equal(adjustmentHold.status,'PENDING_QC');
+    assert.equal(Number(adjustmentHold.held_qty),2);
 
     const formulation = await app.inject({method:'POST',url:'/api/v1/formulations',headers,payload:{
       feedProductId:product.id,versionNo:1,lines:[{itemId:raw.id,percentage:100}]
