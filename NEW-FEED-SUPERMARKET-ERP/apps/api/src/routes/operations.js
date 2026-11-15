@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { pool } from "../db.js";
+import { completeSaleHandler } from "./sales.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const txt=(v,n=180)=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=n;
@@ -36,6 +37,59 @@ router.post("/ecommerce/orders",async(req,res,next)=>{const {reference_no,custom
 router.get("/ecommerce/orders",async(_q,res,next)=>{try{const r=await pool.query("SELECT * FROM ecommerce_orders ORDER BY created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/ecommerce/orders/:id",async(req,res,next)=>{if(!uuid.test(req.params.id))return fail(res,"Invalid ecommerce order id");try{const order=await pool.query("SELECT * FROM ecommerce_orders WHERE id=$1",[req.params.id]);if(!order.rowCount)return res.status(404).json({error:"Ecommerce order not found"});const lines=await pool.query("SELECT el.*,p.sku,p.name_ar,u.code unit_code FROM ecommerce_order_lines el JOIN products p ON p.id=el.product_id JOIN units u ON u.id=p.base_unit_id WHERE el.order_id=$1 ORDER BY p.name_ar",[req.params.id]);res.json({order:order.rows[0],lines:lines.rows});}catch(e){next(e);}});
 router.patch("/ecommerce/orders/:id/status",async(req,res,next)=>{const {status}=req.body??{};if(!uuid.test(req.params.id)||!["confirmed","preparing","cancelled"].includes(status))return fail(res,"Invalid ecommerce status transition");try{const r=await pool.query("UPDATE ecommerce_orders SET status=$2 WHERE id=$1 AND ((status='new' AND $2 IN ('confirmed','cancelled')) OR (status='confirmed' AND $2 IN ('preparing','cancelled'))) RETURNING *",[req.params.id,status]);if(!r.rowCount)return res.status(409).json({error:"Order not found or transition is not allowed"});res.json(r.rows[0]);}catch(e){next(e);}});
+router.post("/ecommerce/orders/:id/convert-to-sale",async(req,res,next)=>{
+ const {branch_id,payments,tax_code_id=null,delivery_fee=0}=req.body??{};
+ if(!uuid.test(req.params.id)||!uuid.test(branch_id||"")||!Array.isArray(payments)||!payments.length||!Number.isFinite(Number(delivery_fee))||Number(delivery_fee)<0||(tax_code_id&&!uuid.test(tax_code_id)))
+  return fail(res,"A valid branch, payment allocation and delivery fee are required");
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const order=await c.query("SELECT * FROM ecommerce_orders WHERE id=$1 FOR UPDATE",[req.params.id]);
+  if(!order.rowCount||!["confirmed","preparing"].includes(order.rows[0].status))
+    throw Object.assign(new Error("Only confirmed or preparing ecommerce orders can be converted"),{statusCode:409});
+  if(order.rows[0].sales_id){
+    const existing=await c.query("SELECT * FROM sales WHERE id=$1",[order.rows[0].sales_id]);
+    await c.query("COMMIT");
+    return res.json({order:order.rows[0],sale:existing.rows[0],duplicate:true});
+  }
+  let customerId=order.rows[0].customer_id;
+  if(!customerId){
+    const customer=await c.query("INSERT INTO customers(code,name,phone,address) VALUES($1,$2,$3,$4) RETURNING id",
+      ["WEB-"+order.rows[0].id.slice(0,8),order.rows[0].customer_name,order.rows[0].phone,order.rows[0].address]);
+    customerId=customer.rows[0].id;
+    await c.query("UPDATE ecommerce_orders SET customer_id=$2 WHERE id=$1",[req.params.id,customerId]);
+  }
+  const lines=await c.query(`SELECT el.product_id,el.quantity,p.base_unit_id,
+    (SELECT pp.amount FROM product_prices pp WHERE pp.product_id=p.id AND pp.price_type='retail'
+      AND pp.valid_from<=now() AND (pp.valid_to IS NULL OR pp.valid_to>now())
+      ORDER BY pp.observed_at DESC,pp.created_at DESC LIMIT 1) retail_price
+    FROM ecommerce_order_lines el JOIN products p ON p.id=el.product_id
+    WHERE el.order_id=$1 AND p.is_active=true ORDER BY el.id FOR UPDATE OF p`,[req.params.id]);
+  if(!lines.rowCount)throw Object.assign(new Error("Ecommerce order has no active products"),{statusCode:409});
+  if(lines.rows.some(x=>x.retail_price===null))throw Object.assign(new Error("Every ecommerce product must have an active approved retail price"),{statusCode:409});
+  const payload={
+    reference_no:"WEB-"+order.rows[0].reference_no,
+    branch_id,customer_id:customerId,
+    lines:lines.rows.map(x=>({product_id:x.product_id,unit_id:x.base_unit_id,quantity:Number(x.quantity),unit_price:Number(x.retail_price),discount_amount:0})),
+    payments,idempotency_key:"ecommerce:"+req.params.id,tax_code_id,
+    delivery:{customer_id:customerId,address:order.rows[0].address,delivery_fee:Number(delivery_fee),source_channel:"generic",external_order_reference:order.rows[0].reference_no}
+  };
+  await c.query("COMMIT");
+  let resultBody=null,resultStatus=200,handlerError=null;
+  const response={status(code){resultStatus=code;return this;},json(body){resultBody=body;return this;}};
+  await completeSaleHandler({...req,body:payload},response,error=>{handlerError=error;});
+  if(handlerError)throw handlerError;
+  if(resultStatus>=400)return res.status(resultStatus).json(resultBody);
+  const sale=resultBody?.sale;
+  if(!sale?.id)throw new Error("POS checkout did not return a completed sale");
+  const updated=await pool.query("UPDATE ecommerce_orders SET status='converted',sales_id=$2 WHERE id=$1 AND status IN ('confirmed','preparing') RETURNING *",[req.params.id,sale.id]);
+  if(!updated.rowCount)throw Object.assign(new Error("Sale was created but ecommerce order status could not be updated; retry safely using the same order"),{statusCode:409});
+  res.status(201).json({order:updated.rows[0],sale,delivery:resultBody.delivery||null,duplicate:Boolean(resultBody.duplicate)});
+ }catch(e){
+  if(e.statusCode)return res.status(e.statusCode).json({error:e.message});
+  next(e);
+ }finally{c.release();}
+});
 
 // General ledger journal entries posted by integrated operational workflows.
 router.get("/accounting/journals",async(_req,res,next)=>{try{
