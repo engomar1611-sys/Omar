@@ -8,7 +8,8 @@
     "start": "node apps/api/src/server.js",
     "dev": "node --watch apps/api/src/server.js",
     "check": "node --check scripts/migrate.js && node --check apps/api/src/server.js && node --check apps/api/src/db.js && node --check apps/api/src/auth.js && node --check apps/api/src/routes/auth.js && node --check apps/api/src/routes/catalog.js && node --check apps/api/src/routes/purchasing.js && node --check apps/api/src/routes/product-master.js && node --check apps/api/src/routes/product-imports.js && node --check apps/api/src/routes/operations.js && node --check apps/api/src/routes/sales.js && node --check apps/api/src/routes/returns.js && node --check apps/api/src/routes/pos.js && node --check apps/api/src/routes/users.js && node --check apps/api/src/routes/order-channels.js && node --check apps/api/src/routes/inventory.js && node --check apps/api/src/routes/reporting.js && node --check apps/api/src/routes/supplier-accounting.js && node --check apps/api/src/routes/extended-operations.js && node --check apps/web/app.js",
-    "migrate": "node scripts/migrate.js"
+    "migrate": "node scripts/migrate.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"
