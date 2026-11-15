@@ -188,14 +188,15 @@ export async function supplierQuotationRoutes(app, { db }) {
           return { conflict: 'REQUEST_NOT_CONVERTIBLE' };
         }
         const awarded = await client.query(`
-          SELECT q.*, s.is_active
+          SELECT q.*, s.is_active,
+            (q.valid_until IS NOT NULL AND q.valid_until < CURRENT_DATE) AS quote_expired
           FROM supplier_quotes q JOIN suppliers s ON s.id = q.supplier_id
           WHERE q.purchase_request_id = $1 AND q.status = 'AWARDED'
           FOR UPDATE OF q
         `, [request.params.id]);
         if (!awarded.rowCount || !awarded.rows[0].is_active) return { conflict: 'NO_ACTIVE_AWARDED_QUOTE' };
         const quote = awarded.rows[0];
-        if (quote.valid_until && new Date(quote.valid_until).getTime() < Date.now()) return { conflict: 'AWARDED_QUOTE_EXPIRED' };
+        if (quote.quote_expired) return { conflict: 'AWARDED_QUOTE_EXPIRED' };
         const lines = await client.query(`
           SELECT ql.*, prl.line_no, prl.requested_qty
           FROM supplier_quote_lines ql
