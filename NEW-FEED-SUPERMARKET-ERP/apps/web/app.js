@@ -22,7 +22,7 @@ document.getElementById("bootstrapForm").addEventListener("submit",async e=>{
 if(storedToken){document.getElementById("authGate").style.display="none";const name=sessionStorage.getItem("nf_user_name");const userLabel=document.querySelector(".user b");if(name&&userLabel)userLabel.textContent=name;}
 document.getElementById("logoutButton").onclick=()=>{sessionStorage.removeItem("nf_access_token");sessionStorage.removeItem("nf_user_name");location.reload();};
 let posProducts=[],posAllProducts=[],posContext=null,posDiscountSettings=null,productSearchTimer=null;
-const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["stocktake","▦","الجرد والتسوية"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["returns","↶","المرتجعات والاعتمادات"],["discounts","％","قواعد الخصم"],["customers","♙","العملاء"],["loyalty","★","نقاط الولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات"],["cash","▣","الخزينة والورديات"],["bank","▤","الحسابات البنكية"],["hr","♙","الموارد البشرية والرواتب"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["orderChannels","↔","ربط تطبيقات الطلبات"],["ecommerce","▧","المتجر الإلكتروني"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
+const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["stocktake","▦","الجرد والتسوية"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["returns","↶","المرتجعات والاعتمادات"],["discounts","％","قواعد الخصم"],["customers","♙","العملاء"],["loyalty","★","نقاط الولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات"],["cash","▣","الخزينة والورديات"],["bank","▤","الحسابات البنكية"],["hr","♙","الموارد البشرية والرواتب"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["orderChannels","↔","ربط تطبيقات الطلبات"],["ecommerce","▧","المتجر الإلكتروني"],["reports","▤","التقارير"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
 const moduleData={catalog:["الأصناف والباركود",["كود الصنف","اسم الصنف","التصنيف","الوحدة الأساسية","باركود","حالة الوزن","الصلاحية"],"لا توجد أصناف مسجلة بعد. أضف بيانات الأصناف المعتمدة أو استوردها من ملف موثوق."],inventory:["المخازن والمخزون",["كود الصنف","الصنف","المخزن","التشغيلة","الصلاحية","الكمية","متوسط التكلفة"],"ستظهر أرصدة المخزون وحركاته بعد تهيئة المخازن وإدخال أرصدة افتتاحية معتمدة."],purchasing:["المشتريات وطلبات الشراء",["الرقم المرجعي","المورد","التاريخ","الحالة","القيمة"],"أنشئ طلب شراء، ثم اعتمده وأصدر أمر الشراء وسجل الاستلام وفحص الجودة."],sales:["المبيعات والفواتير",["الرقم المرجعي","التاريخ","الكاشير","العميل","الإجمالي","الحالة"],"تظهر فواتير البيع المكتملة والمرتجعات بعد ربط نقاط البيع بقاعدة البيانات."],customers:["العملاء والولاء",["كود العميل","اسم العميل","الهاتف","نقاط الولاء","الحالة"],"سجل العملاء وربطهم بالمبيعات ونظام الولاء."],suppliers:["الموردون",["كود المورد","اسم المورد","الهاتف","الرصيد","الحالة"],"سجل الموردين وربطهم بطلبات الشراء والاستلام والمستحقات."],accounting:["الحسابات والخزينة",["كود الحساب","اسم الحساب","نوع الحساب","الحالة"],"دليل الحسابات والقيود اليومية والخزائن والبنوك والتسويات."],hr:["الموارد البشرية",["كود الموظف","اسم الموظف","الوظيفة","الفرع","الحالة"],"ملفات الموظفين والورديات والحضور والإجازات والصلاحيات الوظيفية."],assets:["الأصول والصيانة",["كود الأصل","اسم الأصل","التصنيف","الموقع","الحالة"],"سجل الأصول والترقيم وطباعة ملصقات الباركود والصيانة."],delivery:["التوصيل",["رقم الطلب","العميل","العنوان","مندوب التوصيل","الحالة"],"إدارة طلبات التوصيل وتخصيص المندوب ومتابعة التسليم."],ecommerce:["المتجر الإلكتروني",["رقم الطلب","العميل","قناة الطلب","الدفع","الحالة"],"إدارة كتالوج المتجر والطلبات ومزامنتها مع المخزون ونقاط البيع."],users:["المستخدمون والصلاحيات",["اسم المستخدم","الاسم","الدور","الصلاحيات","الحالة"],"إدارة المستخدمين والأدوار والصلاحيات على مستوى الموديول والإجراء."],settings:["إعدادات النظام",["الإعداد","القيمة","الوصف"],"إعدادات الشركة والفروع والضرائب والترقيم والطباعة والنسخ الاحتياطي والاتصال."],discounts:["قواعد الخصم",["الحد الأدنى","نوع الخصم","القيمة"],"إعداد خصومات تلقائية للطلبات ورسوم التوصيل."]};
 let cart=[],activeCategory="الكل",lastPosReceipt=null;
 const $=id=>document.getElementById(id),money=n=>Number(n).toFixed(2);
@@ -507,11 +507,31 @@ async function openStocktake(id){
   $("backInventory").onclick=openInventory;
  }catch(e){hostError(root,e.message);}
 }
+let reportExportSequence=0;
+const reportExportData=new Map();
+function bindReportExports(container){
+ container.querySelectorAll("[data-export-report]").forEach(button=>{
+  button.onclick=async()=>{
+   const report=reportExportData.get(button.dataset.exportReport);
+   if(!report)return toast("بيانات التقرير غير متاحة؛ أعد تحميل التقرير");
+   try{
+    await api("/api/reports/export-permission");
+    const csv=window.NewFeedReportExport?.toCsv(report.rows,report.columns);
+    if(typeof csv!=="string")throw new Error("مكوّن تصدير CSV غير محمّل");
+    const blob=new Blob(["\\uFEFF",csv],{type:"text/csv;charset=utf-8"});
+    const url=URL.createObjectURL(blob),a=document.createElement("a");
+    a.href=url;a.download="newfeed-report-"+new Date().toISOString().slice(0,10)+".csv";
+    document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);
+   }catch(e){toast(e.message);}
+  };
+ });
+}
 function reportTable(title,items,columns){
  const id="rpt"+(++reportExportSequence);reportExportData.set(id,{title,rows:items||[],columns});
- return '<section class="purchase-panel"><div class="module-toolbar"><h2>'+escapeHtml(title)+'</h2>'+(items&&items.length?'<button class="small-btn" data-export-report="'+id+'">تصدير Excel/CSV</button>':'')+'</div>'+(items&&items.length?'<div class="table-scroll"><table class="module-table"><thead><tr>'+columns.map(c=>'<th>'+escapeHtml(c[1])+'</th>').join("")+'</tr></thead><tbody>'+items.map(row=>'<tr>'+columns.map(c=>'<td>'+escapeHtml(formatModuleValue(row[c[0]]))+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد بيانات في الفترة المحددة.</div>')+'</section>';
+ return '<section class="purchase-panel"><div class="module-toolbar"><h2>'+escapeHtml(title)+'</h2>'+(items&&items.length?'<button class="small-btn" data-export-report="'+id+'">تصدير CSV (Excel)</button>':'')+'</div>'+(items&&items.length?'<div class="table-scroll"><table class="module-table"><thead><tr>'+columns.map(c=>'<th>'+escapeHtml(c[1])+'</th>').join("")+'</tr></thead><tbody>'+items.map(row=>'<tr>'+columns.map(c=>'<td>'+escapeHtml(formatModuleValue(row[c[0]]))+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد بيانات في الفترة المحددة.</div>')+'</section>';
 }
 async function openReports(){
+ reportExportData.clear();reportExportSequence=0;
  const root=$("moduleView"),today=new Date().toLocaleDateString("en-CA");
  root.innerHTML='<h1 class="module-title">مركز التقارير</h1><section class="purchase-panel"><div class="form-grid"><label>من تاريخ<input id="reportFrom" type="date" value="'+today+'"></label><label>إلى تاريخ<input id="reportTo" type="date" value="'+today+'"></label><label>بحث عن الصنف<input id="reportProductSearch" placeholder="اكتب اسم الصنف أو الكود"></label><label>الصنف (اختياري)<select id="reportProduct"><option value="">كل الأصناف</option></select></label><label>التصنيف (اختياري)<select id="reportCategory"><option value="">كل التصنيفات</option></select></label><label>المخزن (اختياري)<select id="reportWarehouse"><option value="">كل المخازن</option></select></label></div><div class="report-actions"><button class="primary-btn" data-report="daily-sales">البيع اليومي</button><button class="primary-btn" data-report="product-sales">مبيعات صنف</button><button class="primary-btn" data-report="category-sales">مبيعات التصنيفات</button><button class="primary-btn" data-report="inventory">أرصدة وقيمة المخزون</button><button class="primary-btn" data-report="inventory-movements">حركات المخزون</button><button class="primary-btn" data-report="returns">المرتجعات</button><button class="primary-btn" data-report="purchases">المشتريات</button><button class="primary-btn" data-report="customers">حركة العملاء</button><button class="primary-btn" data-report="suppliers">حركة الموردين</button><button class="primary-btn" data-report="accounting">القيود والحسابات</button><button class="primary-btn" data-report="bank-transactions">عمليات الفيزا والبنوك</button><button class="primary-btn" data-report="delivery">التوصيل</button><button class="primary-btn" data-report="ecommerce">المتجر الإلكتروني</button><button class="primary-btn" data-report="hr-assets">الموظفون والأصول</button></div></section><div id="reportResults"><div class="empty-state">اختر التقرير المطلوب لعرض البيانات.</div></div>';
  try{
@@ -698,6 +718,7 @@ function openModule(id){
  $("posView").classList.toggle("hidden",id!=="pos");$("posActions").classList.toggle("hidden",id!=="pos");$("moduleView").classList.toggle("hidden",id==="pos");
  const title=modules.find(x=>x[0]===id)?.[2]||"نقطة البيع";$("screenTitle").textContent=title;
  if(id==="pos")return;
+ if(id==="reports"){openReports();return;}
  if(id==="ecommerce"){openEcommerce();return;}
  if(id==="returns"){openReturns();return;}
  if(["loyalty","cash","bank","hr","settings","assets","accounting"].includes(id)){openExtendedModule(id);return;}
