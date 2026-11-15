@@ -127,7 +127,7 @@ router.post("/sales/returns/:id/inspect",requirePermission("returns.inspect"),as
   if(!uuid.test(req.params.id)||!uuid.test(warehouse_id||"")||(inspected_by&&!uuid.test(inspected_by))||
      !Array.isArray(lines)||!lines.length||lines.length>100||
      lines.some(x=>!uuid.test(x.return_line_id||"")||!["sellable","damaged","expired"].includes(x.condition)||
-       (x.expiry_date&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(x.expiry_date))))
+       (x.expiry_date&&!/^\d{4}-\d{2}-\d{2}$/.test(x.expiry_date))))
     return fail(res,400,"Invalid return inspection");
   const client=await pool.connect();
   try{
