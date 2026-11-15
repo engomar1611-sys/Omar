@@ -57,6 +57,12 @@ test('supplier quotations: complete line coverage, comparison, single award and 
     });
     assert.equal(quoteB.statusCode, 201, quoteB.body);
 
+    const bypass = await app.inject({
+      method: 'POST', url: '/api/v1/purchase-requests/' + requestId + '/convert', headers,
+      payload: { orderNo: code('BYPASS'), supplierId: supplierB.id, lines: [{ requestLineId: requestLine.id, unitCost: 1 }] }
+    });
+    assert.equal(bypass.statusCode, 409, bypass.body, 'legacy conversion must not bypass a submitted supplier quotation');
+
     const comparison = await app.inject({ method: 'GET', url: '/api/v1/purchase-requests/' + requestId + '/quote-comparison', headers });
     assert.equal(comparison.statusCode, 200, comparison.body);
     assert.equal(comparison.json().length, 2);
