@@ -20,6 +20,7 @@ DisableProgramGroupPage=yes
 [Files]
 Source: "..\dist\server-payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "configure-server.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "ReverseProxy.Caddyfile"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{group}\إعداد خادم NEW FEED ERP"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\configure-server.ps1"""; WorkingDir: "{app}"
 [Run]
