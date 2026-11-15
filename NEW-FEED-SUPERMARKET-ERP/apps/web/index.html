@@ -56,6 +56,14 @@
           <div class="cart-meta"><span>عدد الأصناف: <b id="itemCount">0</b></span><span>المجموع الفرعي: <b id="subtotal">0.00</b> ج.م</span></div>
           <div class="discount-row"><label for="discountInput">خصم (%)</label><input id="discountInput" type="number" min="0" max="100" value="0"><b id="discountValue">0.00</b></div>
           <div class="grand-total"><span>الإجمالي بعد الخصم</span><strong id="grandTotal">0.00 ج.م</strong></div>
+          <div class="delivery-checkout">
+            <label class="check-label"><input type="checkbox" id="saleIsDelivery"> الطلب توصيل دليفري</label>
+            <div id="saleDeliveryFields" class="delivery-checkout-fields hidden">
+              <label>عميل الفاتورة<select id="saleDeliveryCustomer"><option value="">اختر العميل</option></select></label>
+              <label>عنوان التوصيل<input id="saleDeliveryAddress" maxlength="1000" placeholder="العنوان بالتفصيل"></label>
+              <label>رسوم التوصيل (ج.م)<input id="saleDeliveryFee" type="number" min="0" step="0.01" value="0"></label>
+            </div>
+          </div>
           <div class="payment-row"><span>طريقة الدفع</span><select id="paymentMethod"><option value="cash">نقدي</option><option value="card">بطاقة</option><option value="wallet">محفظة إلكترونية</option></select></div>
           <button class="complete-sale" id="completeSale">🛒 إتمام البيع</button>
         </section>
