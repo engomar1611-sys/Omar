@@ -47,14 +47,14 @@
       <section id="posView" class="pos-layout">
         <aside class="categories" id="categories"></aside>
         <section class="products-area">
-          <div class="search-row"><input id="productSearch" placeholder="ابحث عن صنف بالاسم أو الباركود ..." autocomplete="off"><button id="scanButton" title="إدخال باركود">▥</button></div>
+          <div class="search-row"><input id="productSearch" placeholder="ابحث بالاسم أو الكود أو امسح الباركود ثم Enter" autocomplete="off"><button id="scanButton" title="تركيز قارئ الباركود">▥</button></div>
           <div class="product-grid" id="productGrid"></div>
         </section>
         <section class="cart-panel">
           <div class="cart-head"><span>#</span><span>الصنف</span><span>الكمية</span><span>سعر الوحدة</span><span>الإجمالي</span><span></span></div>
           <div id="cartLines" class="cart-lines"></div>
           <div class="cart-meta"><span>عدد الأصناف: <b id="itemCount">0</b></span><span>المجموع الفرعي: <b id="subtotal">0.00</b> ج.م</span></div>
-          <div class="discount-row"><label for="discountInput">خصم (%)</label><input id="discountInput" type="number" min="0" max="100" value="0"><b id="discountValue">0.00</b></div>
+          <div class="discount-row"><label for="discountInput">خصم يدوي (%)</label><input id="discountInput" type="number" min="0" max="100" value="0"><b id="discountValue">0.00</b></div><div id="autoDiscountHint" class="muted" aria-live="polite"></div>
           <div class="grand-total"><span>الإجمالي بعد الخصم</span><strong id="grandTotal">0.00 ج.م</strong></div>
           <div class="delivery-checkout">
             <label class="check-label"><input type="checkbox" id="saleIsDelivery"> الطلب توصيل دليفري</label>
