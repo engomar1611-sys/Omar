@@ -93,7 +93,7 @@ router.post("/supplier-invoices/:id/post",permission,async(req,res,next)=>{
    grniValue+=Number(line.quantity)*Number(line.unit_cost);invoiceTotal+=Number(line.line_total);
   }
   const variance=invoiceTotal-grniValue;
-  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_invoice',$2,$3,'posted') RETURNING id",["JE-"+inv.rows[0].reference_no,req.params.id,inv.rows[0].invoice_date]);
+  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_invoice',$2,$3,'posted') RETURNING id",[("JE-"+inv.rows[0].reference_no).slice(0,50),req.params.id,inv.rows[0].invoice_date]);
   if(grniValue>0)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.grni,grniValue]);
   if(variance>0.000001)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.purchase_price_variance,variance]);
   if(variance< -0.000001)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.purchase_price_variance,-variance]);
@@ -151,7 +151,7 @@ router.post("/supplier-payments",permission,async(req,res,next)=>{
    await c.query("INSERT INTO supplier_payment_allocations(payment_id,invoice_id,amount) VALUES($1,$2,$3)",[pay.rows[0].id,a.invoice_id,a.amount]);
    allocated+=Number(a.amount);
   }
-  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_payment',$2,$3,'posted') RETURNING id",["JEP-"+reference_no.trim(),pay.rows[0].id,payment_date]);
+  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_payment',$2,$3,'posted') RETURNING id",[("JEP-"+reference_no.trim()).slice(0,50),pay.rows[0].id,payment_date]);
   const payable=await c.query("SELECT account_id FROM system_account_mappings WHERE mapping_key='supplier_payables'");
   if(!payable.rowCount)throw Object.assign(new Error("Supplier payable mapping is missing"),{statusCode:409});
   await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,payable.rows[0].account_id,amount]);
@@ -198,7 +198,7 @@ router.post("/supplier-invoices/:id/void",permission,async(req,res,next)=>{
   if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
   const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[inv.rows[0].journal_entry_id]);
   if(!original.rowCount)throw Object.assign(new Error("Original posted journal entry not found"),{statusCode:409});
-  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_invoice_void',$2,CURRENT_DATE,'posted') RETURNING id",["VOID-INV-"+inv.rows[0].reference_no,req.params.id]);
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_invoice_void',$2,CURRENT_DATE,'posted') RETURNING id",[("VOID-INV-"+inv.rows[0].reference_no).slice(0,50),req.params.id]);
   await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) SELECT $1,account_id,credit,debit FROM journal_lines WHERE journal_entry_id=$2",[reversal.rows[0].id,original.rows[0].id]);
   await c.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
   await c.query("UPDATE supplier_invoices SET status='voided' WHERE id=$1",[req.params.id]);
@@ -218,7 +218,7 @@ router.post("/supplier-payments/:id/void",permission,async(req,res,next)=>{
   if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
   const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[payment.rows[0].journal_entry_id]);
   if(!original.rowCount)throw Object.assign(new Error("Original posted journal entry not found"),{statusCode:409});
-  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_payment_void',$2,CURRENT_DATE,'posted') RETURNING id",["VOID-PAY-"+payment.rows[0].reference_no,req.params.id]);
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_payment_void',$2,CURRENT_DATE,'posted') RETURNING id",[("VOID-PAY-"+payment.rows[0].reference_no).slice(0,50),req.params.id]);
   await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) SELECT $1,account_id,credit,debit FROM journal_lines WHERE journal_entry_id=$2",[reversal.rows[0].id,original.rows[0].id]);
   await c.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
   await c.query("UPDATE supplier_payments SET status='voided',void_reason=$2,voided_by=$3,voided_at=now() WHERE id=$1",[req.params.id,reason.trim(),req.user.id]);
@@ -323,7 +323,7 @@ router.post("/supplier-returns/:id/post",permission,async(req,res,next)=>{
    await c.query("INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_out,unit_cost,source_type,source_id,created_by) SELECT $1,'adjustment',$2,warehouse_id,$3,$4,$5,'supplier_return',$6,$7 FROM stock_lots WHERE id=$3",["SRET-"+ret.rows[0].reference_no,line.product_id,line.stock_lot_id,line.accepted_quantity,line.unit_cost,req.params.id,req.user.id]);
   }
   const variance=inventoryCost-creditTotal;
-  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_return',$2,CURRENT_DATE,'posted') RETURNING id",["SRET-JE-"+ret.rows[0].reference_no,req.params.id]);
+  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_return',$2,CURRENT_DATE,'posted') RETURNING id",[("SRET-JE-"+ret.rows[0].reference_no).slice(0,50),req.params.id]);
   if(creditTotal>0)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.supplier_payables,creditTotal]);
   if(inventoryCost>0)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.inventory,inventoryCost]);
   if(variance>0.000001)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.purchase_price_variance,variance]);
