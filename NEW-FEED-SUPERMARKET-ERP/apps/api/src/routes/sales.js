@@ -108,7 +108,7 @@ router.post("/sales/complete",async(req,res,next)=>{
       const bank=await client.query("SELECT id FROM payment_banks WHERE id=$1 AND is_active=true",[p.bank_id]);
       if(!bank.rowCount)throw Object.assign(new Error("Selected payment bank is not active"),{statusCode:400});
     }
-    await client.query("INSERT INTO sale_payments(sale_id,payment_method_id,amount,reference_text,bank_id,transaction_reference,card_last_four,terminal_amount,terminal_captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $5::uuid IS NOT NULL THEN now() ELSE NULL END)",[sale.rows[0].id,payment_method_id,p.amount,p.reference_text||null,isCard?p.bank_id:null,isCard?p.transaction_reference.trim():null,isCard?p.card_last_four:null,isCard?Number(p.terminal_amount):null]);
+    await client.query("INSERT INTO sale_payments(sale_id,payment_method_id,amount,reference_text,bank_id,transaction_reference,card_last_four,terminal_amount,terminal_captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $5::uuid IS NOT NULL THEN now() ELSE NULL END)",[sale.rows[0].id,p.payment_method_id,p.amount,p.reference_text||null,isCard?p.bank_id:null,isCard?p.transaction_reference.trim():null,isCard?p.card_last_four:null,isCard?Number(p.terminal_amount):null]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journal.rows[0].id,method.rows[0].account_id,p.amount]);
   }
   if(total>0)await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.sales_revenue,total]);
