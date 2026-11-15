@@ -67,18 +67,15 @@ export async function commercialRoutes(app,{db}){
     let subtotal=0,costTotal=0;
     for(let i=0;i<b.lines.length;i++){
      const l=b.lines[i];let remaining=Number(l.quantity),lineCost=0,weightedQty=0,chosenLot=l.lotNo??'';
-     const lots=await c.query(`SELECT b.lot_no,
-       b.quantity-COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
-         WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
-           AND qh.status IN ('PENDING_QC','QUARANTINED')),0) AS quantity,
-       b.average_unit_cost
+     const lots=await c.query(`SELECT b.lot_no,b.quantity,b.average_unit_cost
       FROM inventory_balances b
-      WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.quality_status='RELEASED'
-        AND b.quantity-COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
-          WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
-            AND qh.status IN ('PENDING_QC','QUARANTINED')),0)>0
+      WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.quantity>0 AND b.quality_status='RELEASED'
         AND ($3='' OR b.lot_no=$3)
       ORDER BY b.expiry_date ASC NULLS LAST,b.lot_no FOR UPDATE OF b`,[b.warehouseId,l.itemId,chosenLot]);
+     const held=await c.query(`SELECT lot_no,COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
+       WHERE warehouse_id=$1 AND item_id=$2 AND status IN ('PENDING_QC','QUARANTINED') GROUP BY lot_no`,[b.warehouseId,l.itemId]);
+     const heldByLot=new Map(held.rows.map(x=>[x.lot_no,Number(x.held_qty)]));
+     for(const lot of lots.rows)lot.quantity=Math.max(0,Number(lot.quantity)-(heldByLot.get(lot.lot_no)??0));
      const avail=lots.rows.reduce((s,x)=>s+Number(x.quantity),0);
      if(avail+0.000001<remaining)throw Object.assign(new Error('رصيد غير كافٍ للصنف '+l.itemId),{code:'P0001'});
      const price=Number(l.unitPrice);
@@ -283,12 +280,12 @@ export async function commercialRoutes(app,{db}){
       WHERE pr.purchase_order_id=$1 AND pr.status<>'CANCELLED' AND rl.item_id=$2 AND rl.lot_no=$3`,[b.purchaseOrderId,l.itemId,l.lotNo??'']);
     if(Number(already.rows[0].returned)+Number(l.quantity)>Number(accepted.rows[0].received)+0.000001)
      throw Object.assign(new Error('كمية المرتجع تتجاوز الكمية المقبولة لهذا الصنف والتشغيلة في أمر الشراء'),{code:'P0001'});
-    const bal=await c.query("SELECT b.quantity-COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
-       WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
-         AND qh.status IN ('PENDING_QC','QUARANTINED')),0) AS available_quantity,
-       b.average_unit_cost FROM inventory_balances b
+    const bal=await c.query("SELECT b.quantity,b.average_unit_cost FROM inventory_balances b
        WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 AND b.quality_status='RELEASED' FOR UPDATE OF b",[b.warehouseId,l.itemId,l.lotNo??'']);
-    if(!bal.rowCount||Number(bal.rows[0].available_quantity)<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لمرتجع المشتريات'),{code:'P0001'});
+    const held=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
+      WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[b.warehouseId,l.itemId,l.lotNo??'']):{rows:[{held_qty:0}]};
+    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty):0;
+    if(!bal.rowCount||available<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لمرتجع المشتريات'),{code:'P0001'});
     await c.query('INSERT INTO purchase_return_lines(purchase_return_id,item_id,lot_no,quantity,unit_cost) VALUES($1,$2,$3,$4,$5)',[h.rows[0].id,l.itemId,l.lotNo??'',l.quantity,bal.rows[0].average_unit_cost]);
    }
    return {returnId:h.rows[0].id,status:'PENDING_WAREHOUSE'};
@@ -300,8 +297,11 @@ export async function commercialRoutes(app,{db}){
    if(!h.rowCount||h.rows[0].status!=='PENDING_WAREHOUSE')throw Object.assign(new Error('مرتجع المشتريات ليس بانتظار اعتماد المخزن'),{code:'P0001'});
    const lines=await c.query('SELECT * FROM purchase_return_lines WHERE purchase_return_id=$1 ORDER BY id',[req.params.id]);
    for(const l of lines.rows){
-    const bal=await c.query("SELECT quantity,average_unit_cost FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND quality_status='RELEASED' FOR UPDATE",[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
-    if(!bal.rowCount||Number(bal.rows[0].available_quantity)+0.000001<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لاعتماد المرتجع'),{code:'P0001'});
+    const bal=await c.query("SELECT b.quantity,b.average_unit_cost FROM inventory_balances b WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 AND b.quality_status='RELEASED' FOR UPDATE OF b",[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
+    const held=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
+      WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{held_qty:0}]};
+    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty):0;
+    if(!bal.rowCount||available+0.000001<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لاعتماد المرتجع'),{code:'P0001'});
     const cost=Number(bal.rows[0].average_unit_cost);
     await c.query('UPDATE purchase_return_lines SET unit_cost=$1 WHERE id=$2',[cost,l.id]);
     await c.query('UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[l.quantity,h.rows[0].warehouse_id,l.item_id,l.lot_no]);
