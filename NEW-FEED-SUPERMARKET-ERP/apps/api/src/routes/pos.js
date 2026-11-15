@@ -11,7 +11,8 @@ router.get("/pos/context",async(req,res,next)=>{
       pool.query("SELECT id,code,name_ar FROM payment_methods WHERE is_active=true ORDER BY code")
     ]);
     if(!branch.rowCount)return res.status(409).json({error:"Create an active branch before opening POS"});
-    res.json({user:req.user,branch:branch.rows[0],payment_methods:payments.rows});
+    const permissions=await pool.query(`SELECT DISTINCT p.code FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id JOIN permissions p ON p.id=rp.permission_id WHERE ur.user_id=$1`,[req.user.id]);
+    res.json({user:req.user,branch:branch.rows[0],payment_methods:payments.rows,permission_codes:permissions.rows.map(x=>x.code)});
   }catch(e){next(e);}
 });
 export default router;
