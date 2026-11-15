@@ -7,6 +7,32 @@ const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 const dates=(req,res)=>{const from=req.query.from||new Date().toISOString().slice(0,10),to=req.query.to||from;if(!dateRe.test(from)||!dateRe.test(to)||to<from){res.status(400).json({error:"Invalid date range"});return null;}return {from,to};};
 
 router.get("/reports/export-permission",requirePermission("reports.export"),(_req,res)=>res.json({allowed:true}));
+router.get("/reports/bank-transactions",requirePermission("bank.report"),async(req,res,next)=>{
+ const range=dates(req,res);if(!range)return;
+ try{
+  const [items,summary]=await Promise.all([
+   pool.query(`SELECT sp.id,sp.created_at, s.reference_no invoice_reference,
+     sp.transaction_reference,sp.card_last_four,sp.amount,sp.terminal_amount,
+     pb.code bank_code,pb.name_ar bank_name_ar,pb.name_en bank_name_en,
+     pm.name_ar payment_method,u.display_name cashier_name
+    FROM sale_payments sp JOIN sales s ON s.id=sp.sale_id
+    JOIN payment_methods pm ON pm.id=sp.payment_method_id
+    LEFT JOIN payment_banks pb ON pb.id=sp.bank_id
+    JOIN users u ON u.id=s.cashier_id
+    WHERE sp.bank_id IS NOT NULL AND sp.created_at >= $1::date
+      AND sp.created_at < ($2::date + INTERVAL '1 day')
+    ORDER BY sp.created_at DESC`,[range.from,range.to]),
+   pool.query(`SELECT COUNT(*)::int transaction_count,
+     COALESCE(SUM(sp.amount),0) total_amount,
+     COUNT(DISTINCT sp.bank_id)::int bank_count,
+     COUNT(DISTINCT sp.sale_id)::int invoice_count
+    FROM sale_payments sp WHERE sp.bank_id IS NOT NULL
+     AND sp.created_at >= $1::date AND sp.created_at < ($2::date + INTERVAL '1 day')`,[range.from,range.to])
+  ]);
+  res.json({from:range.from,to:range.to,items:items.rows,summary:summary.rows[0]});
+ }catch(e){next(e);}
+});
+
 router.get("/reports/options",async(req,res,next)=>{
  const q=String(req.query.q||"").trim().slice(0,120);
  try{
