@@ -19,7 +19,7 @@ try{
   const registered=await pool.query("SELECT sha256 FROM system_backups WHERE file_name=$1 AND status='completed'",[fileName]);
   if(!registered.rowCount)throw new Error("Backup is not registered in this database; restore requires a verified registered backup");
   const verified=await verifyDatabaseBackup(fileName,registered.rows[0].sha256);
-  const active=await pool.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()");
+  const active=await pool.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND backend_type='client backend' AND usename=current_user AND pid<>pg_backend_pid()");
   if(Number(active.rows[0].count)>0)throw new Error("Other database sessions are connected. Stop the Windows ERP service and all application workers before restore.");
   const safety=await createDatabaseBackup(null);
   process.stdout.write("Safety backup created: "+safety.file_name+"\n");
