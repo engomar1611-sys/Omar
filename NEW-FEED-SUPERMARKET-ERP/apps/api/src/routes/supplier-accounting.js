@@ -36,7 +36,7 @@ router.get("/supplier-invoice-eligible-lines/:receiptId",permission,async(req,re
 router.post("/supplier-invoices",permission,async(req,res,next)=>{
  const {reference_no,supplier_invoice_no,supplier_id,purchase_order_id,invoice_date,due_date=null,lines}=req.body??{};
  if(!txt(reference_no,50)||!txt(supplier_invoice_no,100)||!uuid.test(supplier_id||"")||!uuid.test(purchase_order_id||"")||
-   !/^\d{4}-\d{2}-\d{2}$/.test(invoice_date||"")||(due_date&&!/^\d{4}-\d{2}-\d{2}$/.test(due_date))||
+   !/^\d{4}-\d{2}-\d{2}$/.test(invoice_date||"")||(due_date&&(!/^\d{4}-\d{2}-\d{2}$/.test(due_date)||due_date<invoice_date))||
    !Array.isArray(lines)||!lines.length||lines.length>500||lines.some(x=>!uuid.test(x.receipt_line_id||"")||!num(x.quantity)||!Number.isFinite(Number(x.unit_price))||Number(x.unit_price)<0))
   return res.status(400).json({error:"Invalid supplier invoice fields"});
  const c=await pool.connect();
