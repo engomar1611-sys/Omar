@@ -163,7 +163,7 @@ router.get("/supplier-account-statement/:supplierId",permission,async(req,res,ne
   if(!supplier.rowCount)return res.status(404).json({error:"Supplier not found"});
   const invoices=await pool.query("SELECT i.id,i.reference_no,i.supplier_invoice_no,i.invoice_date,i.due_date,i.subtotal,COALESCE(SUM(a.amount) FILTER(WHERE p.status='posted'),0) paid_amount FROM supplier_invoices i LEFT JOIN supplier_payment_allocations a ON a.invoice_id=i.id LEFT JOIN supplier_payments p ON p.id=a.payment_id WHERE i.supplier_id=$1 AND i.status='posted' GROUP BY i.id ORDER BY i.invoice_date,i.created_at",[req.params.supplierId]);
   const payments=await pool.query("SELECT id,reference_no,payment_date,amount,payment_method_id,payment_reference,status FROM supplier_payments WHERE supplier_id=$1 ORDER BY payment_date,created_at",[req.params.supplierId]);
-  const totals=await pool.query("SELECT COALESCE(SUM(i.subtotal),0) invoiced,COALESCE(SUM(a.amount) FILTER(WHERE p.status='posted'),0) paid FROM supplier_invoices i LEFT JOIN supplier_payment_allocations a ON a.invoice_id=i.id LEFT JOIN supplier_payments p ON p.id=a.payment_id WHERE i.supplier_id=$1 AND i.status='posted'",[req.params.supplierId]);
+  const totals=await pool.query("SELECT (SELECT COALESCE(SUM(subtotal),0) FROM supplier_invoices WHERE supplier_id=$1 AND status='posted') invoiced,(SELECT COALESCE(SUM(a.amount),0) FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.payment_id JOIN supplier_invoices i ON i.id=a.invoice_id WHERE i.supplier_id=$1 AND i.status='posted' AND p.status='posted') paid",[req.params.supplierId]);
   res.json({supplier:supplier.rows[0],invoices:invoices.rows,payments:payments.rows,totals:{...totals.rows[0],outstanding:Number(totals.rows[0].invoiced)-Number(totals.rows[0].paid)}});
  }catch(e){next(e);}
 });
@@ -192,7 +192,7 @@ router.post("/supplier-invoices/:id/void",permission,async(req,res,next)=>{
   if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
   const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[inv.rows[0].journal_entry_id]);
   if(!original.rowCount)throw Object.assign(new Error("Original posted journal entry not found"),{statusCode:409});
-  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_invoice_void',$2,CURRENT_DATE,'posted') RETURNING id",["VOID-"+inv.rows[0].reference_no,req.params.id]);
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_invoice_void',$2,CURRENT_DATE,'posted') RETURNING id",["VOID-INV-"+inv.rows[0].reference_no,req.params.id]);
   await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) SELECT $1,account_id,credit,debit FROM journal_lines WHERE journal_entry_id=$2",[reversal.rows[0].id,original.rows[0].id]);
   await c.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
   await c.query("UPDATE supplier_invoices SET status='voided' WHERE id=$1",[req.params.id]);
@@ -201,8 +201,8 @@ router.post("/supplier-invoices/:id/void",permission,async(req,res,next)=>{
 });
 
 router.post("/supplier-payments/:id/void",permission,async(req,res,next)=>{
- const {reason}=req.body??{};
- if(!uuid.test(req.params.id)||!txt(reason,1000))return res.status(400).json({error:"A cancellation reason is required"});
+ const {reason,settlement_reversed=false}=req.body??{};
+ if(!uuid.test(req.params.id)||!txt(reason,1000)||settlement_reversed!==true)return res.status(400).json({error:"A reason and confirmation that the payment was actually reversed are required"});
  const c=await pool.connect();
  try{
   await c.query("BEGIN");
@@ -212,7 +212,7 @@ router.post("/supplier-payments/:id/void",permission,async(req,res,next)=>{
   if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
   const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[payment.rows[0].journal_entry_id]);
   if(!original.rowCount)throw Object.assign(new Error("Original posted journal entry not found"),{statusCode:409});
-  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_payment_void',$2,CURRENT_DATE,'posted') RETURNING id",["VOID-"+payment.rows[0].reference_no,req.params.id]);
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_payment_void',$2,CURRENT_DATE,'posted') RETURNING id",["VOID-PAY-"+payment.rows[0].reference_no,req.params.id]);
   await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) SELECT $1,account_id,credit,debit FROM journal_lines WHERE journal_entry_id=$2",[reversal.rows[0].id,original.rows[0].id]);
   await c.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
   await c.query("UPDATE supplier_payments SET status='voided',void_reason=$2,voided_by=$3,voided_at=now() WHERE id=$1",[req.params.id,reason.trim(),req.user.id]);
