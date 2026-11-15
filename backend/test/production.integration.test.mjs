@@ -291,6 +291,11 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
       components:[{componentCode:'LABOR',description:'تكلفة بعد الترحيل',amount:1}]
     }});
     assert.equal(mixedCostPosting.statusCode,409,'incremental and batch cost posting must not be mixed');
+    const incrementalCostDetails=await app.inject({method:'GET',url:'/api/v1/production/orders/'+legacyCostOrderId+'/details',headers});
+    assert.equal(incrementalCostDetails.statusCode,200,incrementalCostDetails.body);
+    assert.equal(incrementalCostDetails.json().costComponents.length,2);
+    assert.equal(incrementalCostDetails.json().journalEntries.filter(x=>x.source_type==='PRODUCTION_COST_COMPONENT').length,2,
+      'production order details must include every incremental cost journal');
 
     const customer = await app.inject({method:'POST',url:'/api/v1/customers',headers,payload:{code:code('CUS'),nameAr:'عميل اختبار تكامل',creditLimit:0}});
     assert.equal(customer.statusCode,201,customer.body);
