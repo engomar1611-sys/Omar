@@ -136,7 +136,7 @@ router.get("/reports/hr-assets",async(_req,res,next)=>{
    pool.query("SELECT employment_status status,COUNT(*)::int count FROM employees GROUP BY employment_status ORDER BY employment_status"),
    pool.query("SELECT status,COUNT(*)::int count FROM employee_shifts WHERE starts_at::date=CURRENT_DATE GROUP BY status ORDER BY status"),
    pool.query("SELECT status,COUNT(*)::int count,COALESCE(SUM(purchase_cost),0) purchase_cost FROM fixed_assets GROUP BY status ORDER BY status"),
-   pool.query("SELECT status,COUNT(*)::int count,COALESCE(SUM(cost),0) maintenance_cost FROM asset_maintenance WHERE created_at::date=CURRENT_DATE GROUP BY status ORDER BY status")
+   pool.query("SELECT status,COUNT(*)::int count,COALESCE(SUM(cost),0) maintenance_cost FROM asset_maintenance WHERE scheduled_at=CURRENT_DATE OR completed_at=CURRENT_DATE GROUP BY status ORDER BY status")
   ]);
   res.json({employees:employees.rows,today_shifts:shifts.rows,assets:assets.rows,today_maintenance:maintenance.rows});
  }catch(e){next(e);}
