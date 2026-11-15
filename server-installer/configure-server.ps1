@@ -58,7 +58,13 @@ TLS_KEY_FILE=
 LOG_LEVEL=info
 "@
 [IO.File]::WriteAllText($envFile, $envContent, [Text.UTF8Encoding]::new($false))
-& icacls $envFile /inheritance:r /grant:r 'SYSTEM:(F)' 'BUILTIN\Administrators:(F)' | Out-Null
+$proxyFile = Join-Path $root 'ReverseProxy.Caddyfile'
+if (Test-Path $proxyFile) {
+  $proxyContent = [IO.File]::ReadAllText($proxyFile)
+  $proxyContent = [regex]::Replace($proxyContent, 'reverse_proxy\s+127\.0\.0\.1:\d+', "reverse_proxy 127.0.0.1:$port")
+  [IO.File]::WriteAllText($proxyFile, $proxyContent, [Text.UTF8Encoding]::new($false))
+}
+& icacls $envFile /inheritance:r /grant:r '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'تعذر حماية ملف إعدادات السيرفر الذي يحتوي على بيانات الاتصال.' }
 
 Push-Location $backend
