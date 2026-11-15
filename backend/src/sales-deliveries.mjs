@@ -92,11 +92,19 @@ export async function salesDeliveryRoutes(app, { db }) {
         for(const l of lines){
           if(seen.has(l.lineId))throw Object.assign(new Error('تكرار بند في تأكيد التسليم'),{code:'P0001'});
           seen.add(l.lineId);
-          const src=await c.query('SELECT id,shipped_qty,delivered_qty FROM sales_delivery_lines WHERE id=$1 AND sales_delivery_id=$2 FOR UPDATE',[l.lineId,req.params.id]);
+          const src=await c.query(`SELECT dl.id,dl.shipped_qty,dl.delivered_qty,dl.invoice_line_id,il.sales_order_line_id FROM sales_delivery_lines dl JOIN sales_invoice_lines il ON il.id=dl.invoice_line_id WHERE dl.id=$1 AND dl.sales_delivery_id=$2 FOR UPDATE OF dl`,[l.lineId,req.params.id]);
           if(!src.rowCount)throw Object.assign(new Error('بند أمر التسليم غير موجود'),{code:'P0001'});
           const remaining=Number(src.rows[0].shipped_qty)-Number(src.rows[0].delivered_qty),q=Number(l.deliveredQty);
           if(q>remaining+0.000001)throw Object.assign(new Error('الكمية المستلمة تتجاوز الكمية المشحونة المتبقية'),{code:'P0001'});
           await c.query('UPDATE sales_delivery_lines SET delivered_qty=delivered_qty+$1 WHERE id=$2',[q,l.lineId]);
+          if(q>0&&src.rows[0].sales_order_line_id){
+            const orderLine=await c.query('UPDATE sales_order_lines SET delivered_qty=delivered_qty+$1 WHERE id=$2 RETURNING sales_order_id',[q,src.rows[0].sales_order_line_id]);
+            if(orderLine.rowCount){
+              const orderTotals=await c.query('SELECT COALESCE(SUM(ordered_qty),0) ordered,COALESCE(SUM(delivered_qty),0) delivered FROM sales_order_lines WHERE sales_order_id=$1',[orderLine.rows[0].sales_order_id]);
+              const orderStatus=Number(orderTotals.rows[0].delivered)<=0?'INVOICED':(Number(orderTotals.rows[0].delivered)+0.000001>=Number(orderTotals.rows[0].ordered)?'DELIVERED':'PARTIALLY_DELIVERED');
+              await c.query('UPDATE sales_orders SET status=$1 WHERE id=$2',[orderStatus,orderLine.rows[0].sales_order_id]);
+            }
+          }
         }
         const totals=await c.query('SELECT COALESCE(SUM(shipped_qty),0) shipped,COALESCE(SUM(delivered_qty),0) delivered FROM sales_delivery_lines WHERE sales_delivery_id=$1',[req.params.id]);
         const delivered=Number(totals.rows[0].delivered),shipped=Number(totals.rows[0].shipped);
