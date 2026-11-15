@@ -89,6 +89,12 @@ router.post("/sales/:id/void",requirePermission("sales.void.invoice"),async(req,
     await client.query("INSERT INTO customer_loyalty_transactions(customer_id,reference_no,transaction_type,points,source_type,source_id,notes,created_by) VALUES($1,$2,'redeem',$3,'sale_void',$4,'Reverse points earned by voided sale',$5)",
       [item.customer_id,"VOID-LOY-"+sale.rows[0].reference_no,item.points,req.params.id,req.user.id]);
   }
+  const redeemed=await client.query("SELECT customer_id,COALESCE(SUM(points),0)::bigint points FROM customer_loyalty_transactions WHERE source_type='sale' AND source_id=$1 AND transaction_type='redeem' GROUP BY customer_id",[req.params.id]);
+  for(const item of redeemed.rows){
+    await client.query("UPDATE customers SET loyalty_points=loyalty_points+$2 WHERE id=$1",[item.customer_id,item.points]);
+    await client.query("INSERT INTO customer_loyalty_transactions(customer_id,reference_no,transaction_type,points,source_type,source_id,notes,created_by) VALUES($1,$2,'earn',$3,'sale_void',$4,'Restore points redeemed by voided sale',$5)",
+      [item.customer_id,"VOID-RESTORE-LOY-"+sale.rows[0].reference_no,item.points,req.params.id,req.user.id]);
+  }
   await client.query("UPDATE sales SET status='voided' WHERE id=$1",[req.params.id]);
   await client.query("UPDATE delivery_orders SET status='cancelled' WHERE sale_id=$1 AND status NOT IN ('delivered','cancelled')",[req.params.id]);
   await client.query("COMMIT");
