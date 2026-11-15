@@ -75,7 +75,7 @@ function renderCart(){
 async function loadPosData(){
  try{
   const [context,catalog,customers,discounts]=await Promise.all([api("/api/pos/context"),api("/api/products?limit=200"),api("/api/customers"),api("/api/sales/discount-settings")]);
-  posContext=context;posProducts=catalog.items||[];posAllProducts=[...posProducts];posDiscountSettings=discounts.settings||null;const customerSelect=$("saleCustomer");if(customerSelect)customerSelect.innerHTML='<option value="">بيع نقدي بدون تسجيل عميل</option>'+(customers.items||[]).map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.customer_number||x.code)+' — '+escapeHtml(x.name)+' — '+escapeHtml(x.phone||"بدون هاتف")+'</option>').join("");
+  posContext=context;posProducts=catalog.items||[];posAllProducts=[...posProducts];posDiscountSettings=discounts.settings||null;const canDiscount=(context.permission_codes||[]).includes("sales.discount");$("discountRow").classList.toggle("hidden",!canDiscount);$("discountFocus").classList.toggle("hidden",!canDiscount);$("discountInput").disabled=!canDiscount;const customerSelect=$("saleCustomer");if(customerSelect)customerSelect.innerHTML='<option value="">بيع نقدي بدون تسجيل عميل</option>'+(customers.items||[]).map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.customer_number||x.code)+' — '+escapeHtml(x.name)+' — '+escapeHtml(x.phone||"بدون هاتف")+'</option>').join("");
   $("paymentMethod").innerHTML=context.payment_methods.map(p=>'<option value="'+p.id+'" data-code="'+escapeHtml(p.code||"") +'">'+escapeHtml(p.name_ar)+'</option>').join("");
   const bankData=await api("/api/payment-banks");const paymentBanks=bankData.items||[];$("cardBankOptions").innerHTML=paymentBanks.map(b=>'<option value="'+escapeHtml(b.name_ar+" — "+b.name_en)+'"></option>').join("");$("cardBank").innerHTML='<option value="">اختر البنك</option>'+paymentBanks.map(b=>'<option value="'+b.id+'">'+escapeHtml(b.name_ar)+' — '+escapeHtml(b.name_en)+'</option>').join("");$("cardBankSearch").oninput=()=>{const chosen=paymentBanks.find(b=>(b.name_ar+" — "+b.name_en)===$("cardBankSearch").value);$("cardBank").value=chosen?.id||"";};
   renderCategories();renderProducts();
@@ -475,7 +475,7 @@ $("productSearch").addEventListener("keydown",async e=>{
 });
 $("discountInput").addEventListener("input",renderCart);
 $("clearCart").onclick=()=>{cart=[];renderCart();toast("تم إفراغ السلة المحلية")};
-$("discountFocus").onclick=()=>{$("discountInput").focus();$("discountInput").select()};
+$("discountFocus").onclick=()=>{if(!posContext?.permission_codes?.includes("sales.discount"))return toast("لا تملك صلاحية الخصم");$("discountInput").focus();$("discountInput").select()};
 $("holdSale").onclick=()=>toast("التعليق المحلي للفاتورة: سيتم ربط الحفظ بالخادم في مرحلة التكامل");
 $("returnSale").onclick=()=>toast("المرتجعات تتطلب فاتورة أصلية وفحص مخزن واعتمادًا ماليًا");
 $("printReceipt").onclick=()=>toast("الطباعة الفعلية تتطلب ربط طابعة الإيصالات");
