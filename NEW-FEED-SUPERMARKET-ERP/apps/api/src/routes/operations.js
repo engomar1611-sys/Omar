@@ -7,6 +7,9 @@ const num=(v,min=0)=>Number.isFinite(Number(v))&&Number(v)>=min;
 const fail=(res,msg)=>res.status(400).json({error:msg});
 
 // Master data
+// Branch and warehouse selectors used by purchasing and stock workflows.
+router.get("/branches",async(_req,res,next)=>{try{const r=await pool.query("SELECT id,code,name FROM branches WHERE is_active=true ORDER BY name");res.json({items:r.rows});}catch(e){next(e);}});
+router.get("/warehouses",async(req,res,next)=>{try{const vals=[];let sql="SELECT w.id,w.code,w.name,w.branch_id,b.name branch_name FROM warehouses w JOIN branches b ON b.id=w.branch_id WHERE w.is_active=true";if(req.query.branch_id){if(!uuid.test(req.query.branch_id))return fail(res,"Invalid branch_id");vals.push(req.query.branch_id);sql+=" AND w.branch_id=$1";}sql+=" ORDER BY w.name";const r=await pool.query(sql,vals);res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/suppliers",async(_q,res,next)=>{try{const r=await pool.query("SELECT * FROM suppliers ORDER BY name");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/suppliers",async(req,res,next)=>{const {code,name,phone=null,email=null,tax_number=null,address=null}=req.body??{};if(!txt(code,60)||!txt(name))return fail(res,"Supplier code and name are required");try{const r=await pool.query("INSERT INTO suppliers(code,name,phone,email,tax_number,address) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",[code.trim(),name.trim(),phone,email,tax_number,address]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
 router.get("/customers",async(_q,res,next)=>{try{const r=await pool.query("SELECT * FROM customers ORDER BY name");res.json({items:r.rows});}catch(e){next(e);}});
