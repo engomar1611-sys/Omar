@@ -247,7 +247,9 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     const detailsAfterLoss=await app.inject({method:'GET',url:'/api/v1/production/orders/'+orderId+'/details',headers});
     assert.equal(detailsAfterLoss.statusCode,200,detailsAfterLoss.body);
     assert.equal(detailsAfterLoss.json().losses.length,2,'both the modern and legacy loss requests must appear in production order details');
-    assert.equal(detailsAfterLoss.json().losses[0].entry_no,'J-LOSS-'+productionLoss.json().id.slice(0,12));
+    const originalLossDetail=detailsAfterLoss.json().losses.find(x=>x.id===productionLoss.json().id);
+    assert.ok(originalLossDetail);
+    assert.equal(originalLossDetail.entry_no,'J-LOSS-'+productionLoss.json().id.slice(0,12));
 
     const secondOrder=await app.inject({method:'POST',url:'/api/v1/production/orders',headers,payload:{orderNo:code('POREV'),feedProductId:product.id,formulationId,warehouseId:warehouse.id,plannedQty:5}});
     assert.equal(secondOrder.statusCode,201,secondOrder.body);
