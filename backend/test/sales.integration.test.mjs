@@ -141,6 +141,32 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.equal(creditLimitMustCountReversedReceipt.statusCode,409,
       'reversed receipts must not reduce customer credit exposure');
 
+    const creditInvoiceLine = (await pool.query(
+      'SELECT id FROM sales_invoice_lines WHERE sales_invoice_id=$1',[creditInvoice.json().id]
+    )).rows[0];
+    const creditReturn = await app.inject({
+      method:'POST',url:'/api/v1/sales/returns',headers,
+      payload:{returnNo:code('CL-RET'),invoiceId:creditInvoice.json().id,warehouseId:warehouse.id,
+        lines:[{invoiceLineId:creditInvoiceLine.id,quantity:0.5}]}
+    });
+    assert.equal(creditReturn.statusCode,201,creditReturn.body);
+    const creditReturnWarehouse = await app.inject({
+      method:'POST',url:'/api/v1/sales/returns/'+creditReturn.json().id+'/warehouse-approve',headers,payload:{}
+    });
+    assert.equal(creditReturnWarehouse.statusCode,200,creditReturnWarehouse.body);
+    const creditReturnAccounting = await app.inject({
+      method:'POST',url:'/api/v1/sales/returns/'+creditReturn.json().id+'/accounting-approve',headers,payload:{}
+    });
+    assert.equal(creditReturnAccounting.statusCode,200,creditReturnAccounting.body);
+    assert.equal(Number(creditReturnAccounting.json().amount),10);
+    const invoiceAfterApprovedReturn = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('CL-INV3'),customerId:creditCustomer.id,warehouseId:warehouse.id,
+        lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:15}]}
+    });
+    assert.equal(invoiceAfterApprovedReturn.statusCode,201,
+      'approved customer returns must reduce credit exposure by their posted receivable amount');
+
     const saleJournal = await pool.query(
       "SELECT total_debit,total_credit FROM journal_entries WHERE source_type='SALES_INVOICE' AND source_id=$1 AND status='POSTED'",
       [invoiceId]
