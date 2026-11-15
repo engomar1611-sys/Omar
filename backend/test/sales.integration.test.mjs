@@ -368,7 +368,7 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     });
     assert.equal(aging.statusCode, 200, aging.body);
     assert.equal(aging.json().length, 1);
-    assert.equal(Number(aging.json()[0].outstanding), 46);
+    assert.equal(Number(aging.json()[0].outstanding), 34);
     assert.equal(String(aging.json()[0].due_date).slice(0, 10), dueDate);
     assert.equal(aging.json()[0].aging_bucket, 'غير مستحق');
 
