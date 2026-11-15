@@ -220,4 +220,97 @@ router.post("/supplier-payments/:id/void",permission,async(req,res,next)=>{
  }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
 });
 
+
+router.get("/supplier-returns",permission,async(_req,res,next)=>{try{
+ const r=await pool.query("SELECT sr.*,s.name supplier_name,po.reference_no purchase_order_reference,pr.reference_no receipt_reference FROM supplier_returns sr JOIN suppliers s ON s.id=sr.supplier_id JOIN purchase_orders po ON po.id=sr.purchase_order_id JOIN purchase_receipts pr ON pr.id=sr.purchase_receipt_id ORDER BY sr.created_at DESC LIMIT 300");
+ res.json({items:r.rows});
+}catch(e){next(e);}});
+
+router.post("/supplier-returns",permission,async(req,res,next)=>{
+ const {reference_no,supplier_id,purchase_receipt_id,reason,lines}=req.body??{};
+ if(!txt(reference_no,50)||!uuid.test(supplier_id||"")||!uuid.test(purchase_receipt_id||"")||!txt(reason,1000)||!Array.isArray(lines)||!lines.length||lines.length>300||lines.some(x=>!uuid.test(x.receipt_line_id||"")||!num(x.quantity)||!Number.isFinite(Number(x.credit_unit_price))||Number(x.credit_unit_price)<0)||new Set(lines.map(x=>x.receipt_line_id)).size!==lines.length)
+  return res.status(400).json({error:"Invalid supplier return fields"});
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const receipt=await c.query("SELECT pr.id,pr.purchase_order_id,pr.inspection_status,po.supplier_id FROM purchase_receipts pr JOIN purchase_orders po ON po.id=pr.purchase_order_id WHERE pr.id=$1 FOR UPDATE OF pr",[purchase_receipt_id]);
+  if(!receipt.rowCount||receipt.rows[0].inspection_status!=="accepted"||receipt.rows[0].supplier_id!==supplier_id)throw Object.assign(new Error("Return must reference an accepted receipt for the selected supplier"),{statusCode:409});
+  const ret=await c.query("INSERT INTO supplier_returns(reference_no,supplier_id,purchase_order_id,purchase_receipt_id,reason,requested_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",[reference_no.trim(),supplier_id,receipt.rows[0].purchase_order_id,purchase_receipt_id,reason.trim(),req.user.id]);
+  for(const line of lines){
+   const source=await c.query("SELECT prl.id,prl.product_id,prl.stock_lot_id,prl.accepted_quantity,pr.inspection_status,sl.quantity_on_hand,sl.unit_cost FROM purchase_receipt_lines prl JOIN purchase_receipts pr ON pr.id=prl.receipt_id JOIN stock_lots sl ON sl.id=prl.stock_lot_id WHERE prl.id=$1 AND pr.id=$2 FOR UPDATE OF prl,sl",[line.receipt_line_id,purchase_receipt_id]);
+   if(!source.rowCount||source.rows[0].inspection_status!=="accepted"||!source.rows[0].stock_lot_id)throw Object.assign(new Error("Return line is not linked to an accepted stock lot"),{statusCode:409});
+   const already=await c.query("SELECT COALESCE(SUM(requested_quantity),0) qty FROM supplier_return_lines srl JOIN supplier_returns sr ON sr.id=srl.return_id WHERE srl.receipt_line_id=$1 AND sr.status IN ('draft','inspected')",[line.receipt_line_id]);
+   if(Number(line.quantity)>Number(source.rows[0].quantity_on_hand)-Number(already.rows[0].qty)+0.000001)throw Object.assign(new Error("Requested return quantity exceeds available stock"),{statusCode:409});
+   await c.query("INSERT INTO supplier_return_lines(return_id,receipt_line_id,stock_lot_id,product_id,requested_quantity,unit_cost,credit_unit_price) VALUES($1,$2,$3,$4,$5,$6,$7)",[ret.rows[0].id,line.receipt_line_id,source.rows[0].stock_lot_id,source.rows[0].product_id,line.quantity,source.rows[0].unit_cost,line.credit_unit_price]);
+  }
+  await c.query("COMMIT");res.status(201).json({supplier_return:ret.rows[0],line_count:lines.length});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
+
+router.post("/supplier-returns/:id/inspect",requirePermission("inventory.manage"),async(req,res,next)=>{
+ if(!uuid.test(req.params.id)||!Array.isArray(req.body?.lines)||!req.body.lines.length)return res.status(400).json({error:"Inspection lines are required"});
+ const seen=new Set();
+ if(req.body.lines.some(x=>!uuid.test(x.id||"")||!Number.isFinite(Number(x.accepted_quantity))||Number(x.accepted_quantity)<0||!Number.isFinite(Number(x.rejected_quantity))||Number(x.rejected_quantity)<0||seen.has(x.id)||(seen.add(x.id),false)))return res.status(400).json({error:"Invalid supplier return inspection quantities"});
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const ret=await c.query("SELECT * FROM supplier_returns WHERE id=$1 FOR UPDATE",[req.params.id]);
+  if(!ret.rowCount||ret.rows[0].status!=="draft")throw Object.assign(new Error("Only draft supplier returns can be inspected"),{statusCode:409});
+  const stored=await c.query("SELECT id,requested_quantity FROM supplier_return_lines WHERE return_id=$1 FOR UPDATE",[req.params.id]);
+  if(stored.rowCount!==req.body.lines.length||stored.rows.some(x=>!req.body.lines.some(y=>y.id===x.id)))throw Object.assign(new Error("Inspection must include every return line exactly once"),{statusCode:400});
+  let acceptedTotal=0;
+  for(const line of req.body.lines){
+   const original=stored.rows.find(x=>x.id===line.id);
+   if(Math.abs(Number(line.accepted_quantity)+Number(line.rejected_quantity)-Number(original.requested_quantity))>0.000001)throw Object.assign(new Error("Accepted and rejected quantities must equal the requested quantity"),{statusCode:400});
+   acceptedTotal+=Number(line.accepted_quantity);
+   await c.query("UPDATE supplier_return_lines SET accepted_quantity=$2,rejected_quantity=$3,notes=$4 WHERE id=$1",[line.id,line.accepted_quantity,line.rejected_quantity,typeof line.notes==="string"?line.notes.slice(0,500):null]);
+  }
+  const status=acceptedTotal>0?"inspected":"rejected";
+  await c.query("UPDATE supplier_returns SET status=$2,inspected_by=$3,inspected_at=now() WHERE id=$1",[req.params.id,status,req.user.id]);
+  await c.query("COMMIT");res.json({supplier_return_id:req.params.id,status,accepted_quantity:acceptedTotal});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
+
+router.post("/supplier-returns/:id/post",permission,async(req,res,next)=>{
+ if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid supplier return id"});
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const ret=await c.query("SELECT * FROM supplier_returns WHERE id=$1 FOR UPDATE",[req.params.id]);
+  if(!ret.rowCount||ret.rows[0].status!=="inspected")throw Object.assign(new Error("Only inspected supplier returns can be posted"),{statusCode:409});
+  const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const lines=await c.query("SELECT * FROM supplier_return_lines WHERE return_id=$1 AND accepted_quantity>0 FOR UPDATE",[req.params.id]);
+  if(!lines.rowCount)throw Object.assign(new Error("No accepted return quantities to post"),{statusCode:409});
+  const maps=await c.query("SELECT mapping_key,account_id FROM system_account_mappings WHERE mapping_key=ANY($1::varchar[])",[["inventory","supplier_payables","purchase_price_variance"]]);
+  const map=Object.fromEntries(maps.rows.map(x=>[x.mapping_key,x.account_id]));
+  if(!map.inventory||!map.supplier_payables||!map.purchase_price_variance)throw Object.assign(new Error("Supplier return accounting mappings are missing"),{statusCode:409});
+  let inventoryCost=0,creditTotal=0;
+  for(const line of lines.rows){
+   const lot=await c.query("SELECT quantity_on_hand FROM stock_lots WHERE id=$1 FOR UPDATE",[line.stock_lot_id]);
+   if(!lot.rowCount||Number(lot.rows[0].quantity_on_hand)+0.000001<Number(line.accepted_quantity))throw Object.assign(new Error("Insufficient remaining stock in the original receipt lot"),{statusCode:409});
+   const cost=Number(line.accepted_quantity)*Number(line.unit_cost),credit=Number(line.accepted_quantity)*Number(line.credit_unit_price);
+   inventoryCost+=cost;creditTotal+=credit;
+   await c.query("UPDATE stock_lots SET quantity_on_hand=quantity_on_hand-$2 WHERE id=$1",[line.stock_lot_id,line.accepted_quantity]);
+   await c.query("INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_out,unit_cost,source_type,source_id,created_by) SELECT $1,'adjustment',$2,warehouse_id,$3,$4,$5,'supplier_return',$6,$7 FROM stock_lots WHERE id=$3",["SRET-"+ret.rows[0].reference_no,line.product_id,line.stock_lot_id,line.accepted_quantity,line.unit_cost,req.params.id,req.user.id]);
+  }
+  const variance=inventoryCost-creditTotal;
+  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'supplier_return',$2,CURRENT_DATE,'posted') RETURNING id",["SRET-JE-"+ret.rows[0].reference_no,req.params.id]);
+  if(creditTotal>0)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.supplier_payables,creditTotal]);
+  if(inventoryCost>0)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.inventory,inventoryCost]);
+  if(variance>0.000001)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,map.purchase_price_variance,variance]);
+  if(variance< -0.000001)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.purchase_price_variance,-variance]);
+  await c.query("UPDATE supplier_returns SET status='posted',credit_total=$2,inventory_cost_total=$3,journal_entry_id=$4,posted_by=$5,posted_at=now() WHERE id=$1",[req.params.id,creditTotal,inventoryCost,je.rows[0].id,req.user.id]);
+  let remainingCredit=creditTotal;
+  const invoices=await c.query("SELECT i.id,i.subtotal,COALESCE((SELECT SUM(a.amount) FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.payment_id WHERE a.invoice_id=i.id AND p.status='posted'),0) paid,COALESCE((SELECT SUM(ra.amount) FROM supplier_return_allocations ra JOIN supplier_returns sr ON sr.id=ra.return_id WHERE ra.invoice_id=i.id AND sr.status='posted'),0) credits FROM supplier_invoices i WHERE i.supplier_id=$1 AND i.status='posted' ORDER BY COALESCE(i.due_date,i.invoice_date),i.invoice_date FOR UPDATE",[ret.rows[0].supplier_id]);
+  for(const invoice of invoices.rows){
+   if(remainingCredit<=0.000001)break;
+   const balance=Math.max(0,Number(invoice.subtotal)-Number(invoice.paid)-Number(invoice.credits));
+   const allocation=Math.min(balance,remainingCredit);
+   if(allocation>0.000001){await c.query("INSERT INTO supplier_return_allocations(return_id,invoice_id,amount) VALUES($1,$2,$3)",[req.params.id,invoice.id,allocation]);remainingCredit-=allocation;}
+  }
+  await c.query("COMMIT");res.json({supplier_return_id:req.params.id,status:"posted",credit_total:creditTotal,inventory_cost_total:inventoryCost,unallocated_supplier_credit:remainingCredit,journal_entry_id:je.rows[0].id});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
+
 export default router;
