@@ -201,7 +201,7 @@ router.post("/bank/transfers",guarded("bank.manage"),async(req,res,next)=>{
 });
 router.get("/bank/offset-accounts",guarded("bank.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT id,code,name_ar,account_type FROM accounts WHERE is_active=true ORDER BY code");res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/bank/accounts",guarded("bank.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT ba.*,b.name branch_name FROM bank_accounts ba JOIN branches b ON b.id=ba.branch_id WHERE ba.is_active ORDER BY ba.bank_name,ba.account_name");res.json({items:r.rows});}catch(e){next(e);}});
-// Bank ledger transactions are auditable operational records. General-ledger posting is not implied by this endpoint.
+// Bank ledger movements are posted to the selected bank control account and linked to their journal entry.
 router.get("/bank/transactions",guarded("bank.manage"),async(req,res,next)=>{try{const r=await pool.query("SELECT bt.*,ba.code bank_code,ba.bank_name,ba.account_name FROM bank_transactions bt JOIN bank_accounts ba ON ba.id=bt.bank_account_id ORDER BY bt.transaction_date DESC,bt.created_at DESC LIMIT 1000");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/bank/transactions",guarded("bank.manage"),async(req,res,next)=>{
  const {bank_account_id,reference_no,transaction_date=new Date().toISOString().slice(0,10),direction,amount:amt,description=null,offset_account_id}=req.body??{};
