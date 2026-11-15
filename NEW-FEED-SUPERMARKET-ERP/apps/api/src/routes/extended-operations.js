@@ -118,8 +118,37 @@ router.post("/cash/sessions/:id/close",guarded("cash.manage"),async(req,res,next
  }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
 });
 
-router.post("/bank/accounts",guarded("bank.manage"),async(req,res,next)=>{const {branch_id,code,bank_name,account_name,account_number_masked=null,currency="EGP"}=req.body??{};if(!uuid.test(branch_id||"")||!txt(code,40)||!txt(bank_name,120)||!txt(account_name,120)||!["EGP","USD","EUR","GBP"].includes(currency)||(account_number_masked!==null&&!txt(account_number_masked,40)))return bad(res,"Invalid bank account");try{const r=await pool.query("INSERT INTO bank_accounts(branch_id,code,bank_name,account_name,account_number_masked,currency) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",[branch_id,code.trim(),bank_name.trim(),account_name.trim(),account_number_masked,currency]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
-router.post("/bank/transfers",guarded("bank.manage"),async(req,res,next)=>{const {from_account_id,to_account_id,reference_no,transaction_date=new Date().toISOString().slice(0,10),amount:amt,description=null}=req.body??{};if(!uuid.test(from_account_id||"")||!uuid.test(to_account_id||"")||from_account_id===to_account_id||!txt(reference_no,50)||!date(transaction_date)||!Number.isFinite(Number(amt))||Number(amt)<=0)return bad(res,"Invalid bank transfer");const client=await pool.connect();try{await client.query("BEGIN");const accounts=await client.query("SELECT id,currency FROM bank_accounts WHERE id=ANY($1::uuid[]) AND is_active FOR SHARE",[ [from_account_id,to_account_id] ]);if(accounts.rowCount!==2||accounts.rows.some(x=>x.currency!==accounts.rows[0].currency))throw Object.assign(new Error("Both active bank accounts must use the same currency"),{statusCode:400});const out=await client.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,source_type,source_id,created_by) VALUES($1,$2||'-OUT',$3,'out',$4,$5,'transfer',NULL,$6) RETURNING *",[from_account_id,reference_no,transaction_date,amt,description,req.user.id]);const incoming=await client.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,source_type,source_id,created_by) VALUES($1,$2||'-IN',$3,'in',$4,$5,'transfer',$6,$7) RETURNING *",[to_account_id,reference_no,transaction_date,amt,description,out.rows[0].id,req.user.id]);await client.query("UPDATE bank_transactions SET source_id=$2 WHERE id=$1",[out.rows[0].id,incoming.rows[0].id]);await client.query("COMMIT");res.status(201).json({transfer_reference:reference_no,outgoing:out.rows[0],incoming:incoming.rows[0]});}catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}});
+router.post("/bank/accounts",guarded("bank.manage"),async(req,res,next)=>{
+ const {branch_id,code,bank_name,account_name,account_number_masked=null,currency="EGP",ledger_account_id=null}=req.body??{};
+ if(!uuid.test(branch_id||"")||!txt(code,40)||!txt(bank_name,120)||!txt(account_name,120)||!["EGP","USD","EUR","GBP"].includes(currency)||(account_number_masked!==null&&!txt(account_number_masked,40))||(ledger_account_id&&!uuid.test(ledger_account_id)))return bad(res,"Invalid bank account");
+ try{
+  const mapping=ledger_account_id?await pool.query("SELECT id,account_type FROM accounts WHERE id=$1 AND is_active=true",[ledger_account_id]):await pool.query("SELECT id,account_type FROM accounts WHERE code='1010' AND is_active=true");
+  if(!mapping.rowCount||mapping.rows[0].account_type!=="asset")return bad(res,"An active asset ledger account is required for this bank account");
+  const r=await pool.query("INSERT INTO bank_accounts(branch_id,code,bank_name,account_name,account_number_masked,currency,ledger_account_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[branch_id,code.trim(),bank_name.trim(),account_name.trim(),account_number_masked,currency,mapping.rows[0].id]);
+  res.status(201).json(r.rows[0]);
+ }catch(e){next(e);}
+});
+router.post("/bank/transfers",guarded("bank.manage"),async(req,res,next)=>{
+ const {from_account_id,to_account_id,reference_no,transaction_date=new Date().toISOString().slice(0,10),amount:amt,description=null}=req.body??{};
+ if(!uuid.test(from_account_id||"")||!uuid.test(to_account_id||"")||from_account_id===to_account_id||!txt(reference_no,50)||!date(transaction_date)||!Number.isFinite(Number(amt))||Number(amt)<=0)return bad(res,"Invalid bank transfer");
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND $1::date BETWEEN starts_on AND ends_on LIMIT 1",[transaction_date]);
+  if(period.rowCount)throw Object.assign(new Error("The selected accounting period is closed"),{statusCode:409});
+  const accounts=await client.query("SELECT id,currency,ledger_account_id FROM bank_accounts WHERE id=ANY($1::uuid[]) AND is_active FOR SHARE",[[from_account_id,to_account_id]]);
+  if(accounts.rowCount!==2||accounts.rows.some(x=>x.currency!=="EGP"||!x.ledger_account_id))throw Object.assign(new Error("Both active EGP bank accounts must have ledger mappings"),{statusCode:400});
+  const from=accounts.rows.find(x=>x.id===from_account_id),to=accounts.rows.find(x=>x.id===to_account_id);
+  const out=await client.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,source_type,source_id,created_by) VALUES($1,$2||'-OUT',$3,'out',$4,$5,'transfer',NULL,$6) RETURNING *",[from_account_id,reference_no,transaction_date,amt,description,req.user.id]);
+  const incoming=await client.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,source_type,source_id,created_by) VALUES($1,$2||'-IN',$3,'in',$4,$5,'transfer',$6,$7) RETURNING *",[to_account_id,reference_no,transaction_date,amt,description,out.rows[0].id,req.user.id]);
+  await client.query("UPDATE bank_transactions SET source_id=$2 WHERE id=$1",[out.rows[0].id,incoming.rows[0].id]);
+  const je=await client.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'bank_transfer',$2,$3,'posted') RETURNING id",["JE-BTR-"+reference_no,out.rows[0].id,transaction_date]);
+  await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0),($1,$4,0,$3)",[je.rows[0].id,to.ledger_account_id,amt,from.ledger_account_id]);
+  await client.query("UPDATE bank_transactions SET journal_entry_id=$2 WHERE id=ANY($1::uuid[])",[[out.rows[0].id,incoming.rows[0].id],je.rows[0].id]);
+  await client.query("COMMIT");
+  res.status(201).json({transfer_reference:reference_no,outgoing:out.rows[0],incoming:incoming.rows[0],journal_entry_id:je.rows[0].id});
+ }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
+});
 router.get("/bank/accounts",guarded("bank.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT ba.*,b.name branch_name FROM bank_accounts ba JOIN branches b ON b.id=ba.branch_id WHERE ba.is_active ORDER BY ba.bank_name,ba.account_name");res.json({items:r.rows});}catch(e){next(e);}});
 // Bank ledger transactions are auditable operational records. General-ledger posting is not implied by this endpoint.
 router.get("/bank/transactions",guarded("bank.manage"),async(req,res,next)=>{try{const r=await pool.query("SELECT bt.*,ba.code bank_code,ba.bank_name,ba.account_name FROM bank_transactions bt JOIN bank_accounts ba ON ba.id=bt.bank_account_id ORDER BY bt.transaction_date DESC,bt.created_at DESC LIMIT 1000");res.json({items:r.rows});}catch(e){next(e);}});
