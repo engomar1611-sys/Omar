@@ -21,6 +21,7 @@ import inventoryRoutes from "./routes/inventory.js";
 import supplierAccountingRoutes from "./routes/supplier-accounting.js";
 import extendedOperationsRoutes from "./routes/extended-operations.js";
 import reportingRoutes from "./routes/reporting.js";
+import financialReportRoutes from "./routes/financial-reports.js";
 
 const app = express();
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -79,6 +80,7 @@ app.use("/api", inventoryRoutes);
 app.use("/api", supplierAccountingRoutes);
 app.use("/api", extendedOperationsRoutes);
 app.use("/api", reportingRoutes);
+app.use("/api", financialReportRoutes);
 app.use("/api", (_req, res) => res.status(404).json({ error: "API route not found" }));
 
 app.use((error, _req, res, _next) => {
