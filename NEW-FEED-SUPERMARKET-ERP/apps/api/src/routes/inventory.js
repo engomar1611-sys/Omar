@@ -72,6 +72,26 @@ router.patch("/inventory/stocktakes/:id/lines/:lineId",async(req,res,next)=>{
  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
 });
 
+router.post("/inventory/stocktakes/:id/counts",async(req,res,next)=>{
+ const {lines}=req.body??{};
+ if(!uuid.test(req.params.id)||!Array.isArray(lines)||lines.length>5000||lines.some(x=>!uuid.test(x.id||"")||!qty(x.counted_quantity)||(x.expiry_date!==null&&x.expiry_date!==undefined&&x.expiry_date!==""&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(x.expiry_date))))return fail(res,"بيانات كميات الجرد غير صحيحة");
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const h=await client.query("SELECT status FROM stocktakes WHERE id=$1 FOR UPDATE",[req.params.id]);
+  if(!h.rowCount||h.rows[0].status!=="counting")throw Object.assign(new Error("الجرد غير موجود أو تم إقفاله"),{statusCode:409});
+  let saved=0;
+  for(const line of lines){
+   const r=await client.query(`UPDATE stocktake_lines SET counted_quantity=$3,
+    lot_number=CASE WHEN stock_lot_id IS NULL THEN $4 ELSE lot_number END,
+    expiry_date=CASE WHEN stock_lot_id IS NULL THEN NULLIF($5,'')::date ELSE expiry_date END
+    WHERE id=$1 AND stocktake_id=$2 RETURNING id`,[line.id,req.params.id,line.counted_quantity,line.lot_number||null,line.expiry_date||""]);
+   if(!r.rowCount)throw Object.assign(new Error("أحد بنود الجرد غير موجود في هذه الجردية"),{statusCode:404});
+   saved++;
+  }
+  await client.query("COMMIT");res.json({saved});
+ }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
+});
 router.post("/inventory/stocktakes/:id/post",async(req,res,next)=>{
  if(!uuid.test(req.params.id))return fail(res,"رقم الجرد غير صحيح");
  const client=await pool.connect();
