@@ -17,11 +17,16 @@ router.get("/reports/daily-sales",async(req,res,next)=>{
    FROM sale_payments sp JOIN payment_methods pm ON pm.id=sp.payment_method_id JOIN sales s ON s.id=sp.sale_id
    WHERE s.status='completed' AND COALESCE(s.completed_at,s.created_at)::date=$1::date
    GROUP BY pm.name_ar ORDER BY amount DESC`,[date]);
-  const products=await pool.query(`SELECT p.id product_id,p.sku,p.name_ar,COALESCE(SUM(sl.quantity),0) quantity,
-   COALESCE(SUM(sl.line_total),0) net_sales
-   FROM sale_lines sl JOIN sales s ON s.id=sl.sale_id JOIN products p ON p.id=sl.product_id
+  const products=await pool.query(`WITH line_data AS (
+   SELECT s.id sale_id,s.order_discount_amount,sl.product_id,sl.quantity,sl.line_total,
+    SUM(sl.line_total) OVER(PARTITION BY s.id) sale_lines_total
+   FROM sale_lines sl JOIN sales s ON s.id=sl.sale_id
    WHERE s.status='completed' AND COALESCE(s.completed_at,s.created_at)::date=$1::date
-   GROUP BY p.id,p.sku,p.name_ar ORDER BY quantity DESC LIMIT 20`,[date]);
+  )
+  SELECT p.id product_id,p.sku,p.name_ar,COALESCE(SUM(ld.quantity),0) quantity,
+   COALESCE(SUM(ld.line_total-CASE WHEN ld.sale_lines_total>0 THEN ld.order_discount_amount*ld.line_total/ld.sale_lines_total ELSE 0 END),0) net_sales
+  FROM line_data ld JOIN products p ON p.id=ld.product_id
+  GROUP BY p.id,p.sku,p.name_ar ORDER BY quantity DESC LIMIT 20`,[date]);
   res.json({date,summary:totals.rows[0],payments:payments.rows,top_products:products.rows});
  }catch(e){next(e);}
 });
@@ -32,13 +37,20 @@ router.get("/reports/product-sales",async(req,res,next)=>{
  if(req.query.product_id){if(!uuid.test(req.query.product_id))return res.status(400).json({error:"Invalid product_id"});values.push(req.query.product_id);filters+=" AND p.id=$"+values.length;}
  if(req.query.category_id){if(!uuid.test(req.query.category_id))return res.status(400).json({error:"Invalid category_id"});values.push(req.query.category_id);filters+=" AND p.category_id=$"+values.length;}
  try{
-  const r=await pool.query(`SELECT p.id product_id,p.sku,p.name_ar,c.name_ar category_name,u.code unit_code,
-   COALESCE(SUM(sl.quantity),0) sold_quantity,COALESCE(SUM(sl.quantity*sl.unit_price),0) gross_sales,
-   COALESCE(SUM(sl.discount_amount),0) line_discounts,COALESCE(SUM(sl.line_total),0) net_sales,
-   COUNT(DISTINCT s.id)::int invoice_count
-   FROM sale_lines sl JOIN sales s ON s.id=sl.sale_id JOIN products p ON p.id=sl.product_id
-   LEFT JOIN categories c ON c.id=p.category_id JOIN units u ON u.id=sl.unit_id
-   WHERE s.status='completed' AND COALESCE(s.completed_at,s.created_at)::date BETWEEN $1::date AND $2::date ${filters}
+  const r=await pool.query(`WITH line_data AS (
+   SELECT s.id sale_id,s.order_discount_amount,sl.product_id,sl.unit_id,sl.quantity,sl.unit_price,sl.discount_amount,sl.line_total,
+    SUM(sl.line_total) OVER(PARTITION BY s.id) sale_lines_total
+   FROM sale_lines sl JOIN sales s ON s.id=sl.sale_id
+   WHERE s.status='completed' AND COALESCE(s.completed_at,s.created_at)::date BETWEEN $1::date AND $2::date
+  )
+  SELECT p.id product_id,p.sku,p.name_ar,c.name_ar category_name,u.code unit_code,
+   COALESCE(SUM(ld.quantity),0) sold_quantity,COALESCE(SUM(ld.quantity*ld.unit_price),0) gross_sales,
+   COALESCE(SUM(ld.discount_amount),0) line_discounts,
+   COALESCE(SUM(CASE WHEN ld.sale_lines_total>0 THEN ld.order_discount_amount*ld.line_total/ld.sale_lines_total ELSE 0 END),0) allocated_order_discount,
+   COALESCE(SUM(ld.line_total-CASE WHEN ld.sale_lines_total>0 THEN ld.order_discount_amount*ld.line_total/ld.sale_lines_total ELSE 0 END),0) net_sales,
+   COUNT(DISTINCT ld.sale_id)::int invoice_count
+   FROM line_data ld JOIN products p ON p.id=ld.product_id LEFT JOIN categories c ON c.id=p.category_id JOIN units u ON u.id=ld.unit_id
+   WHERE ($3::uuid IS NULL OR p.id=$3) AND ($4::uuid IS NULL OR p.category_id=$4)
    GROUP BY p.id,p.sku,p.name_ar,c.name_ar,u.code ORDER BY net_sales DESC`,values);
   res.json({from,to,items:r.rows,totals:{sold_quantity:r.rows.reduce((a,x)=>a+Number(x.sold_quantity),0),net_sales:r.rows.reduce((a,x)=>a+Number(x.net_sales),0)}});
  }catch(e){next(e);}
@@ -48,13 +60,18 @@ router.get("/reports/category-sales",async(req,res,next)=>{
  const range=dates(req,res);if(!range)return;
  const category=req.query.category_id;if(category&&!uuid.test(category))return res.status(400).json({error:"Invalid category_id"});
  try{
-  const r=await pool.query(`SELECT c.id category_id,c.code category_code,c.name_ar category_name,
-   COALESCE(SUM(sl.quantity),0) sold_quantity,COALESCE(SUM(sl.line_total),0) line_net_sales,
-   COUNT(DISTINCT s.id)::int invoice_count
-   FROM categories c JOIN products p ON p.category_id=c.id
-   JOIN sale_lines sl ON sl.product_id=p.id JOIN sales s ON s.id=sl.sale_id
+  const r=await pool.query(`WITH line_data AS (
+   SELECT s.id sale_id,s.order_discount_amount,sl.product_id,sl.quantity,sl.line_total,
+    SUM(sl.line_total) OVER(PARTITION BY s.id) sale_lines_total
+   FROM sale_lines sl JOIN sales s ON s.id=sl.sale_id
    WHERE s.status='completed' AND COALESCE(s.completed_at,s.created_at)::date BETWEEN $1::date AND $2::date
-   AND ($3::uuid IS NULL OR c.id=$3)
+  )
+  SELECT c.id category_id,c.code category_code,c.name_ar category_name,
+   COALESCE(SUM(ld.quantity),0) sold_quantity,
+   COALESCE(SUM(ld.line_total-CASE WHEN ld.sale_lines_total>0 THEN ld.order_discount_amount*ld.line_total/ld.sale_lines_total ELSE 0 END),0) line_net_sales,
+   COUNT(DISTINCT ld.sale_id)::int invoice_count
+   FROM line_data ld JOIN products p ON p.id=ld.product_id JOIN categories c ON c.id=p.category_id
+   WHERE ($3::uuid IS NULL OR c.id=$3)
    GROUP BY c.id,c.code,c.name_ar ORDER BY line_net_sales DESC`,[range.from,range.to,category||null]);
   res.json({from:range.from,to:range.to,items:r.rows});
  }catch(e){next(e);}
