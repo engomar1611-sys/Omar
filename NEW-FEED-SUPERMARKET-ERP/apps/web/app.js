@@ -548,10 +548,33 @@ async function openReports(){
 async function openEcommerce(){
  const root=$("moduleView");
  try{
-  const data=await api("/api/ecommerce/orders"),items=data.items||[];
-  const labels={new:"جديد",confirmed:"مؤكد",preparing:"قيد التجهيز",converted:"تم تحويله لفاتورة",cancelled:"ملغي"};
-  root.innerHTML='<h1 class="module-title">طلبات المتجر الإلكتروني</h1><section class="purchase-panel"><p class="muted">يتم تحديث حالات الطلبات بالتسلسل. التحويل إلى فاتورة بيع يتطلب ربطًا إضافيًا بدورة الصرف والدفع.</p><div class="table-scroll"><table class="module-table"><thead><tr><th>المرجع</th><th>العميل</th><th>الهاتف</th><th>العنوان</th><th>الحالة</th><th>التاريخ</th><th>الإجراء</th></tr></thead><tbody>'+items.map(x=>'<tr><td>'+escapeHtml(x.reference_no)+'</td><td>'+escapeHtml(x.customer_name)+'</td><td>'+escapeHtml(x.phone)+'</td><td>'+escapeHtml(x.address)+'</td><td>'+escapeHtml(labels[x.status]||x.status)+'</td><td>'+escapeHtml(formatModuleValue(x.created_at))+'</td><td>'+(x.status==="new"?'<button class="small-btn" data-ecom-status="confirmed" data-ecom-id="'+x.id+'">تأكيد</button><button class="small-btn danger-btn" data-ecom-status="cancelled" data-ecom-id="'+x.id+'">إلغاء</button>':x.status==="confirmed"?'<button class="small-btn" data-ecom-status="preparing" data-ecom-id="'+x.id+'">بدء التجهيز</button><button class="small-btn danger-btn" data-ecom-status="cancelled" data-ecom-id="'+x.id+'">إلغاء</button>':"—")+'</td></tr>').join("")+'</tbody></table></div></section>';
+  const [data,context,branches,banks]=await Promise.all([api("/api/ecommerce/orders"),api("/api/pos/context"),api("/api/branches"),api("/api/payment-banks")]);
+  const items=data.items||[],labels={new:"جديد",confirmed:"مؤكد",preparing:"قيد التجهيز",converted:"تم تحويله لفاتورة",cancelled:"ملغي"};
+  const cashSession=context.cash_session;
+  root.innerHTML='<h1 class="module-title">طلبات المتجر الإلكتروني</h1><section class="purchase-panel"><h2>إعداد تحويل الطلب إلى فاتورة POS</h2><div class="form-grid"><label>فرع الصرف<select id="ecomBranch">'+branches.items.map(x=>'<option value="'+x.id+'" '+(x.id===context.branch.id?"selected":"")+'>'+escapeHtml(x.name)+'</option>').join("")+'</select></label><label>طريقة الدفع<select id="ecomPaymentMethod">'+context.payment_methods.map(x=>'<option value="'+x.id+'" data-code="'+escapeHtml(x.code)+'" '+(/cash|نقدي/i.test(x.code+" "+x.name_ar)?"selected":"")+'>'+escapeHtml(x.name_ar)+'</option>').join("")+'</select></label><label>كود الضريبة<select id="ecomTaxCode"><option value="">بدون ضريبة</option>'+(context.tax_codes||[]).map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name_ar)+' — '+Number(x.rate)+'%</option>').join("")+'</select></label><label>رسوم التوصيل (ج.م)<input id="ecomDeliveryFee" type="number" min="0" step="0.01" value="0"></label></div><div id="ecomCardFields" class="form-grid hidden"><label>البنك<select id="ecomCardBank"><option value="">اختر البنك</option>'+banks.items.map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name_ar)+' — '+escapeHtml(x.name_en)+'</option>').join("")+'</select></label><label>مرجع ماكينة الدفع<input id="ecomCardReference" maxlength="100"></label><label>آخر 4 أرقام<input id="ecomCardLastFour" maxlength="4" inputmode="numeric"></label></div><p class="muted">'+(cashSession?"جلسة الكاشير مفتوحة: "+escapeHtml(cashSession.reference_no):"لا توجد جلسة نقدية مفتوحة؛ الدفع النقدي يتطلب فتح جلسة كاشير أولًا.")+' — يتم تسعير الطلب من السعر المعتمد ثم تطبيق الخصومات والضريبة قبل التحويل.</p></section><section class="purchase-panel"><h2>طلبات المتجر</h2><div class="table-scroll"><table class="module-table"><thead><tr><th>المرجع</th><th>العميل</th><th>الهاتف</th><th>العنوان</th><th>الحالة</th><th>رقم الفاتورة</th><th>الإجراء</th></tr></thead><tbody>'+items.map(x=>'<tr><td>'+escapeHtml(x.reference_no)+'</td><td>'+escapeHtml(x.customer_name)+'</td><td>'+escapeHtml(x.phone)+'</td><td>'+escapeHtml(x.address)+'</td><td>'+escapeHtml(labels[x.status]||x.status)+'</td><td>'+escapeHtml(x.sales_id||"—")+'</td><td>'+(x.status==="new"?'<button class="small-btn" data-ecom-status="confirmed" data-ecom-id="'+x.id+'">تأكيد</button><button class="small-btn danger-btn" data-ecom-status="cancelled" data-ecom-id="'+x.id+'">إلغاء</button>':x.status==="confirmed"?'<button class="small-btn" data-ecom-status="preparing" data-ecom-id="'+x.id+'">بدء التجهيز</button><button class="small-btn danger-btn" data-ecom-status="cancelled" data-ecom-id="'+x.id+'">إلغاء</button>':x.status==="preparing"?'<button class="small-btn primary-btn" data-ecom-convert="'+x.id+'">تسعير وتحويل لفاتورة</button>':"—")+'</td></tr>').join("")+'</tbody></table></div></section>';
+  $("ecomPaymentMethod").onchange=()=>{const opt=$("ecomPaymentMethod").selectedOptions[0],card=/card|visa|بطاقة|فيزا/i.test((opt?.dataset.code||"")+" "+(opt?.textContent||""));$("ecomCardFields").classList.toggle("hidden",!card);};
+  $("ecomPaymentMethod").onchange();
   root.querySelectorAll("[data-ecom-status]").forEach(b=>b.onclick=async()=>{try{await api("/api/ecommerce/orders/"+b.dataset.ecomId+"/status",{method:"PATCH",body:JSON.stringify({status:b.dataset.ecomStatus})});toast("تم تحديث حالة الطلب");await openEcommerce();}catch(e){toast(e.message);}});
+  root.querySelectorAll("[data-ecom-convert]").forEach(b=>b.onclick=async()=>{
+   b.disabled=true;b.textContent="جارٍ التسعير والتحويل...";
+   try{
+    const delivery_fee=Number($("ecomDeliveryFee").value||0),tax_code_id=$("ecomTaxCode").value||null;
+    if(!Number.isFinite(delivery_fee)||delivery_fee<0)throw new Error("رسوم التوصيل غير صحيحة");
+    const quote=await api("/api/ecommerce/orders/"+b.dataset.ecomConvert+"/quote",{method:"POST",body:JSON.stringify({delivery_fee,tax_code_id})});
+    const opt=$("ecomPaymentMethod").selectedOptions[0],payment_method_id=$("ecomPaymentMethod").value;
+    if(!payment_method_id)throw new Error("اختر طريقة الدفع");
+    const payment={payment_method_id,amount:Number(quote.grand_total)};
+    const card=/card|visa|بطاقة|فيزا/i.test((opt?.dataset.code||"")+" "+(opt?.textContent||""));
+    if(card){
+      payment.bank_id=$("ecomCardBank").value;payment.transaction_reference=$("ecomCardReference").value.trim();payment.card_last_four=$("ecomCardLastFour").value.trim();payment.terminal_amount=Number(quote.grand_total);
+      if(!payment.bank_id||!payment.transaction_reference||!/^[0-9]{4}$/.test(payment.card_last_four))throw new Error("أدخل البنك والمرجع وآخر 4 أرقام لعملية البطاقة");
+    }
+    if(/cash|نقدي/i.test((opt?.dataset.code||"")+" "+(opt?.textContent||""))&&!cashSession)throw new Error("افتح جلسة كاشير قبل تحويل طلب نقدي");
+    const result=await api("/api/ecommerce/orders/"+b.dataset.ecomConvert+"/convert-to-sale",{method:"POST",body:JSON.stringify({branch_id:$("ecomBranch").value,payments:[payment],tax_code_id,delivery_fee})});
+    toast("تم تحويل الطلب إلى الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+" ج.م");
+    await openEcommerce();
+   }catch(e){toast(e.message);b.disabled=false;b.textContent="تسعير وتحويل لفاتورة";}
+  });
  }catch(e){root.innerHTML='<h1 class="module-title">طلبات المتجر الإلكتروني</h1><div class="empty-state">'+escapeHtml(e.message)+'</div>';}
 }
 async function openExtendedModule(id){
