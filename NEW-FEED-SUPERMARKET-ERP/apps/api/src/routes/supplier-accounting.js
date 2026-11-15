@@ -241,6 +241,16 @@ router.get("/supplier-returns",permission,async(_req,res,next)=>{try{
  res.json({items:r.rows});
 }catch(e){next(e);}});
 
+router.get("/supplier-returns/:id",permission,async(req,res,next)=>{
+ if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid supplier return id"});
+ try{
+  const header=await pool.query("SELECT * FROM supplier_returns WHERE id=$1",[req.params.id]);
+  if(!header.rowCount)return res.status(404).json({error:"Supplier return not found"});
+  const lines=await pool.query("SELECT srl.*,p.sku,p.name_ar product_name FROM supplier_return_lines srl JOIN products p ON p.id=srl.product_id WHERE srl.return_id=$1 ORDER BY p.name_ar",[req.params.id]);
+  res.json({supplier_return:header.rows[0],lines:lines.rows});
+ }catch(e){next(e);}
+});
+
 router.post("/supplier-returns",permission,async(req,res,next)=>{
  const {reference_no,supplier_id,purchase_receipt_id,reason,lines}=req.body??{};
  if(!txt(reference_no,50)||!uuid.test(supplier_id||"")||!uuid.test(purchase_receipt_id||"")||!txt(reason,1000)||!Array.isArray(lines)||!lines.length||lines.length>300||lines.some(x=>!uuid.test(x.receipt_line_id||"")||!num(x.quantity)||!Number.isFinite(Number(x.credit_unit_price))||Number(x.credit_unit_price)<0)||new Set(lines.map(x=>x.receipt_line_id)).size!==lines.length)
