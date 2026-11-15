@@ -11,7 +11,7 @@ router.get("/sales/returns",async(_req,res,next)=>{
   try{
     const r=await pool.query(
       `SELECT sr.*,s.reference_no sale_reference,c.name customer_name,
-              COALESCE(SUM(srl.refund_amount),0) refund_total
+              COALESCE(SUM(srl.refund_amount+srl.tax_refund_amount),0) refund_total
        FROM sale_returns sr JOIN sales s ON s.id=sr.sale_id
        LEFT JOIN customers c ON c.id=s.customer_id
        LEFT JOIN sale_return_lines srl ON srl.return_id=sr.id
@@ -36,6 +36,9 @@ router.post("/sales/:saleId/returns",requirePermission("sales.void.line"),async(
       throw Object.assign(new Error("Only completed sales can be returned"),{statusCode:409});
     const seen=new Set();
     const resolved=[];
+    const lineBase=await client.query("SELECT COALESCE(SUM(line_total),0) total FROM sale_lines WHERE sale_id=$1",[req.params.saleId]);
+    const saleLineBase=Number(lineBase.rows[0].total);
+    const taxRate=saleLineBase>0?Number(sale.rows[0].tax_total||0)/saleLineBase:0;
     for(const item of lines){
       if(seen.has(item.sale_line_id)) throw Object.assign(new Error("Duplicate sale line"),{statusCode:400});
       seen.add(item.sale_line_id);
@@ -52,18 +55,19 @@ router.post("/sales/:saleId/returns",requirePermission("sales.void.line"),async(
       if(qty>Number(row.quantity)-Number(row.returned_qty)+0.000001)
         throw Object.assign(new Error("Return quantity exceeds the unreturned sold quantity"),{statusCode:409});
       const refund=Number((Number(row.line_total)*qty/Number(row.quantity)).toFixed(6));
-      resolved.push({row,qty,refund});
+      const taxRefund=Number((refund*taxRate).toFixed(6));
+      resolved.push({row,qty,refund,taxRefund});
     }
     const ret=await client.query(
       "INSERT INTO sale_returns(reference_no,sale_id,status,reason,requested_by) VALUES($1,$2,'pending_inspection',$3,$4) RETURNING *",
       [reference_no.trim(),req.params.saleId,reason.trim(),requested_by]);
     for(const x of resolved){
       await client.query(
-        "INSERT INTO sale_return_lines(return_id,sale_line_id,product_id,quantity,condition,refund_amount) VALUES($1,$2,$3,$4,'pending',$5)",
-        [ret.rows[0].id,x.row.id,x.row.product_id,x.qty,x.refund]);
+        "INSERT INTO sale_return_lines(return_id,sale_line_id,product_id,quantity,condition,refund_amount,tax_refund_amount) VALUES($1,$2,$3,$4,'pending',$5,$6)",
+        [ret.rows[0].id,x.row.id,x.row.product_id,x.qty,x.refund,x.taxRefund]);
     }
     await client.query("COMMIT");
-    res.status(201).json({return:ret.rows[0],line_count:resolved.length,refund_total:Number(resolved.reduce((s,x)=>s+x.refund,0).toFixed(6))});
+    res.status(201).json({return:ret.rows[0],line_count:resolved.length,refund_total:Number(resolved.reduce((s,x)=>s+x.refund+x.taxRefund,0).toFixed(6)),tax_refund_total:Number(resolved.reduce((s,x)=>s+x.taxRefund,0).toFixed(6))});
   }catch(e){
     await client.query("ROLLBACK");
     if(e.statusCode)return fail(res,e.statusCode,e.message);
@@ -148,7 +152,9 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
       await client.query("UPDATE sale_return_lines SET stock_lot_id=$2 WHERE id=$1",[line.id,lot.rows[0].id]);
       restockedCost+=Number(line.quantity)*unitCost;
     }
-    const total=lines.rows.reduce((s,x)=>s+Number(x.refund_amount),0);
+    const subtotal=lines.rows.reduce((s,x)=>s+Number(x.refund_amount),0);
+    const taxTotal=lines.rows.reduce((s,x)=>s+Number(x.tax_refund_amount||0),0);
+    const total=subtotal+taxTotal;
     const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
     if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
     const mappings=await client.query("SELECT mapping_key,account_id FROM system_account_mappings WHERE mapping_key=ANY($1::varchar[])",[["sales_returns","refund_payable","inventory","cogs"]]);
@@ -159,10 +165,13 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
     if(total>0||restockedCost>0){
       const je=await client.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'sale_return_approval',$2,CURRENT_DATE,'posted') RETURNING id",["JE-"+req.params.id,req.params.id]);
       journalEntryId=je.rows[0].id;
-      if(total>0){
-        await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journalEntryId,map.sales_returns,total]);
-        await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journalEntryId,map.refund_payable,total]);
+      if(subtotal>0)await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journalEntryId,map.sales_returns,subtotal]);
+      if(taxTotal>0){
+        const taxAccount=await client.query("SELECT tc.account_id,a.account_type FROM sales s JOIN tax_codes tc ON tc.id=s.tax_code_id JOIN accounts a ON a.id=tc.account_id WHERE s.id=$1",[ret.rows[0].sale_id]);
+        if(!taxAccount.rowCount||taxAccount.rows[0].account_type!=="liability")throw Object.assign(new Error("Original sale tax liability account is unavailable; tax return cannot be posted"),{statusCode:409});
+        await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journalEntryId,taxAccount.rows[0].account_id,taxTotal]);
       }
+      if(total>0)await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journalEntryId,map.refund_payable,total]);
       if(restockedCost>0){
         await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journalEntryId,map.inventory,restockedCost]);
         await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journalEntryId,map.cogs,restockedCost]);
@@ -192,7 +201,7 @@ router.post("/sales/returns/:id/refund",async(req,res,next)=>{
     const ret=await client.query("SELECT * FROM sale_returns WHERE id=$1 FOR UPDATE",[req.params.id]);
     if(!ret.rowCount||ret.rows[0].status!=="approved")
       throw Object.assign(new Error("Return must be financially approved before refund"),{statusCode:409});
-    const total=await client.query("SELECT COALESCE(SUM(refund_amount),0) amount FROM sale_return_lines WHERE return_id=$1",[req.params.id]);
+    const total=await client.query("SELECT COALESCE(SUM(refund_amount+tax_refund_amount),0) amount FROM sale_return_lines WHERE return_id=$1",[req.params.id]);
     if(Math.abs(Number(total.rows[0].amount)-Number(amount))>0.01)
       throw Object.assign(new Error("Refund amount must equal the approved return amount"),{statusCode:400});
     const method=await client.query("SELECT id,account_id FROM payment_methods WHERE id=$1 AND is_active=true",[payment_method_id]);
