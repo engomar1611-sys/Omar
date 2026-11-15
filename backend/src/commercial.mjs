@@ -73,7 +73,7 @@ export async function commercialRoutes(app,{db}){
     if(orderConversion){
      const order=await c.query("SELECT * FROM sales_orders WHERE id=$1 AND status='OPEN' FOR UPDATE",[b.salesOrderId]);
      if(!order.rowCount)throw Object.assign(new Error('أمر البيع غير مفتوح أو غير موجود'),{code:'P0001'});
-     const existingInvoice=await c.query('SELECT id FROM sales_invoices WHERE sales_order_id=$1',[b.salesOrderId]);
+     const existingInvoice=await c.query("SELECT id FROM sales_invoices WHERE sales_order_id=$1 AND status<>'CANCELLED'",[b.salesOrderId]);
      if(existingInvoice.rowCount)throw Object.assign(new Error('تم إصدار فاتورة لهذا الأمر من قبل'),{code:'P0001'});
      const orderLines=await c.query('SELECT * FROM sales_order_lines WHERE sales_order_id=$1 ORDER BY line_no FOR UPDATE',[b.salesOrderId]);
      const reservations=await c.query("SELECT r.*,l.unit_price FROM sales_order_reservations r JOIN sales_order_lines l ON l.id=r.sales_order_line_id WHERE r.sales_order_id=$1 AND r.status='RESERVED' ORDER BY l.line_no,r.lot_no FOR UPDATE OF r",[b.salesOrderId]);
