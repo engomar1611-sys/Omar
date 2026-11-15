@@ -99,7 +99,14 @@ router.post("/supplier-invoices/:id/post",permission,async(req,res,next)=>{
   if(variance< -0.000001)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.purchase_price_variance,-variance]);
   if(invoiceTotal>0)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,map.supplier_payables,invoiceTotal]);
   await c.query("UPDATE supplier_invoices SET status='posted',journal_entry_id=$2,posted_by=$3,posted_at=now() WHERE id=$1",[req.params.id,je.rows[0].id,req.user.id]);
-  await c.query("COMMIT");res.json({invoice_id:req.params.id,status:"posted",invoice_total:invoiceTotal,grni_cleared:grniValue,price_variance:variance,journal_entry_id:je.rows[0].id});
+  let remainingInvoiceBalance=invoiceTotal;
+  const credits=await c.query("SELECT sr.id,sr.credit_total-COALESCE((SELECT SUM(ra.amount) FROM supplier_return_allocations ra WHERE ra.return_id=sr.id),0) remaining FROM supplier_returns sr WHERE sr.supplier_id=$1 AND sr.status='posted' AND sr.credit_total-COALESCE((SELECT SUM(ra.amount) FROM supplier_return_allocations ra WHERE ra.return_id=sr.id),0)>0.000001 ORDER BY sr.created_at FOR UPDATE",[inv.rows[0].supplier_id]);
+  for(const credit of credits.rows){
+   if(remainingInvoiceBalance<=0.000001)break;
+   const allocation=Math.min(remainingInvoiceBalance,Number(credit.remaining));
+   if(allocation>0.000001){await c.query("INSERT INTO supplier_return_allocations(return_id,invoice_id,amount) VALUES($1,$2,$3)",[credit.id,req.params.id,allocation]);remainingInvoiceBalance-=allocation;}
+  }
+  await c.query("COMMIT");res.json({invoice_id:req.params.id,status:"posted",invoice_total:invoiceTotal,grni_cleared:grniValue,price_variance:variance,supplier_credit_applied:invoiceTotal-remainingInvoiceBalance,journal_entry_id:je.rows[0].id});
  }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
 });
 
