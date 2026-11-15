@@ -303,6 +303,32 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(receiptList.statusCode,200,receiptList.body);
     assert.ok(receiptList.json().some(x=>x.id===receipt.json().receipt.id));
 
+    const allocationTestInvoice = await app.inject({method:'POST',url:'/api/v1/sales/invoices',headers,payload:{
+      invoiceNo:code('SIREALLOC'),customerId:customer.json().id,warehouseId:warehouse.id,
+      lines:[{itemId:finished.id,quantity:1,unitPrice:20}]
+    }});
+    assert.equal(allocationTestInvoice.statusCode,201,allocationTestInvoice.body);
+    const firstAllocationReceipt = await app.inject({method:'POST',url:'/api/v1/accounting/receipts',headers,payload:{
+      receiptNo:code('RCREV'),customerId:customer.json().id,amount:5,paymentMethod:'CASH',
+      allocations:[{invoiceId:allocationTestInvoice.json().id,amount:5}]
+    }});
+    assert.equal(firstAllocationReceipt.statusCode,201,firstAllocationReceipt.body);
+    const reversedAllocationReceipt = await app.inject({
+      method:'POST',url:'/api/v1/accounting/receipts/'+firstAllocationReceipt.json().receipt.id+'/reverse',
+      headers,payload:{reason:'اختبار إعادة تخصيص التحصيل بعد العكس'}
+    });
+    assert.equal(reversedAllocationReceipt.statusCode,200,reversedAllocationReceipt.body);
+    const invoiceAfterReceiptReversal = await pool.query('SELECT status FROM sales_invoices WHERE id=$1',[allocationTestInvoice.json().id]);
+    assert.equal(invoiceAfterReceiptReversal.rows[0].status,'POSTED');
+    const replacementReceipt = await app.inject({method:'POST',url:'/api/v1/accounting/receipts',headers,payload:{
+      receiptNo:code('RCNEW'),customerId:customer.json().id,amount:20,paymentMethod:'CASH',
+      allocations:[{invoiceId:allocationTestInvoice.json().id,amount:20}]
+    }});
+    assert.equal(replacementReceipt.statusCode,201,
+      'allocations from reversed receipts must not consume the invoice balance');
+    const invoiceAfterReplacementReceipt = await pool.query('SELECT status FROM sales_invoices WHERE id=$1',[allocationTestInvoice.json().id]);
+    assert.equal(invoiceAfterReplacementReceipt.rows[0].status,'PAID');
+
     const returnCreated = await app.inject({method:'POST',url:'/api/v1/sales/returns',headers,payload:{
       returnNo:code('SR'),invoiceId:invoice.json().id,warehouseId:warehouse.id,reason:'اختبار مرتجع',
       lines:[{invoiceLineId:invoiceRow.lines[0].id,quantity:1}]

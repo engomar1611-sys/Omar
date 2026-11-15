@@ -140,7 +140,9 @@ export async function commercialRoutes(app,{db}){
      if(!a.invoiceId||!pos(a.amount))throw Object.assign(new Error('توزيع التحصيل غير صحيح'),{code:'P0001'});
      const inv=await c.query(`SELECT id,total_amount,status,customer_id FROM sales_invoices WHERE id=$1 AND customer_id=$2 AND status IN ('POSTED','PARTIALLY_PAID','PAID') FOR UPDATE`,[a.invoiceId,b.customerId]);
      if(!inv.rowCount)throw Object.assign(new Error('الفاتورة غير تابعة للعميل أو غير مرحلة'),{code:'P0001'});
-     const paid=await c.query('SELECT COALESCE(SUM(amount),0) amount FROM receipt_allocations WHERE sales_invoice_id=$1',[a.invoiceId]);
+     const paid=await c.query(`SELECT COALESCE(SUM(a.amount),0) amount
+      FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED'
+      WHERE a.sales_invoice_id=$1`,[a.invoiceId]);
      if(Number(paid.rows[0].amount)+Number(a.amount)>Number(inv.rows[0].total_amount)+0.000001)throw Object.assign(new Error('مبلغ التخصيص يتجاوز المتبقي على الفاتورة'),{code:'P0001'});
      await c.query('INSERT INTO receipt_allocations(receipt_id,sales_invoice_id,amount) VALUES($1,$2,$3)',[h.rows[0].id,a.invoiceId,a.amount]);
      const newPaid=Number(paid.rows[0].amount)+Number(a.amount);
