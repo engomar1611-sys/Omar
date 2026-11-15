@@ -126,6 +126,24 @@ jobs:
             IF (SELECT COUNT(*) FROM payment_banks WHERE is_active) < 30 THEN
               RAISE EXCEPTION 'Egyptian bank directory is incomplete';
             END IF;
+
+            IF (SELECT COUNT(*) FROM (
+              SELECT unnest(ARRAY[
+                'customer_loyalty_transactions','employee_attendance','payroll_runs',
+                'payroll_lines','cash_sessions','bank_transactions','company_settings',
+                'tax_codes','system_notifications'
+              ]) AS table_name
+            ) required
+            WHERE to_regclass('public.'||required.table_name) IS NOT NULL) <> 9 THEN
+              RAISE EXCEPTION 'Extended operational module tables are missing';
+            END IF;
+
+            IF (SELECT COUNT(*) FROM permissions WHERE code=ANY(ARRAY[
+              'loyalty.manage','hr.attendance','hr.payroll','cash.manage',
+              'bank.manage','settings.manage'
+            ])) <> 6 THEN
+              RAISE EXCEPTION 'Extended operational permissions are missing';
+            END IF;
           END $$;
           SQL
 
