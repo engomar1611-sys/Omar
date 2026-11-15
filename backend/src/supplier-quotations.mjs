@@ -20,7 +20,7 @@ async function transaction(db, callback) {
 }
 
 export function validateSupplierQuotePayload(body, requestLines) {
-  if (!body || !textOk(body.quoteNo) || !body.supplierId || !Array.isArray(body.lines) ||
+  if (!body || !textOk(body.quoteNo) || !body.supplierId || (body.currencyCode && String(body.currencyCode).toUpperCase() !== 'EGP') || !Array.isArray(body.lines) ||
       body.lines.length !== requestLines.length) return false;
   const expected = new Map(requestLines.map(line => [line.id, line]));
   const seen = new Set();
