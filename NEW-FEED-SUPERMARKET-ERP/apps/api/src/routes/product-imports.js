@@ -103,7 +103,7 @@ router.post("/product-imports/:id/approve",async(req,res,next)=>{
           );
         }
       }
-      if(r.supplier_code){const supplier=await client.query("SELECT id FROM suppliers WHERE code=$1",[String(r.supplier_code).trim()]);if(!supplier.rowCount){await client.query("UPDATE product_import_rows SET status='rejected',validation_errors=validation_errors || '[\"Supplier code not found\"]'::jsonb WHERE id=$1",[row.id]);continue;}await client.query("INSERT INTO product_suppliers(supplier_id,product_id,supplier_product_code,last_purchase_price,is_primary) VALUES($1,$2,$3,$4,TRUE) ON CONFLICT(supplier_id,product_id) DO UPDATE SET supplier_product_code=EXCLUDED.supplier_product_code,last_purchase_price=EXCLUDED.last_purchase_price",[supplier.rows[0].id,product.rows[0].id,r.supplier_product_code||null,r.purchase_price??null]);}
+      if(r.supplier_code){const supplier=await client.query("SELECT id FROM suppliers WHERE code=$1",[String(r.supplier_code).trim()]);if(!supplier.rowCount)throw Object.assign(new Error("Supplier code not found: "+r.supplier_code),{statusCode:400});await client.query("INSERT INTO product_suppliers(supplier_id,product_id,supplier_product_code,last_purchase_price,is_primary) VALUES($1,$2,$3,$4,TRUE) ON CONFLICT(supplier_id,product_id) DO UPDATE SET supplier_product_code=EXCLUDED.supplier_product_code,last_purchase_price=EXCLUDED.last_purchase_price",[supplier.rows[0].id,product.rows[0].id,r.supplier_product_code||null,r.purchase_price??null]);}
       await client.query("UPDATE product_import_rows SET status='accepted',product_id=$2 WHERE id=$1",[row.id,product.rows[0].id]);
       created.push(product.rows[0]);
     }
