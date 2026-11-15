@@ -240,7 +240,7 @@ export async function transportRoutes(app,{db}){
      FROM transport_trip_deliveries td JOIN sales_deliveries sd ON sd.id=td.sales_delivery_id
      WHERE td.trip_id=$1 AND td.active_trip=TRUE FOR UPDATE OF td,sd
     `,[req.params.id]);
-    if(!deliveries.rowCount||deliveries.rows.some(x=>!x.pod_received_at||x.status!=='DELIVERED'))
+    if(!deliveries.rowCount||deliveries.rows.some(x=>!x.pod_received_at||!['DELIVERED','PARTIALLY_DELIVERED'].includes(x.status)))
       return {conflict:'ALL_DELIVERIES_REQUIRE_POD_AND_DELIVERY_CONFIRMATION'};
     await c.query("UPDATE transport_trips SET status='COMPLETED' WHERE id=$1",[req.params.id]);
     await c.query('UPDATE transport_vehicles SET current_odometer=$1 WHERE id=$2',[trip.rows[0].odometer_end,trip.rows[0].vehicle_id]);
