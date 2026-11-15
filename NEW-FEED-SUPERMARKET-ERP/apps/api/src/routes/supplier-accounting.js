@@ -275,7 +275,10 @@ router.post("/supplier-returns",permission,async(req,res,next)=>{
 router.post("/supplier-returns/:id/inspect",requirePermission("inventory.manage"),async(req,res,next)=>{
  if(!uuid.test(req.params.id)||!Array.isArray(req.body?.lines)||!req.body.lines.length)return res.status(400).json({error:"Inspection lines are required"});
  const seen=new Set();
- if(req.body.lines.some(x=>!uuid.test(x.id||"")||!Number.isFinite(Number(x.accepted_quantity))||Number(x.accepted_quantity)<0||!Number.isFinite(Number(x.rejected_quantity))||Number(x.rejected_quantity)<0||seen.has(x.id)||(seen.add(x.id),false)))return res.status(400).json({error:"Invalid supplier return inspection quantities"});
+ for(const line of req.body.lines){
+  if(!line||!uuid.test(line.id||"")||!Number.isFinite(Number(line.accepted_quantity))||Number(line.accepted_quantity)<0||!Number.isFinite(Number(line.rejected_quantity))||Number(line.rejected_quantity)<0||seen.has(line.id))return res.status(400).json({error:"Invalid supplier return inspection quantities"});
+  seen.add(line.id);
+ }
  const c=await pool.connect();
  try{
   await c.query("BEGIN");
