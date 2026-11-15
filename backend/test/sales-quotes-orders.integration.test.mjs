@@ -48,6 +48,35 @@ test('sales quotation to reserved order, invoice, and partial delivery fulfillme
     });
     assert.equal(order.statusCode, 201, order.body);
     const orderId = order.json().salesOrder.id;
+    const availability = await app.inject({ method: 'GET', url: '/api/v1/inventory/balances?warehouseId=' + warehouse.id, headers });
+    assert.equal(availability.statusCode, 200, availability.body);
+    const availableLot = availability.json().find(row => row.item_id === item.id && row.lot_no === 'LOT-' + suffix);
+    assert.equal(Number(availableLot.sales_reserved_qty), 10);
+    assert.equal(Number(availableLot.available_quantity), 0);
+
+    const adjustment = await app.inject({
+      method: 'POST', url: '/api/v1/inventory/adjustments', headers,
+      payload: { adjustmentNo: code('ADJ'), warehouseId: warehouse.id, reason: 'اختبار حماية الحجز',
+        lines: [{ itemId: item.id, lotNo: 'LOT-' + suffix, quantityDelta: -1, unitCost: 5 }] }
+    });
+    assert.equal(adjustment.statusCode, 201, adjustment.body);
+    const adjustmentApproval = await app.inject({
+      method: 'POST', url: '/api/v1/inventory/adjustments/' + adjustment.json().id + '/approve', headers, payload: {}
+    });
+    assert.equal(adjustmentApproval.statusCode, 409, adjustmentApproval.body, 'inventory adjustment cannot consume reserved stock');
+
+    const destination = (await pool.query('INSERT INTO warehouses(plant_id,code,name_ar) VALUES($1,$2,$3) RETURNING id', [plant.id, code('DST'), 'مخزن وجهة اختبار'])).rows[0];
+    const transfer = await app.inject({
+      method: 'POST', url: '/api/v1/inventory/transfers', headers,
+      payload: { transferNo: code('TR'), sourceWarehouseId: warehouse.id, destinationWarehouseId: destination.id,
+        lines: [{ itemId: item.id, lotNo: 'LOT-' + suffix, quantity: 1 }] }
+    });
+    assert.equal(transfer.statusCode, 201, transfer.body);
+    const transferApproval = await app.inject({
+      method: 'POST', url: '/api/v1/inventory/transfers/' + transfer.json().id + '/approve', headers, payload: {}
+    });
+    assert.equal(transferApproval.statusCode, 409, transferApproval.body, 'inventory transfer cannot consume reserved stock');
+
     const reserved = await pool.query("SELECT SUM(reserved_qty) qty FROM sales_order_reservations WHERE sales_order_id=$1 AND status='RESERVED'", [orderId]);
     assert.equal(Number(reserved.rows[0].qty), 10);
 
