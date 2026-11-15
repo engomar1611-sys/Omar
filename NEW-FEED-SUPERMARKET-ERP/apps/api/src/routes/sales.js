@@ -3,6 +3,29 @@ import {pool} from "../db.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validRef=v=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=50;
+router.get("/sales/discount-settings",async(_req,res,next)=>{
+ try{
+  const r=await pool.query("SELECT * FROM sales_discount_settings WHERE is_active=true ORDER BY updated_at DESC LIMIT 1");
+  res.json({settings:r.rows[0]||{min_order_amount:0,order_discount_type:"percent",order_discount_value:0,delivery_min_order_amount:0,delivery_discount_type:"percent",delivery_discount_value:0,is_active:true}});
+ }catch(e){next(e);}
+});
+router.put("/sales/discount-settings",async(req,res,next)=>{
+ const {min_order_amount=0,order_discount_type="percent",order_discount_value=0,delivery_min_order_amount=0,delivery_discount_type="percent",delivery_discount_value=0}=req.body??{};
+ const validNum=v=>Number.isFinite(Number(v))&&Number(v)>=0;
+ if(!validNum(min_order_amount)||!validNum(order_discount_value)||!validNum(delivery_min_order_amount)||!validNum(delivery_discount_value)||
+   !["amount","percent"].includes(order_discount_type)||!["amount","percent"].includes(delivery_discount_type)||
+   Number(order_discount_type==="percent"&&order_discount_value>100)||Number(delivery_discount_type==="percent"&&delivery_discount_value>100))
+  return res.status(400).json({error:"Invalid discount thresholds or values"});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  await client.query("UPDATE sales_discount_settings SET is_active=false WHERE is_active=true");
+  const r=await client.query(`INSERT INTO sales_discount_settings(min_order_amount,order_discount_type,order_discount_value,delivery_min_order_amount,delivery_discount_type,delivery_discount_value,is_active,updated_by)
+   VALUES($1,$2,$3,$4,$5,$6,true,$7) RETURNING *`,
+   [min_order_amount,order_discount_type,order_discount_value,delivery_min_order_amount,delivery_discount_type,delivery_discount_value,req.user.id]);
+  await client.query("COMMIT");res.json({settings:r.rows[0]});
+ }catch(e){await client.query("ROLLBACK");next(e);}finally{client.release();}
+});
 router.get("/sales",async(_q,res,next)=>{try{const r=await pool.query("SELECT s.*,c.name customer_name,u.display_name cashier_name FROM sales s LEFT JOIN customers c ON c.id=s.customer_id JOIN users u ON u.id=s.cashier_id ORDER BY s.created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/sales/complete",async(req,res,next)=>{
  const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null,delivery=null}=req.body??{};
@@ -47,7 +70,20 @@ router.post("/sales/complete",async(req,res,next)=>{
    await client.query("INSERT INTO sale_lines(sale_id,product_id,unit_id,quantity,unit_price,discount_amount,line_total) VALUES($1,$2,$3,$4,$5,$6,$7)",[sale.rows[0].id,line.product_id,line.unit_id,qty,unitPrice,discount,lineTotal]);
   }
   const deliveryFee=delivery?Number(delivery.delivery_fee||0):0;
-  const total=subtotal-discountTotal+deliveryFee,paymentTotal=payments.reduce((s,x)=>s+Number(x.amount),0);
+  const ruleResult=await client.query("SELECT * FROM sales_discount_settings WHERE is_active=true ORDER BY updated_at DESC LIMIT 1");
+  const rule=ruleResult.rows[0]||null;
+  const orderDiscountBase=Math.max(0,subtotal-discountTotal);
+  let orderDiscount=0,deliveryDiscount=0;
+  if(rule&&subtotal+0.000001>=Number(rule.min_order_amount)){
+    orderDiscount=rule.order_discount_type==="percent"?orderDiscountBase*Number(rule.order_discount_value)/100:Number(rule.order_discount_value);
+    orderDiscount=Math.min(orderDiscountBase,Math.max(0,orderDiscount));
+  }
+  if(delivery&&rule&&subtotal+0.000001>=Number(rule.delivery_min_order_amount)){
+    deliveryDiscount=rule.delivery_discount_type==="percent"?deliveryFee*Number(rule.delivery_discount_value)/100:Number(rule.delivery_discount_value);
+    deliveryDiscount=Math.min(deliveryFee,Math.max(0,deliveryDiscount));
+  }
+  const netDeliveryFee=deliveryFee-deliveryDiscount;
+  const total=subtotal-discountTotal-orderDiscount+netDeliveryFee,paymentTotal=payments.reduce((s,x)=>s+Number(x.amount),0);
   if(Math.abs(paymentTotal-total)>0.01)throw Object.assign(new Error("Payment total must equal the sale total"),{statusCode:400});
   const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
   if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
@@ -70,15 +106,15 @@ router.post("/sales/complete",async(req,res,next)=>{
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journal.rows[0].id,accountMap.cogs,cogs]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.inventory,cogs]);
   }
-  const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,delivery_fee=$4,grand_total=$5,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal,deliveryFee,total]);
+  const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,delivery_fee=$4,grand_total=$5,order_discount_amount=$6,delivery_discount_amount=$7,delivery_fee_before_discount=$8,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal+orderDiscount,netDeliveryFee,total,orderDiscount,deliveryDiscount,deliveryFee]);
   let deliveryOrder=null;
   if(delivery){
    const deliveryRef="DLV-"+reference_no.trim();
-   const d=await client.query("INSERT INTO delivery_orders(reference_no,sale_id,customer_id,address,delivery_fee,source_channel,external_order_reference) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[deliveryRef,sale.rows[0].id,deliveryCustomerId,delivery.address.trim(),Number(delivery.delivery_fee||0),delivery.source_channel||"pos",delivery.external_order_reference||null]);
+   const d=await client.query("INSERT INTO delivery_orders(reference_no,sale_id,customer_id,address,delivery_fee,source_channel,external_order_reference) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[deliveryRef,sale.rows[0].id,deliveryCustomerId,delivery.address.trim(),netDeliveryFee,delivery.source_channel||"pos",delivery.external_order_reference||null]);
    deliveryOrder=d.rows[0];
   }
   await client.query("COMMIT");
-  res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,journal_entry_id:journal.rows[0].id});
+  res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,discounts:{order_discount_amount:Number(orderDiscount.toFixed(6)),delivery_discount_amount:Number(deliveryDiscount.toFixed(6)),delivery_fee_before_discount:deliveryFee,delivery_fee_after_discount:netDeliveryFee},cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,journal_entry_id:journal.rows[0].id});
  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
 });
 export default router;
