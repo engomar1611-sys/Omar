@@ -11,13 +11,12 @@ const permission=requirePermission("supplier.accounting");
 router.get("/supplier-payment-methods",permission,async(_req,res,next)=>{try{const r=await pool.query("SELECT id,code,name_ar,account_id FROM payment_methods WHERE is_active=true AND account_id IS NOT NULL ORDER BY code");res.json({items:r.rows});}catch(e){next(e);}});
 
 router.get("/supplier-invoices",permission,async(req,res,next)=>{try{
- const r=await pool.query(`SELECT i.*,s.name supplier_name,po.reference_no purchase_order_reference,
-   COALESCE(SUM(a.amount) FILTER (WHERE sp.status='posted'),0) paid_amount
+ const r=await pool.query(\`SELECT i.*,s.name supplier_name,po.reference_no purchase_order_reference,
+   COALESCE((SELECT SUM(a.amount) FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id=a.payment_id WHERE a.invoice_id=i.id AND p.status='posted'),0) paid_amount,
+   COALESCE((SELECT SUM(ra.amount) FROM supplier_return_allocations ra JOIN supplier_returns sr ON sr.id=ra.return_id WHERE ra.invoice_id=i.id AND sr.status='posted'),0) credit_amount
    FROM supplier_invoices i JOIN suppliers s ON s.id=i.supplier_id
    JOIN purchase_orders po ON po.id=i.purchase_order_id
-   LEFT JOIN supplier_payment_allocations a ON a.invoice_id=i.id
-   LEFT JOIN supplier_payments sp ON sp.id=a.payment_id
-   GROUP BY i.id,s.name,po.reference_no ORDER BY i.created_at DESC LIMIT 300`);
+   ORDER BY i.created_at DESC LIMIT 300\`);
  res.json({items:r.rows});
 }catch(e){next(e);}});
 
