@@ -666,11 +666,44 @@ export async function commercialRoutes(app,{db}){
   catch(e){return fail(rep,e);}
  });
  app.get('/api/v1/reports/sales-summary',auth(app,'REPORTS.READ'),async(req,rep)=>{
-  try{return (await db.query(`SELECT invoice_date,COUNT(*)::int invoice_count,SUM(subtotal) subtotal,SUM(discount_amount) discounts,
-    SUM(total_amount) net_sales,SUM(cost_amount) cost_of_sales,SUM(total_amount-cost_amount) gross_margin
+  try{return (await db.query(`WITH invoice_rows AS (
+    SELECT invoice_date report_date,COUNT(*)::int invoice_count,0::int return_count,
+      SUM(subtotal)::numeric subtotal,SUM(discount_amount)::numeric discounts,
+      SUM(total_amount)::numeric net_sales,SUM(cost_amount)::numeric cost_of_sales,
+      0::numeric returns_amount,0::numeric returned_cost
     FROM sales_invoices WHERE status IN ('POSTED','PARTIALLY_PAID','PAID')
-    AND ($1::date IS NULL OR invoice_date >= $1) AND ($2::date IS NULL OR invoice_date <= $2)
-    GROUP BY invoice_date ORDER BY invoice_date DESC`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
+      AND ($1::date IS NULL OR invoice_date >= $1) AND ($2::date IS NULL OR invoice_date <= $2)
+    GROUP BY invoice_date
+   ), return_rows AS (
+    SELECT COALESCE(sr.accounting_approved_at::date,sr.created_at::date) report_date,
+      0::int invoice_count,COUNT(*)::int return_count,
+      -SUM(COALESCE(sr.gross_amount,ret.gross_amount,0))::numeric subtotal,
+      -SUM(COALESCE(sr.discount_amount,0))::numeric discounts,
+      -SUM(COALESCE(sr.net_amount,COALESCE(sr.gross_amount,ret.gross_amount,0)))::numeric net_sales,
+      -SUM(COALESCE(ret.return_cost,0))::numeric cost_of_sales,
+      SUM(COALESCE(sr.net_amount,COALESCE(sr.gross_amount,ret.gross_amount,0)))::numeric returns_amount,
+      SUM(COALESCE(ret.return_cost,0))::numeric returned_cost
+    FROM sales_returns sr
+    LEFT JOIN LATERAL (
+      SELECT SUM(l.quantity*l.unit_price)::numeric gross_amount,
+        SUM(l.quantity*l.unit_cost)::numeric return_cost
+      FROM sales_return_lines l WHERE l.sales_return_id=sr.id
+    ) ret ON TRUE
+    WHERE sr.status='APPROVED'
+      AND ($1::date IS NULL OR COALESCE(sr.accounting_approved_at::date,sr.created_at::date) >= $1)
+      AND ($2::date IS NULL OR COALESCE(sr.accounting_approved_at::date,sr.created_at::date) <= $2)
+    GROUP BY COALESCE(sr.accounting_approved_at::date,sr.created_at::date)
+   ), movements AS (
+    SELECT * FROM invoice_rows
+    UNION ALL
+    SELECT * FROM return_rows
+   )
+   SELECT report_date invoice_date,SUM(invoice_count)::int invoice_count,SUM(return_count)::int return_count,
+     SUM(subtotal)::numeric subtotal,SUM(discounts)::numeric discounts,
+     SUM(net_sales)::numeric net_sales,SUM(cost_of_sales)::numeric cost_of_sales,
+     SUM(net_sales-cost_of_sales)::numeric gross_margin,
+     SUM(returns_amount)::numeric returns_amount,SUM(returned_cost)::numeric returned_cost
+   FROM movements GROUP BY report_date ORDER BY report_date DESC`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
  });
 
  app.get('/api/v1/reports/supplier-aging',auth(app,'REPORTS.READ'),async(req,rep)=>{

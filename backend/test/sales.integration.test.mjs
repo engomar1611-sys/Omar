@@ -522,6 +522,61 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.equal(futureInvoiceAfterCurrentExposure.statusCode,409,
       'credit exposure on a future invoice date must include invoices effective by that date');
 
+    const reportDate = (await pool.query('SELECT CURRENT_DATE::text report_date')).rows[0].report_date;
+    const summaryBeforeReturnResponse = await app.inject({
+      method:'GET',url:'/api/v1/reports/sales-summary?from='+reportDate+'&to='+reportDate,headers
+    });
+    assert.equal(summaryBeforeReturnResponse.statusCode,200,summaryBeforeReturnResponse.body);
+    const summaryBefore = summaryBeforeReturnResponse.json().find(x=>String(x.invoice_date).slice(0,10)===reportDate);
+    assert.ok(summaryBefore);
+
+    const reportCustomer = (await pool.query(
+      'INSERT INTO customers(code,name_ar) VALUES($1,$2) RETURNING id',
+      [code('SUMMARY-CUST'),'عميل اختبار ملخص المبيعات']
+    )).rows[0];
+    const reportInvoice = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('SUMMARY-INV'),customerId:reportCustomer.id,warehouseId:warehouse.id,
+        discountAmount:2,lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:20}]}
+    });
+    assert.equal(reportInvoice.statusCode,201,reportInvoice.body);
+    const reportInvoiceLine = (await pool.query(
+      'SELECT id FROM sales_invoice_lines WHERE sales_invoice_id=$1',[reportInvoice.json().id]
+    )).rows[0];
+    const reportReturn = await app.inject({
+      method:'POST',url:'/api/v1/sales/returns',headers,
+      payload:{returnNo:code('SUMMARY-RET'),invoiceId:reportInvoice.json().id,warehouseId:warehouse.id,
+        lines:[{invoiceLineId:reportInvoiceLine.id,quantity:1}]}
+    });
+    assert.equal(reportReturn.statusCode,201,reportReturn.body);
+    const reportReturnWarehouse = await app.inject({
+      method:'POST',url:'/api/v1/sales/returns/'+reportReturn.json().id+'/warehouse-approve',headers,payload:{}
+    });
+    assert.equal(reportReturnWarehouse.statusCode,200,reportReturnWarehouse.body);
+    const reportReturnAccounting = await app.inject({
+      method:'POST',url:'/api/v1/sales/returns/'+reportReturn.json().id+'/accounting-approve',headers,payload:{}
+    });
+    assert.equal(reportReturnAccounting.statusCode,200,reportReturnAccounting.body);
+    assert.equal(Number(reportReturnAccounting.json().amount),18);
+
+    const summaryAfterReturnResponse = await app.inject({
+      method:'GET',url:'/api/v1/reports/sales-summary?from='+reportDate+'&to='+reportDate,headers
+    });
+    assert.equal(summaryAfterReturnResponse.statusCode,200,summaryAfterReturnResponse.body);
+    const summaryAfter = summaryAfterReturnResponse.json().find(x=>String(x.invoice_date).slice(0,10)===reportDate);
+    assert.ok(summaryAfter);
+    assert.ok(Math.abs(Number(summaryAfter.net_sales)-Number(summaryBefore.net_sales))<0.000001,
+      'a fully returned invoice must not remain in net sales');
+    assert.ok(Math.abs(Number(summaryAfter.cost_of_sales)-Number(summaryBefore.cost_of_sales))<0.000001,
+      'returned goods cost must reverse cost of sales');
+    assert.ok(Math.abs(Number(summaryAfter.gross_margin)-Number(summaryBefore.gross_margin))<0.000001,
+      'sales margin must net the approved return and returned cost');
+    assert.ok(Math.abs(Number(summaryAfter.subtotal)-Number(summaryBefore.subtotal))<0.000001);
+    assert.ok(Math.abs(Number(summaryAfter.discounts)-Number(summaryBefore.discounts))<0.000001);
+    assert.equal(Number(summaryAfter.return_count)-Number(summaryBefore.return_count),1);
+    assert.ok(Math.abs(Number(summaryAfter.returns_amount)-Number(summaryBefore.returns_amount)-18)<0.000001);
+    assert.ok(Math.abs(Number(summaryAfter.returned_cost)-Number(summaryBefore.returned_cost)-Number(reportInvoice.json().costAmount))<0.000001);
+
     const raceCustomer = (await pool.query(
       'INSERT INTO customers(code,name_ar) VALUES($1,$2) RETURNING id',
       [code('RACE-CUST'),'عميل اختبار تزامن المرتجعات']
