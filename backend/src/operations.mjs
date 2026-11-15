@@ -828,7 +828,7 @@ export async function operationsRoutes(app, { db }) {
               [entry.rows[0].id,ids[mapping[x.componentCode]],x.amount,x.description.trim()]);
           }
         }
-        const oldTotal=Number(h.rows[0].total_cost),newTotal=Number(h.rows[0].total_material_cost)+extraTotal,qty=Number(h.rows[0].quantity),balanceQty=Number(h.rows[0].balance_qty),unit=newTotal/qty;
+        const oldTotal=Number(h.rows[0].total_cost),newTotal=Number(h.rows[0].total_material_cost)+extraTotal,qty=Number(h.rows[0].quantity),unit=newTotal/qty;
         await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,unit,req.params.id]);
         await c.query('UPDATE inventory_balances SET average_unit_cost=$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',
           [unit,h.rows[0].warehouse_id,h.rows[0].item_id,h.rows[0].lot_no]);
