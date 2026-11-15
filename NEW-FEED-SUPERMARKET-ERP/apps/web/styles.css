@@ -18,3 +18,5 @@
 .purchase-line b{min-width:180px;align-self:center;color:#24496f}
 .purchase-panel .form-grid{margin-bottom:12px}
 @media(max-width:650px){.purchase-line{display:grid;grid-template-columns:1fr 1fr}.purchase-line b{grid-column:1/-1}.purchase-line label{min-width:0}}
+
+.delivery-status,.delivery-courier{max-width:170px;min-width:110px;padding:6px;border:1px solid #cbd8e6;border-radius:6px;background:#fff;font:12px Cairo}.delivery-status{margin-bottom:4px}.delivery-status+small{display:block}.purchase-panel .muted{line-height:1.8}
