@@ -9,7 +9,7 @@ const enabled = Boolean(
   process.env.BOOTSTRAP_ADMIN_PASSWORD
 );
 
-test('PostgreSQL sales workflow: discounted invoice, collection allocation, partial delivery and two-stage return approval', { skip: !enabled }, async () => {
+test('PostgreSQL sales workflow: discounted invoice, collection allocation, partial delivery and two-stage return approval with per-return quality isolation', { skip: !enabled }, async () => {
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
   const tracedDb = {
     query: (...args) => pool.query(...args),
@@ -250,13 +250,91 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.equal(Number(accountingApproval.json().amount), 24);
     assert.equal(Number(accountingApproval.json().cost), 10);
 
+    const balanceAfterFirstReturn = await app.inject({
+      method: 'GET', url: '/api/v1/inventory/balances?warehouseId=' + warehouse.id, headers
+    });
+    assert.equal(balanceAfterFirstReturn.statusCode, 200, balanceAfterFirstReturn.body);
+    const firstReturnedLot = balanceAfterFirstReturn.json().find(row => row.item_id === item.id && row.lot_no === lotNo);
+    assert.ok(firstReturnedLot);
+    assert.equal(Number(firstReturnedLot.quantity), 12);
+    assert.equal(Number(firstReturnedLot.quality_held_qty), 2);
+    assert.equal(Number(firstReturnedLot.available_quantity), 10,
+      'pending return quantity must not block the original ten released units');
+
+    const secondReturn = await app.inject({
+      method: 'POST',
+      url: '/api/v1/sales/returns',
+      headers,
+      payload: {
+        returnNo: code('SRET2'),
+        invoiceId,
+        warehouseId: warehouse.id,
+        reason: 'مرتجع ثانٍ من نفس التشغيلة',
+        lines: [{ invoiceLineId: invoiceLine.id, quantity: 1 }]
+      }
+    });
+    assert.equal(secondReturn.statusCode, 201, secondReturn.body);
+    const secondReturnId = secondReturn.json().id;
+    const secondWarehouseApproval = await app.inject({
+      method: 'POST', url: '/api/v1/sales/returns/' + secondReturnId + '/warehouse-approve',
+      headers, payload: {}
+    });
+    assert.equal(secondWarehouseApproval.statusCode, 200, secondWarehouseApproval.body);
+    const secondAccountingApproval = await app.inject({
+      method: 'POST', url: '/api/v1/sales/returns/' + secondReturnId + '/accounting-approve',
+      headers, payload: {}
+    });
+    assert.equal(secondAccountingApproval.statusCode, 200, secondAccountingApproval.body);
+
+    const firstQualityInspection = await app.inject({
+      method: 'POST', url: '/api/v1/quality/sales-returns/' + returnId + '/inspect',
+      headers, payload: { result: 'PASS' }
+    });
+    assert.equal(firstQualityInspection.statusCode, 200, firstQualityInspection.body);
+    assert.equal(firstQualityInspection.json().qualityStatus, 'RELEASED');
+
     const returnedBalance = await pool.query(
-      'SELECT quantity,quality_status FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',
+      `SELECT b.quantity,b.quality_status,
+        COALESCE(SUM(h.held_qty) FILTER (WHERE h.status IN ('PENDING_QC','QUARANTINED')),0) held_qty
+       FROM inventory_balances b LEFT JOIN inventory_quality_holds h
+         ON h.warehouse_id=b.warehouse_id AND h.item_id=b.item_id AND h.lot_no=b.lot_no
+       WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3
+       GROUP BY b.warehouse_id,b.item_id,b.lot_no`,
       [warehouse.id, item.id, lotNo]
     );
-    assert.equal(Number(returnedBalance.rows[0].quantity), 12);
-    assert.equal(returnedBalance.rows[0].quality_status, 'PENDING_QC',
-      'returned goods must remain unavailable until quality release');
+    assert.equal(Number(returnedBalance.rows[0].quantity), 13);
+    assert.equal(returnedBalance.rows[0].quality_status, 'RELEASED',
+      'inspecting a return must not change the original lot quality status');
+    assert.equal(Number(returnedBalance.rows[0].held_qty), 1,
+      'passing one return must leave the other return held for inspection');
+
+    const balances = await app.inject({
+      method: 'GET', url: '/api/v1/inventory/balances?warehouseId=' + warehouse.id, headers
+    });
+    assert.equal(balances.statusCode, 200, balances.body);
+    const displayedLot = balances.json().find(row => row.item_id === item.id && row.lot_no === lotNo);
+    assert.ok(displayedLot);
+    assert.equal(Number(displayedLot.available_quantity), 12);
+    assert.equal(Number(displayedLot.quality_held_qty), 1);
+
+    const duplicateInspection = await app.inject({
+      method: 'POST', url: '/api/v1/quality/sales-returns/' + returnId + '/inspect',
+      headers, payload: { result: 'PASS' }
+    });
+    assert.equal(duplicateInspection.statusCode, 409,
+      'a return inspection cannot release or reclassify its quantity twice');
+
+    const cannotSellHeldReturn = await app.inject({
+      method: 'POST', url: '/api/v1/sales/invoices', headers,
+      payload: {
+        invoiceNo: code('INV-HOLD'),
+        customerId: customer.id,
+        warehouseId: warehouse.id,
+        lines: [{ itemId: item.id, lotNo, quantity: 13, unitPrice: 1 }]
+      }
+    });
+    assert.equal(cannotSellHeldReturn.statusCode, 409,
+      'sales must not consume quantities held for another return inspection');
 
     const returnJournal = await pool.query(
       "SELECT total_debit,total_credit FROM journal_entries WHERE source_type='SALES_RETURN' AND source_id=$1 AND status='POSTED'",
@@ -290,7 +368,7 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     });
     assert.equal(aging.statusCode, 200, aging.body);
     assert.equal(aging.json().length, 1);
-    assert.equal(Number(aging.json()[0].outstanding), 46);
+    assert.equal(Number(aging.json()[0].outstanding), 34);
     assert.equal(String(aging.json()[0].due_date).slice(0, 10), dueDate);
     assert.equal(aging.json()[0].aging_bucket, 'غير مستحق');
 
