@@ -175,6 +175,12 @@ jobs:
               OR to_regclass('public.uq_cash_session_one_open_per_cashier') IS NULL THEN
               RAISE EXCEPTION 'Exact cash session reconciliation linkage is missing';
             END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sale_return_lines' AND column_name='tax_refund_amount'
+            ) OR to_regclass('public.loyalty_program_settings') IS NULL THEN
+              RAISE EXCEPTION 'Return tax and loyalty policy integration schema is missing';
+            END IF;
 
             IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
               OR NOT EXISTS (
