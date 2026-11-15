@@ -138,17 +138,52 @@ router.post("/hr/payroll-runs/:id/reverse-payment",guarded("hr.payroll"),async(r
 });
 
 // Cashbox session close records the counted cash and the variance against movements posted to this box.
-router.post("/cashboxes",guarded("cash.manage"),async(req,res,next)=>{const {branch_id,code,name}=req.body??{};if(!uuid.test(branch_id||"")||!txt(code,40)||!txt(name,120))return bad(res,"Invalid cashbox");try{const r=await pool.query("INSERT INTO cashboxes(branch_id,code,name) VALUES($1,$2,$3) RETURNING *",[branch_id,code.trim(),name.trim()]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
+router.post("/cashboxes",guarded("cash.manage"),async(req,res,next)=>{const {branch_id,code,name,ledger_account_id=null}=req.body??{};if(!uuid.test(branch_id||"")||!txt(code,40)||!txt(name,120)||(ledger_account_id&&!uuid.test(ledger_account_id)))return bad(res,"Invalid cashbox");try{const mapping=ledger_account_id?await pool.query("SELECT id,account_type FROM accounts WHERE id=$1 AND is_active=true",[ledger_account_id]):await pool.query("SELECT id,account_type FROM accounts WHERE code='1000' AND is_active=true");if(!mapping.rowCount||mapping.rows[0].account_type!=="asset")return bad(res,"An active cash asset ledger account is required");const r=await pool.query("INSERT INTO cashboxes(branch_id,code,name,ledger_account_id) VALUES($1,$2,$3,$4) RETURNING *",[branch_id,code.trim(),name.trim(),mapping.rows[0].id]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
+router.get("/cash/offset-accounts",guarded("cash.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT id,code,name_ar,account_type FROM accounts WHERE is_active=true AND account_type IN ('asset','liability','equity','revenue','expense') ORDER BY code");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/cash/transactions",guarded("cash.manage"),async(req,res,next)=>{
- const {cashbox_id,reference_no,direction,amount:amt,source_type="manual",description=null}=req.body??{};
- if(!uuid.test(cashbox_id||"")||!txt(reference_no,50)||!["in","out"].includes(direction)||!Number.isFinite(Number(amt))||Number(amt)<=0||!txt(source_type,40))return bad(res,"Invalid cash transaction");
+ const {cashbox_id,reference_no,direction,amount:amt,source_type="manual",description=null,offset_account_id}=req.body??{};
+ if(!uuid.test(cashbox_id||"")||!txt(reference_no,50)||!["in","out"].includes(direction)||!Number.isFinite(Number(amt))||Number(amt)<=0||source_type!=="manual"||!uuid.test(offset_account_id||""))return bad(res,"Manual cash movement requires cashbox, reference, direction, positive amount and offset account");
  const c=await pool.connect();
  try{
   await c.query("BEGIN");
   const session=await c.query("SELECT id FROM cash_sessions WHERE cashbox_id=$1 AND cashier_id=$2 AND status='open' FOR UPDATE",[cashbox_id,req.user.id]);
   if(!session.rowCount)throw Object.assign(new Error("Open cashier session for this cashbox is required"),{statusCode:409});
-  const r=await c.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,description,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",[cashbox_id,session.rows[0].id,reference_no,direction,amt,source_type,description,req.user.id]);
-  await c.query("COMMIT");res.status(201).json(r.rows[0]);
+  const box=await c.query("SELECT ledger_account_id FROM cashboxes WHERE id=$1 AND is_active=true FOR SHARE",[cashbox_id]);
+  const offset=await c.query("SELECT id FROM accounts WHERE id=$1 AND is_active=true",[offset_account_id]);
+  if(!box.rowCount||!box.rows[0].ledger_account_id||!offset.rowCount||offset_account_id===box.rows[0].ledger_account_id)throw Object.assign(new Error("Cashbox or offset ledger mapping is missing or invalid"),{statusCode:400});
+  const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const r=await c.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,description,created_by) VALUES($1,$2,$3,$4,$5,'manual',$6,$7) RETURNING *",[cashbox_id,session.rows[0].id,reference_no,direction,amt,description,req.user.id]);
+  const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'cash_transaction',$2,CURRENT_DATE,'posted') RETURNING id",["JE-CASH-"+r.rows[0].id.replaceAll("-","").slice(0,24),r.rows[0].id]);
+  const debit=direction==="in"?box.rows[0].ledger_account_id:offset_account_id,credit=direction==="in"?offset_account_id:box.rows[0].ledger_account_id;
+  await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0),($1,$4,0,$3)",[je.rows[0].id,debit,amt,credit]);
+  const saved=await c.query("UPDATE cash_transactions SET journal_entry_id=$2 WHERE id=$1 RETURNING *",[r.rows[0].id,je.rows[0].id]);
+  await c.query("COMMIT");res.status(201).json({transaction:saved.rows[0],journal_entry_id:je.rows[0].id});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
+router.post("/cash/transactions/:id/reverse",guarded("cash.manage"),async(req,res,next)=>{
+ const {reason}=req.body??{};
+ if(!uuid.test(req.params.id)||!txt(reason,1000))return bad(res,"A cash movement reversal reason is required");
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const tx=await c.query("SELECT * FROM cash_transactions WHERE id=$1 AND source_type='manual' AND reversed_at IS NULL FOR UPDATE",[req.params.id]);
+  if(!tx.rowCount)throw Object.assign(new Error("Manual cash movement not found or already reversed"),{statusCode:409});
+  const session=await c.query("SELECT id FROM cash_sessions WHERE cashbox_id=$1 AND cashier_id=$2 AND status='open' FOR UPDATE",[tx.rows[0].cashbox_id,req.user.id]);
+  if(!session.rowCount)throw Object.assign(new Error("Open a cash session for the original cashbox before reversing this movement"),{statusCode:409});
+  const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[tx.rows[0].journal_entry_id]);
+  if(!original.rowCount)throw Object.assign(new Error("Original cash movement journal is missing or already reversed"),{statusCode:409});
+  const lines=await c.query("SELECT account_id,debit,credit FROM journal_lines WHERE journal_entry_id=$1",[original.rows[0].id]);
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'cash_transaction_reversal',$2,CURRENT_DATE,'posted') RETURNING id",["JE-CASH-REV-"+tx.rows[0].id.replaceAll("-","").slice(0,24),req.params.id]);
+  for(const line of lines.rows)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,$4)",[reversal.rows[0].id,line.account_id,line.credit,line.debit]);
+  const reverseTx=await c.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,source_id,description,created_by,journal_entry_id) VALUES($1,$2,$3,$4,$5,'cash_reversal',$6,$7,$8,$9) RETURNING *",
+    [tx.rows[0].cashbox_id,session.rows[0].id,"REV-"+tx.rows[0].id.replaceAll("-","").slice(0,32),tx.rows[0].direction==="in"?"out":"in",tx.rows[0].amount,tx.rows[0].id,reason.trim(),req.user.id,reversal.rows[0].id]);
+  await c.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
+  await c.query("UPDATE cash_transactions SET reversed_by=$2,reversed_at=now(),reversal_reason=$3,reversal_transaction_id=$4 WHERE id=$1",[req.params.id,req.user.id,reason.trim(),reverseTx.rows[0].id]);
+  await c.query("COMMIT");
+  res.json({reversed_transaction_id:req.params.id,reversal_transaction:reverseTx.rows[0],reversal_journal_entry_id:reversal.rows[0].id});
  }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
 });
 router.get("/cashboxes",guarded("cash.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT cb.*,b.name branch_name FROM cashboxes cb JOIN branches b ON b.id=cb.branch_id WHERE cb.is_active ORDER BY cb.name");res.json({items:r.rows});}catch(e){next(e);}});
