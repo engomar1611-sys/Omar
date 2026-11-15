@@ -647,7 +647,7 @@ $("productSearch").addEventListener("keydown",async e=>{
  catch(err){toast(err.message);}
 });
 $("discountInput").addEventListener("input",renderCart);
-$("saleTaxCode").addEventListener("change",renderCart);
+$("saleTaxCode").addEventListener("change",()=>{renderCart();if(typeof isCardPayment==="function"&&isCardPayment())$("cardTerminalAmount").value=$("grandTotal").textContent.replace(/[^0-9.]/g,"");});
 $("clearCart").onclick=()=>{cart=[];renderCart();toast("تم إفراغ السلة المحلية")};
 $("discountFocus").onclick=()=>{if(!posContext?.permission_codes?.includes("sales.discount"))return toast("لا تملك صلاحية الخصم");$("discountInput").focus();$("discountInput").select()};
 $("holdSale").onclick=()=>toast("التعليق المحلي للفاتورة: سيتم ربط الحفظ بالخادم في مرحلة التكامل");
