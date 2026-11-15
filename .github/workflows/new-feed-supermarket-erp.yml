@@ -209,6 +209,16 @@ jobs:
               RAISE EXCEPTION 'Invoice discount breakdown fields are missing';
             END IF;
 
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sale_return_refunds' AND column_name='cash_session_id'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sale_return_refunds' AND column_name='transaction_reference'
+            ) OR to_regclass('public.idx_sale_return_refunds_cash_session') IS NULL THEN
+              RAISE EXCEPTION 'Return refund tender audit and cash session linkage are missing';
+            END IF;
+
             IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
               OR NOT EXISTS (
                 SELECT 1 FROM role_permissions rp
