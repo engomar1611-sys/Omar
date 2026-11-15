@@ -70,13 +70,12 @@ router.get("/products/:id/label",async(req,res,next)=>{
        WHERE p.id=$1`,[req.params.id]);
     if(!result.rowCount)return res.status(404).send("Product not found");
     const p=result.rows[0];
-    const sizes={"30x20":{w:30,h:20},"50x30":{w:50,h:30},"70x40":{w:70,h:40},"100x50":{w:100,h:50}};
-    const size=sizes[req.query.size]||sizes["50x30"];
+    const size=getBarcodeLabelSize({preset:req.query.size,width:req.query.width,height:req.query.height});
     const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     res.type("html").send(`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>ملصق الصنف</title>
-    <style>@page{size:auto;margin:2mm}body{font-family:Arial,sans-serif;margin:0}.label{width:${size.w}mm;min-height:${size.h}mm;border:1px solid #ddd;padding:2mm;text-align:center;break-inside:avoid;box-sizing:border-box}.name{font-weight:bold;font-size:12px}.sku{font-size:9px;color:#555}svg{width:100%;height:${Math.max(7,size.h*.38)}mm}.price{font-size:13px;font-weight:bold}</style>
-    <div class="label"><div class="name">${esc(p.name_ar)}</div><div class="sku">${esc(p.sku)}</div><svg id="barcode"></svg><div>${esc(p.barcode||"")}</div><div class="price">${Number(p.retail_price).toFixed(2)} ج.م</div></div>
-    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script><script>if(${JSON.stringify(p.barcode||"")})JsBarcode("#barcode",${JSON.stringify(p.barcode||"")},{format:"CODE128",displayValue:false,margin:0});window.onload=()=>window.print();</script></html>`);
+    <style>@page{size:auto;margin:2mm}body{font-family:Arial,sans-serif;margin:0}.label{width:${size.width}mm;min-height:${size.height}mm;border:1px solid #ddd;padding:2mm;text-align:center;break-inside:avoid;box-sizing:border-box}.name{font-weight:bold;font-size:12px}.sku{font-size:9px;color:#555}svg{width:100%;height:${Math.max(7,size.height*.38)}mm}.price{font-size:13px;font-weight:bold}</style>
+    <div class="label"><div class="name">${esc(p.name_ar)}</div><div class="sku">${esc(p.sku)}${p.pack_size?" — "+esc(p.pack_size)+" "+esc(p.pack_unit||""):""}</div><svg id="barcode"></svg><div>${esc(p.barcode||"")}</div><div class="price">${Number(p.retail_price).toFixed(2)} ج.م</div></div>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\\/script><script>if(${JSON.stringify(p.barcode||"")})JsBarcode("#barcode",${JSON.stringify(p.barcode||"")},{format:"CODE128",displayValue:false,margin:0});window.onload=()=>window.print();</script></html>`);
   }catch(e){next(e);}
 });
 
