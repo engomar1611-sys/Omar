@@ -154,6 +154,16 @@ jobs:
             ) THEN
               RAISE EXCEPTION 'Payroll payment audit fields are missing';
             END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
+              OR NOT EXISTS (
+                SELECT 1 FROM role_permissions rp
+                JOIN roles r ON r.id=rp.role_id
+                JOIN permissions p ON p.id=rp.permission_id
+                WHERE r.code='HR_MANAGER' AND p.code='hr.payroll'
+              ) THEN
+              RAISE EXCEPTION 'HR manager role defaults are missing';
+            END IF;
           END $$;
           SQL
 
