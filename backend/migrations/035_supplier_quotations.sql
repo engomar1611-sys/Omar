@@ -37,3 +37,12 @@ INSERT INTO permissions(code,name_ar,module_code) VALUES
  ('PURCHASE_QUOTES.MANAGE','تسجيل عروض أسعار الموردين','PURCHASES'),
  ('PURCHASE_QUOTES.AWARD','ترسية عروض أسعار الموردين','PURCHASES')
 ON CONFLICT(code) DO NOTHING;
+
+-- Existing installations receive the new capabilities for the built-in system administrator.
+INSERT INTO role_permissions(role_id, permission_id)
+SELECT r.id, p.id
+FROM roles r
+CROSS JOIN permissions p
+WHERE r.code = 'SYSTEM_ADMIN'
+  AND p.code IN ('PURCHASE_QUOTES.READ','PURCHASE_QUOTES.MANAGE','PURCHASE_QUOTES.AWARD')
+ON CONFLICT DO NOTHING;
