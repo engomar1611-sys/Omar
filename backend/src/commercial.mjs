@@ -232,8 +232,8 @@ export async function commercialRoutes(app,{db}){
      await c.query(`INSERT INTO inventory_balances(warehouse_id,item_id,lot_no,quantity,average_unit_cost)
       VALUES($1,$2,$3,$4,$5) ON CONFLICT(warehouse_id,item_id,lot_no) DO UPDATE
       SET quantity=EXCLUDED.quantity,average_unit_cost=EXCLUDED.average_unit_cost,updated_at=NOW()`,[h.rows[0].warehouse_id,l.item_id,l.lot_no,newQty,newAvg]);
-     await c.query(`INSERT INTO inventory_quality_holds(warehouse_id,item_id,lot_no,sales_return_id,sales_return_line_id,held_qty)
-      VALUES($1,$2,$3,$4,$5,$6)`,[h.rows[0].warehouse_id,l.item_id,l.lot_no,req.params.id,l.id,l.quantity]);
+     await c.query(`INSERT INTO inventory_quality_holds(warehouse_id,item_id,lot_no,sales_return_id,sales_return_line_id,source_type,source_id,source_line_id,held_qty)
+      VALUES($1,$2,$3,$4,$5,'SALES_RETURN',$4,$5,$6)`,[h.rows[0].warehouse_id,l.item_id,l.lot_no,req.params.id,l.id,l.quantity]);
      await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_in,unit_cost,reference_type,reference_id,created_by)
       VALUES($1,$2,$3,$4,'ADJUSTMENT_IN',$5,$6,'SALES_RETURN',$7,$8)`,[`SR-${req.params.id.slice(0,12)}-${l.id.slice(0,8)}`,h.rows[0].warehouse_id,l.item_id,l.lot_no,l.quantity,l.unit_cost,req.params.id,req.authUser.user_id]);
     }
