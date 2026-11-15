@@ -1,9 +1,9 @@
 <service>
   <id>NewFeedERP</id>
   <name>NEW FEED ERP Server</name>
-  <description>Central API service for NEW FEED ERP</description>
+  <description>Central API service for NEW FEED ERP feed manufacturing operations</description>
   <executable>%BASE%\node.exe</executable>
-  <arguments>apps\api\src\server.js</arguments>
+  <arguments>src\server.mjs</arguments>
   <workingdirectory>%BASE%\backend</workingdirectory>
   <env name="NODE_ENV" value="production" />
   <startmode>Automatic</startmode>
