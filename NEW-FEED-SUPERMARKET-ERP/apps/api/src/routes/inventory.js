@@ -74,7 +74,7 @@ router.patch("/inventory/stocktakes/:id/lines/:lineId",async(req,res,next)=>{
 
 router.post("/inventory/stocktakes/:id/counts",async(req,res,next)=>{
  const {lines}=req.body??{};
- if(!uuid.test(req.params.id)||!Array.isArray(lines)||lines.length>5000||lines.some(x=>!uuid.test(x.id||"")||!qty(x.counted_quantity)||(x.expiry_date!==null&&x.expiry_date!==undefined&&x.expiry_date!==""&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(x.expiry_date))))return fail(res,"بيانات كميات الجرد غير صحيحة");
+ if(!uuid.test(req.params.id)||!Array.isArray(lines)||lines.length>5000||lines.some(x=>!uuid.test(x.id||"")||!qty(x.counted_quantity)||(x.expiry_date!==null&&x.expiry_date!==undefined&&x.expiry_date!==""&&!/^\d{4}-\d{2}-\d{2}$/.test(x.expiry_date))))return fail(res,"بيانات كميات الجرد غير صحيحة");
  const client=await pool.connect();
  try{
   await client.query("BEGIN");
