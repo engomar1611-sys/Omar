@@ -2,6 +2,7 @@ import { Router } from "express";
 import { pool } from "../db.js";
 import { completeSaleHandler } from "./sales.js";
 import { calculateMonthlyDepreciation } from "../domain/assets.js";
+import { deliveryTransitions, canTransitionDeliveryStatus } from "../domain/delivery.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const txt=(v,n=180)=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=n;
@@ -106,8 +107,7 @@ router.patch("/delivery/orders/:id/status",async(req,res,next)=>{
   const order=await c.query("SELECT * FROM delivery_orders WHERE id=$1 FOR UPDATE",[req.params.id]);
   if(!order.rowCount)throw Object.assign(new Error("Delivery order not found"),{statusCode:404});
   const current=order.rows[0].status;
-  const transitions={pending:["assigned","cancelled","failed"],assigned:["out_for_delivery","cancelled","failed"],out_for_delivery:["delivered","failed"],failed:["assigned","cancelled"]};
-  if(!(transitions[current]||[]).includes(status))throw Object.assign(new Error("Delivery status transition is not allowed from "+current+" to "+status),{statusCode:409});
+  if(!canTransitionDeliveryStatus(current,status))throw Object.assign(new Error("Delivery status transition is not allowed from "+current+" to "+status),{statusCode:409});
   let courier=order.rows[0].courier_employee_id;
   if(courier_employee_id)courier=courier_employee_id;
   if(status==="assigned"){
