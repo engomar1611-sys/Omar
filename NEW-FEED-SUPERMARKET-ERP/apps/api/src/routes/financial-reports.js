@@ -3,7 +3,7 @@ import {pool} from "../db.js";
 import {buildTrialBalance,buildIncomeStatement,buildBalanceSheet} from "../domain/financial-statements.js";
 
 const router=Router();
-const dateRe=/^\d{4}-\d{2}-\d{2}$/;
+const dateRe=/^\\d{4}-\\d{2}-\\d{2}$/;
 function validDate(value){
  if(!dateRe.test(value||""))return false;
  const parsed=new Date(value+"T00:00:00.000Z");
@@ -29,7 +29,7 @@ async function accountBalancesThrough(asOf){
     JOIN journal_entries je ON je.id=jl.journal_entry_id
     WHERE je.status='posted' AND je.entry_date <= $1::date
    ) posted ON posted.account_id=a.id
-   WHERE a.is_active=true
+   WHERE a.is_active=true OR posted.account_id IS NOT NULL
    GROUP BY a.id,a.code,a.name_ar,a.account_type
    ORDER BY a.code`,
   [asOf]
@@ -48,7 +48,7 @@ async function accountBalancesForPeriod(from,to){
     JOIN journal_entries je ON je.id=jl.journal_entry_id
     WHERE je.status='posted' AND je.entry_date BETWEEN $1::date AND $2::date
    ) posted ON posted.account_id=a.id
-   WHERE a.is_active=true
+   WHERE a.is_active=true OR posted.account_id IS NOT NULL
    GROUP BY a.id,a.code,a.name_ar,a.account_type
    ORDER BY a.code`,
   [from,to]
