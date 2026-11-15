@@ -200,14 +200,18 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
     if(saleId){
       const sale=await client.query("SELECT customer_id,loyalty_points_redeemed,order_discount_amount FROM sales WHERE id=$1 FOR UPDATE",[saleId]);
       if(sale.rowCount&&sale.rows[0].customer_id&&Number(sale.rows[0].loyalty_points_redeemed)>0){
-        const base=await client.query("SELECT GREATEST(0,COALESCE(SUM(line_total),0)-$2)::numeric net_base FROM sale_lines WHERE sale_id=$1",[saleId,sale.rows[0].order_discount_amount||0]);
-        const prior=await client.query("SELECT COALESCE(SUM(srl.refund_amount),0)::numeric amount FROM sale_return_lines srl JOIN sale_returns sr ON sr.id=srl.return_id WHERE sr.sale_id=$1 AND sr.id<>$2 AND sr.status IN ('approved','refunded')",[saleId,req.params.id]);
+        const base=await client.query("SELECT COALESCE(SUM(line_total),0)::numeric merchandise_base FROM sale_lines WHERE sale_id=$1",[saleId]);
+        const prior=await client.query(`SELECT COALESCE(SUM(srl.quantity/NULLIF(sl.quantity,0)*sl.line_total),0)::numeric amount
+          FROM sale_return_lines srl JOIN sale_returns sr ON sr.id=srl.return_id JOIN sale_lines sl ON sl.id=srl.sale_line_id
+          WHERE sr.sale_id=$1 AND sr.id<>$2 AND sr.status IN ('approved','refunded')`,[saleId,req.params.id]);
+        const current=await client.query(`SELECT COALESCE(SUM(srl.quantity/NULLIF(sl.quantity,0)*sl.line_total),0)::numeric amount
+          FROM sale_return_lines srl JOIN sale_lines sl ON sl.id=srl.sale_line_id WHERE srl.return_id=$1`,[req.params.id]);
         const already=await client.query("SELECT COALESCE(SUM(l.points),0)::bigint points FROM customer_loyalty_transactions l JOIN sale_returns sr ON sr.id=l.source_id WHERE sr.sale_id=$1 AND l.source_type='sale_return' AND l.transaction_type='earn'",[saleId]);
         const currentRefund=lines.rows.reduce((sum,line)=>sum+Number(line.refund_amount||0),0);
         const restorePoints=calculateReturnPointsRestoration({
           pointsRedeemed:Number(sale.rows[0].loyalty_points_redeemed),
-          netMerchandiseBase:Number(base.rows[0].net_base),
-          cumulativeApprovedRefund:Number(prior.rows[0].amount)+currentRefund,
+          originalMerchandiseBase:Number(base.rows[0].merchandise_base),
+          cumulativeReturnedBase:Number(prior.rows[0].amount)+Number(current.rows[0].amount),
           pointsAlreadyRestored:Number(already.rows[0].points)
         });
         if(restorePoints>0){
