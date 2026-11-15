@@ -14,7 +14,7 @@
 | CI-COUNT-01 | الجرد | لقطة أرصدة، تسجيل فعلي أعمى، إضافة صنف غير موجود بالرصيد، اعتماد ذري، حركات مخزون وقيد متوازن ومنع التكرار | backend/test/inventory-counts.integration.test.mjs على PostgreSQL 16 | أضيف في فرع feature/inventory-counts-accounting-acceptance؛ ينتظر CI |
 | CI-SEC-01 | Windows/HTTPS | API loopback وعدم فتح منفذ API وقالب reverse proxy | server-installer/configuration.test.cjs | CI ناجح في PR #48 |
 | CI-FIN-01 | المالية | مراكز التكلفة ومنع الحلقات، مصروف بمركز تكلفة ثم عكسه يصفّر الميزان، قائمة الدخل والمركز المالي المتوازن، تصدير Excel/CSV وصلاحياته | backend/test/finance-statements.integration.test.mjs على PostgreSQL 16 | مضاف؛ ينتظر CI |
-| CI-DESK-01 | تطبيق Windows | فحص الصياغة واختبارات عميل Electron وبناء EXE | Windows Installers workflow | CI ناجح في PR #31 وPR #48 |
+| CI-DESK-01 | تطبيق Windows | فحص عميل Electron، والتحقق من أن مثبت السيرفر يضمّن backend/src/server.mjs وترحيلات PostgreSQL والاعتماديات الصحيحة، واختبار مسارات الإعداد والترقية، وبناء EXE | Windows Installers workflow وserver-installer/configuration.test.cjs | PR #89: قيد CI؛ بناء EXE لا يغلق اختبارات UAT-WIN وUAT-TLS |
 
 ## اختبارات قبول ميدانية — لا تزال مفتوحة
 
