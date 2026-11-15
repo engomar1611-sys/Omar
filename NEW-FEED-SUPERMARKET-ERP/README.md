@@ -241,3 +241,15 @@ Apply `database/007_purchase_quality_workflow.sql` after the earlier schema migr
 - رقم طلب التوصيل يتولد تلقائيًا بصيغة DLV- متبوعًا برقم الفاتورة، وتظهر بيانات الفاتورة والمبلغ في قائمة متابعة التوصيل.
 
 - تمت إضافة حقل مستقل لرسوم التوصيل على فاتورة البيع؛ إجمالي الفاتورة والمدفوعات والقيد المحاسبي يتضمن رسوم التوصيل، مع بقائها ظاهرة كقيمة مستقلة.
+
+
+## Recent POS and master-data enhancements
+
+- POS product lookup supports Arabic/English product names, SKU, and registered barcodes. A keyboard-wedge scanner can enter a barcode in the search field; pressing Enter resolves the exact SKU/barcode and adds the product to the cart. Search also queries the API catalog rather than being limited to the first locally loaded page.
+- Product master records can be edited, activated/deactivated, and maintained with additional barcodes. Product edits require the catalog management permission.
+- Customers and suppliers receive sequential numeric identifiers in addition to their business codes. Their phone, email, and address details are stored; supplier records also retain tax number.
+- Products can be linked to suppliers with supplier-specific product codes and last purchase price. Creating a purchase order automatically records the supplier-product relationship.
+- Automatic order and delivery discounts are configured separately by minimum order value, fixed EGP amount or percentage. The API recalculates discounts inside the sale transaction, caps discounts at the eligible amount, stores order and delivery discounts separately, and charges the net delivery fee. Only SUPER_ADMIN can change discount policy; sales users can retrieve and apply the active policy.
+- Database migrations 015–017 add party numbers, supplier-product links, threshold discount settings, sale discount breakdown and discount-policy permissions.
+
+These capabilities are committed to the main branch. External barcode scanner, receipt printer and live database behavior still require verification on the target Windows installation; successful CI is not a substitute for those hardware tests.
