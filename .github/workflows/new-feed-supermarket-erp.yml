@@ -153,6 +153,12 @@ jobs:
               WHERE table_schema='public' AND table_name='payroll_runs' AND column_name='paid_by'
             ) THEN
               RAISE EXCEPTION 'Payroll payment audit fields are missing';
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='payroll_runs' AND column_name='payment_journal_entry_id'
+            ) OR (SELECT COUNT(*) FROM system_account_mappings WHERE mapping_key=ANY(ARRAY['payroll_expense','cash','bank'])) <> 3 THEN
+              RAISE EXCEPTION 'Payroll general ledger posting mappings are missing';
+            END IF;
             END IF;
 
             IF NOT EXISTS (
