@@ -26,11 +26,13 @@ async function transaction(db, callback) {
 }
 
 export function validateSupplierQuotePayload(body, requestLines) {
+  if (!Array.isArray(requestLines) || requestLines.length === 0) return false;
   if (!body || !textOk(body.quoteNo) || !body.supplierId || (body.currencyCode !== undefined && String(body.currencyCode).trim().toUpperCase() !== 'EGP') || (body.validUntil != null && body.validUntil !== '' && !validDate(body.validUntil)) || !Array.isArray(body.lines) ||
       body.lines.length !== requestLines.length) return false;
   const expected = new Map(requestLines.map(line => [line.id, line]));
   const seen = new Set();
   for (const line of body.lines) {
+    if (!line || typeof line !== 'object' || Array.isArray(line)) return false;
     const source = expected.get(line.requestLineId);
     if (!source || seen.has(line.requestLineId) || !positive(line.quantity) ||
         !positive(line.unitCost) || Number(line.quantity) !== Number(source.requested_qty)) return false;
