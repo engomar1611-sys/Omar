@@ -452,6 +452,43 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.equal(invoiceAfterApprovedReturn.statusCode,201,
       'approved customer returns must reduce credit exposure by their posted receivable amount');
 
+    const today = new Date().toISOString().slice(0,10);
+    const futureDate = new Date(Date.parse(today+'T00:00:00.000Z')+86400000).toISOString().slice(0,10);
+    const futureCustomer = (await pool.query(
+      'INSERT INTO customers(code,name_ar,credit_limit) VALUES($1,$2,30) RETURNING id,code',
+      [code('FUT-CUST'),'عميل تحصيل مستقبلي']
+    )).rows[0];
+    const futureInvoice = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('FUT-INV'),customerId:futureCustomer.id,warehouseId:warehouse.id,
+        lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:20}]}
+    });
+    assert.equal(futureInvoice.statusCode,201,futureInvoice.body);
+    const futureReceipt = await app.inject({
+      method:'POST',url:'/api/v1/accounting/receipts',headers,
+      payload:{receiptNo:code('FUT-RC'),customerId:futureCustomer.id,receiptDate:futureDate,
+        amount:15,paymentMethod:'CASH',allocations:[{invoiceId:futureInvoice.json().id,amount:15}]}
+    });
+    assert.equal(futureReceipt.statusCode,201,futureReceipt.body);
+    const futureReceiptMustNotReduceCurrentCredit = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('FUT-INV2'),customerId:futureCustomer.id,warehouseId:warehouse.id,
+        lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:15}]}
+    });
+    assert.equal(futureReceiptMustNotReduceCurrentCredit.statusCode,409,
+      'future-dated receipts must not reduce current credit exposure');
+
+    const agingBeforeFutureReceipt = await app.inject({
+      method:'GET',url:'/api/v1/reports/customer-aging?asOf='+today+'&customerCode='+encodeURIComponent(futureCustomer.code),headers
+    });
+    assert.equal(agingBeforeFutureReceipt.statusCode,200,agingBeforeFutureReceipt.body);
+    assert.equal(Number(agingBeforeFutureReceipt.json()[0].outstanding),20);
+    const agingAfterFutureReceipt = await app.inject({
+      method:'GET',url:'/api/v1/reports/customer-aging?asOf='+futureDate+'&customerCode='+encodeURIComponent(futureCustomer.code),headers
+    });
+    assert.equal(agingAfterFutureReceipt.statusCode,200,agingAfterFutureReceipt.body);
+    assert.equal(Number(agingAfterFutureReceipt.json()[0].outstanding),5);
+
   } finally {
     await app.close();
     await pool.end();
