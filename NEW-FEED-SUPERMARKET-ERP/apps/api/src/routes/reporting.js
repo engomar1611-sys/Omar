@@ -33,9 +33,10 @@ router.get("/reports/daily-sales",async(req,res,next)=>{
 
 router.get("/reports/product-sales",async(req,res,next)=>{
  const range=dates(req,res);if(!range)return;
- const {from,to}=range,values=[from,to];let filters="";
- if(req.query.product_id){if(!uuid.test(req.query.product_id))return res.status(400).json({error:"Invalid product_id"});values.push(req.query.product_id);filters+=" AND p.id=$"+values.length;}
- if(req.query.category_id){if(!uuid.test(req.query.category_id))return res.status(400).json({error:"Invalid category_id"});values.push(req.query.category_id);filters+=" AND p.category_id=$"+values.length;}
+ const {from,to}=range,product=req.query.product_id||null,category=req.query.category_id||null;
+ if(product&&!uuid.test(product))return res.status(400).json({error:"Invalid product_id"});
+ if(category&&!uuid.test(category))return res.status(400).json({error:"Invalid category_id"});
+ const values=[from,to,product,category];
  try{
   const r=await pool.query(`WITH line_data AS (
    SELECT s.id sale_id,s.order_discount_amount,sl.product_id,sl.unit_id,sl.quantity,sl.unit_price,sl.discount_amount,sl.line_total,
