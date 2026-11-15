@@ -280,8 +280,8 @@ export async function commercialRoutes(app,{db}){
       WHERE pr.purchase_order_id=$1 AND pr.status<>'CANCELLED' AND rl.item_id=$2 AND rl.lot_no=$3`,[b.purchaseOrderId,l.itemId,l.lotNo??'']);
     if(Number(already.rows[0].returned)+Number(l.quantity)>Number(accepted.rows[0].received)+0.000001)
      throw Object.assign(new Error('كمية المرتجع تتجاوز الكمية المقبولة لهذا الصنف والتشغيلة في أمر الشراء'),{code:'P0001'});
-    const bal=await c.query("SELECT b.quantity,b.average_unit_cost FROM inventory_balances b
-       WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 AND b.quality_status='RELEASED' FOR UPDATE OF b",[b.warehouseId,l.itemId,l.lotNo??'']);
+    const bal=await c.query(`SELECT b.quantity,b.average_unit_cost FROM inventory_balances b
+       WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 AND b.quality_status='RELEASED' FOR UPDATE OF b`,[b.warehouseId,l.itemId,l.lotNo??'']);
     const held=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[b.warehouseId,l.itemId,l.lotNo??'']):{rows:[{held_qty:0}]};
     const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty):0;
