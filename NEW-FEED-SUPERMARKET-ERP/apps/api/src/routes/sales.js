@@ -27,6 +27,7 @@ router.put("/sales/discount-settings",requirePermission("sales.discount.manage")
   await client.query("COMMIT");res.json({settings:r.rows[0]});
  }catch(e){await client.query("ROLLBACK");next(e);}finally{client.release();}
 });
+router.get("/sales/:id/payments",async(req,res,next)=>{if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid sale id"});try{const r=await pool.query(`SELECT sp.id,sp.amount,sp.reference_text,sp.transaction_reference,sp.card_last_four,sp.terminal_amount,sp.terminal_captured_at,pm.code payment_method_code,pm.name_ar payment_method_name,pb.name_ar bank_name_ar,pb.name_en bank_name_en FROM sale_payments sp JOIN payment_methods pm ON pm.id=sp.payment_method_id LEFT JOIN payment_banks pb ON pb.id=sp.bank_id WHERE sp.sale_id=$1 ORDER BY sp.id`,[req.params.id]);res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/sales",async(_q,res,next)=>{try{const r=await pool.query("SELECT s.*,c.name customer_name,u.display_name cashier_name FROM sales s LEFT JOIN customers c ON c.id=s.customer_id JOIN users u ON u.id=s.cashier_id ORDER BY s.created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/sales/complete",async(req,res,next)=>{
  const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null,delivery=null}=req.body??{};
