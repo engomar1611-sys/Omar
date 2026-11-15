@@ -28,7 +28,7 @@ let cart=[],activeCategory="الكل";
 const $=id=>document.getElementById(id),money=n=>Number(n).toFixed(2);
 const reportExportData=new Map();let reportExportSequence=0;
 function downloadCsv(filename,rows,columns){const q=v=>'"'+String(v??"").replace(/"/g,'""')+'"';const csv="\uFEFF"+[columns.map(x=>q(x[1])).join(","),...(rows||[]).map(r=>columns.map(x=>q(r[x[0]]??"")).join(","))].join("\r\n");const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=filename.replace(/[^a-zA-Z0-9_-]/g,"_")+".csv";a.click();URL.revokeObjectURL(url);}
-function bindReportExports(root){root.querySelectorAll("[data-export-report]").forEach(b=>b.onclick=()=>{const d=reportExportData.get(b.dataset.exportReport);if(d)downloadCsv(d.title,d.rows,d.columns);});}
+function bindReportExports(root){root.querySelectorAll("[data-export-report]").forEach(b=>b.onclick=async()=>{const d=reportExportData.get(b.dataset.exportReport);if(!d)return;try{await api("/api/reports/export-permission");downloadCsv(d.title,d.rows,d.columns);}catch(e){toast("لا تملك صلاحية تصدير التقارير: "+e.message);}});}
 
 function toast(msg){const t=document.createElement("div");t.className="toast";t.textContent=msg;document.body.append(t);setTimeout(()=>t.remove(),2600)}
 function renderNav(){ $("moduleNav").innerHTML=modules.map(([id,ic,name])=>'<button class="nav-item '+(id==="pos"?"active":"")+'" data-module="'+id+'"><span class="nav-icon">'+ic+'</span>'+name+'</button>').join("");document.querySelectorAll(".nav-item").forEach(b=>b.onclick=()=>openModule(b.dataset.module));}
