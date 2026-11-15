@@ -130,6 +130,29 @@ router.get("/reports/ecommerce",async(req,res,next)=>{
  }catch(e){next(e);}
 });
 
+router.get("/reports/inventory-movements",async(req,res,next)=>{
+ const range=dates(req,res);if(!range)return;
+ try{
+  const r=await pool.query(`SELECT sm.reference_no,sm.movement_type,p.sku,p.name_ar,w.name warehouse_name,
+   sm.quantity_in,sm.quantity_out,sm.unit_cost,sm.created_at
+   FROM stock_movements sm JOIN products p ON p.id=sm.product_id JOIN warehouses w ON w.id=sm.warehouse_id
+   WHERE sm.created_at::date BETWEEN $1::date AND $2::date
+   ORDER BY sm.created_at DESC LIMIT 2000`,[range.from,range.to]);
+  res.json({from:range.from,to:range.to,items:r.rows});
+ }catch(e){next(e);}
+});
+router.get("/reports/returns",async(req,res,next)=>{
+ const range=dates(req,res);if(!range)return;
+ try{
+  const r=await pool.query(`SELECT sr.reference_no,s.reference_no sale_reference,c.name customer_name,sr.status,sr.reason,sr.created_at,
+   COALESCE(SUM(srl.refund_amount),0) refund_total
+   FROM sale_returns sr JOIN sales s ON s.id=sr.sale_id LEFT JOIN customers c ON c.id=s.customer_id
+   LEFT JOIN sale_return_lines srl ON srl.return_id=sr.id
+   WHERE sr.created_at::date BETWEEN $1::date AND $2::date
+   GROUP BY sr.id,s.reference_no,c.name ORDER BY sr.created_at DESC`,[range.from,range.to]);
+  res.json({from:range.from,to:range.to,items:r.rows});
+ }catch(e){next(e);}
+});
 router.get("/reports/hr-assets",async(_req,res,next)=>{
  try{
   const [employees,shifts,assets,maintenance]=await Promise.all([
