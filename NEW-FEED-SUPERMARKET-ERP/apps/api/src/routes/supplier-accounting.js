@@ -65,11 +65,8 @@ router.post("/supplier-invoices/:id/post",permission,async(req,res,next)=>{
    FROM supplier_invoice_lines sil JOIN purchase_receipt_lines prl ON prl.id=sil.receipt_line_id
    JOIN purchase_receipts pr ON pr.id=prl.receipt_id WHERE sil.invoice_id=$1 FOR UPDATE OF sil,prl`,[req.params.id]);
   if(!lines.rowCount)throw Object.assign(new Error("Supplier invoice has no lines"),{statusCode:409});
-  const [posted,grni]=await Promise.all([
-   c.query("SELECT COALESCE(SUM(sil.quantity),0) qty FROM supplier_invoice_lines sil JOIN supplier_invoices si ON si.id=sil.invoice_id WHERE sil.receipt_line_id=ANY($1::uuid[]) AND si.status='posted'",[lines.rows.map(x=>x.receipt_line_id)]),
-   c.query("SELECT mapping_key,account_id FROM system_account_mappings WHERE mapping_key=ANY($1::varchar[])",[["grni","supplier_payables","purchase_price_variance"]])
-  ]);
-  const map=Object.fromEntries(grni.rows.map(x=>[x.mapping_key,x.account_id]));
+  const mappings=await c.query("SELECT mapping_key,account_id FROM system_account_mappings WHERE mapping_key=ANY($1::varchar[])",[["grni","supplier_payables","purchase_price_variance"]]);
+  const map=Object.fromEntries(mappings.rows.map(x=>[x.mapping_key,x.account_id]));
   if(!map.grni||!map.supplier_payables||!map.purchase_price_variance)throw Object.assign(new Error("Supplier accounting mappings are missing"),{statusCode:409});
   let grniValue=0,invoiceTotal=0;
   for(const line of lines.rows){
