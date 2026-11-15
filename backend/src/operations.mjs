@@ -243,6 +243,11 @@ export async function operationsRoutes(app, { db }) {
             WHERE l.id=$1 AND l.goods_receipt_id=$2 FOR UPDATE`,[x.receiptLineId,req.params.id]);
           if(!lr.rowCount) throw Object.assign(new Error('سطر الاستلام غير موجود'),{code:'P0001'});
           const line=lr.rows[0], a=Number(x.acceptedQty), rej=Number(x.rejectedQty);
+          const activeSpec=await c.query("SELECT id FROM quality_specifications WHERE item_id=$1 AND stage='RAW_MATERIAL' AND is_active=TRUE",[line.item_id]);
+          if(activeSpec.rowCount){
+            const labSample=await c.query("SELECT id,status FROM quality_samples WHERE specification_id=$1 AND source_type='GOODS_RECEIPT' AND source_id=$2 AND source_line_id=$3 ORDER BY collected_at DESC LIMIT 1",[activeSpec.rows[0].id,req.params.id,line.id]);
+            if(!labSample.rowCount||labSample.rows[0].status!=='PASSED')throw Object.assign(new Error('يجب أن تكون أحدث عينة معمل معتمدة وناجحة حسب مواصفة الخامة قبل اعتماد الاستلام'),{code:'P0001'});
+          }
           if(Math.abs((a+rej)-Number(line.received_qty))>0.000001) throw Object.assign(new Error('يجب أن يساوي مجموع المقبول والمرفوض كامل الكمية المستلمة'),{code:'P0001'});
           await c.query(`INSERT INTO quality_inspections(goods_receipt_line_id,inspected_by,result,accepted_qty,rejected_qty,parameters,notes)
             VALUES($1,$2,$3,$4,$5,$6::jsonb,$7)`,[line.id,req.authUser.user_id,x.result,a,rej,JSON.stringify(x.parameters??{}),x.notes??null]);
@@ -869,8 +874,15 @@ export async function operationsRoutes(app, { db }) {
     if(!['PASS','FAIL','CONDITIONAL'].includes(b.result)||(b.parameters!=null&&(typeof b.parameters!=='object'||Array.isArray(b.parameters)||new TextEncoder().encode(JSON.stringify(b.parameters)).length>8192))||(b.notes!=null&&(typeof b.notes!=='string'||b.notes.length>2000)))return invalid(reply);
     try{
       const result=await transaction(db,async c=>{
-        const h=await c.query('SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no,o.quantity,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
+        const h=await c.query('SELECT p.id,p.status,p.warehouse_id,o.id output_id,o.item_id,o.lot_no,o.quantity,b.quality_status FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no WHERE p.id=$1 FOR UPDATE OF p,b',[req.params.id]);
         if(!h.rowCount||h.rows[0].status!=='COMPLETED'||!['PENDING_QC','QUARANTINED'].includes(h.rows[0].quality_status))throw Object.assign(new Error('المنتج غير متاح للفحص أو تم فحصه مسبقاً'),{code:'P0001'});
+        if(b.result==='PASS'){
+          const activeSpec=await c.query("SELECT id FROM quality_specifications WHERE item_id=$1 AND stage='FINISHED_GOOD' AND is_active=TRUE",[h.rows[0].item_id]);
+          if(activeSpec.rowCount){
+            const labSample=await c.query("SELECT id,status FROM quality_samples WHERE specification_id=$1 AND source_type='PRODUCTION_ORDER' AND source_id=$2 AND source_line_id=$3 ORDER BY collected_at DESC LIMIT 1",[activeSpec.rows[0].id,req.params.id,h.rows[0].output_id]);
+            if(!labSample.rowCount||labSample.rows[0].status!=='PASSED')throw Object.assign(new Error('يجب أن تكون أحدث عينة معمل معتمدة وناجحة قبل الإفراج عن المنتج النهائي'),{code:'P0001'});
+          }
+        }
         const status=b.result==='PASS'?'RELEASED':b.result==='FAIL'?'QUARANTINED':'PENDING_QC';
         const attempt=await c.query('SELECT COALESCE(MAX(attempt_no),0)+1 attempt_no FROM finished_goods_inspection_history WHERE production_order_id=$1',[req.params.id]);
         await c.query(`INSERT INTO finished_goods_inspection_history(production_order_id,attempt_no,inspected_by,result,parameters,notes,inventory_status) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)`,[req.params.id,attempt.rows[0].attempt_no,req.authUser.user_id,b.result,JSON.stringify(b.parameters??{}),b.notes?.trim()||null,status]);
