@@ -115,7 +115,10 @@ try {
   Pop-Location
 }
 
-if (-not $serviceExists) {
+if ($serviceExists) {
+  & $service refresh
+  if ($LASTEXITCODE -ne 0) { throw 'فشل تحديث إعدادات خدمة Windows الحالية.' }
+} else {
   & $service install
   if ($LASTEXITCODE -ne 0) { throw 'فشل تسجيل خدمة Windows.' }
 }
