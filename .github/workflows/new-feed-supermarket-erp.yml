@@ -155,6 +155,13 @@ jobs:
               RAISE EXCEPTION 'Payroll payment audit fields are missing';
             END IF;
 
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sales' AND column_name='tax_code_id'
+            ) THEN
+              RAISE EXCEPTION 'Invoice tax code linkage is missing';
+            END IF;
+
             IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
               OR NOT EXISTS (
                 SELECT 1 FROM role_permissions rp
