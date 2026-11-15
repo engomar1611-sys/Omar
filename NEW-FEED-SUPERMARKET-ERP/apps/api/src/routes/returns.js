@@ -1,5 +1,6 @@
 import {Router} from "express";
 import {pool} from "../db.js";
+import {calculateReturnPointsRestoration} from "../domain/loyalty.js";
 import {requirePermission} from "../auth.js";
 
 const router=Router();
@@ -193,6 +194,27 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
       if(restockedCost>0){
         await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journalEntryId,map.inventory,restockedCost]);
         await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journalEntryId,map.cogs,restockedCost]);
+      }
+    }
+    const saleId=lines.rows[0]?.sale_id;
+    if(saleId){
+      const sale=await client.query("SELECT customer_id,loyalty_points_redeemed,order_discount_amount FROM sales WHERE id=$1 FOR UPDATE",[saleId]);
+      if(sale.rowCount&&sale.rows[0].customer_id&&Number(sale.rows[0].loyalty_points_redeemed)>0){
+        const base=await client.query("SELECT GREATEST(0,COALESCE(SUM(line_total),0)-$2)::numeric net_base FROM sale_lines WHERE sale_id=$1",[saleId,sale.rows[0].order_discount_amount||0]);
+        const prior=await client.query("SELECT COALESCE(SUM(srl.refund_amount),0)::numeric amount FROM sale_return_lines srl JOIN sale_returns sr ON sr.id=srl.return_id WHERE sr.sale_id=$1 AND sr.id<>$2 AND sr.status IN ('approved','refunded')",[saleId,req.params.id]);
+        const already=await client.query("SELECT COALESCE(SUM(l.points),0)::bigint points FROM customer_loyalty_transactions l JOIN sale_returns sr ON sr.id=l.source_id WHERE sr.sale_id=$1 AND l.source_type='sale_return' AND l.transaction_type='earn'",[saleId]);
+        const currentRefund=lines.rows.reduce((sum,line)=>sum+Number(line.refund_amount||0),0);
+        const restorePoints=calculateReturnPointsRestoration({
+          pointsRedeemed:Number(sale.rows[0].loyalty_points_redeemed),
+          netMerchandiseBase:Number(base.rows[0].net_base),
+          cumulativeApprovedRefund:Number(prior.rows[0].amount)+currentRefund,
+          pointsAlreadyRestored:Number(already.rows[0].points)
+        });
+        if(restorePoints>0){
+          await client.query("UPDATE customers SET loyalty_points=loyalty_points+$2 WHERE id=$1",[sale.rows[0].customer_id,restorePoints]);
+          await client.query("INSERT INTO customer_loyalty_transactions(customer_id,reference_no,transaction_type,points,source_type,source_id,notes,created_by) VALUES($1,$2,'earn',$3,'sale_return',$4,'Restore redeemed points proportionally for approved return',$5)",
+            [sale.rows[0].customer_id,"RET-LOY-"+ret.rows[0].reference_no,restorePoints,req.params.id,financially_approved_by]);
+        }
       }
     }
     await client.query(
