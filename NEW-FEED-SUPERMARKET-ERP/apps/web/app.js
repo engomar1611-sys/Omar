@@ -58,7 +58,7 @@ function addProduct(id){
 function renderCart(){
  const sub=cart.reduce((s,x)=>s+x.price*x.qty,0),pct=Math.min(100,Math.max(0,Number($("discountInput").value)||0)),disc=sub*pct/100;
  $("cartLines").innerHTML=cart.map((x,i)=>'<div class="cart-line"><span>'+(i+1)+'</span><b>'+escapeHtml(x.name)+'</b><span class="qty-control"><button data-dec="'+x.id+'">−</button>'+x.qty+'<button data-inc="'+x.id+'">+</button></span><span>'+money(x.price)+'</span><b>'+money(x.price*x.qty)+'</b><button class="remove-line" data-del="'+x.id+'">×</button></div>').join("")||'<div class="empty-state">أضف الأصناف إلى فاتورة البيع</div>';
- $("itemCount").textContent=cart.reduce((s,x)=>s+x.qty,0);$("subtotal").textContent=money(sub);$("discountValue").textContent=money(disc);$("grandTotal").textContent=money(sub-disc)+" ج.م";
+ const deliveryCharge=$("saleIsDelivery")?.checked?Number($("saleDeliveryFee").value||0):0;$("itemCount").textContent=cart.reduce((s,x)=>s+x.qty,0);$("subtotal").textContent=money(sub);$("discountValue").textContent=money(disc);$("grandTotal").textContent=money(sub-disc+deliveryCharge)+" ج.م";
  document.querySelectorAll("[data-inc]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.inc);if(x){x.qty=Number((x.qty+quantityStep(x)).toFixed(6));renderCart();}});
  document.querySelectorAll("[data-dec]").forEach(b=>b.onclick=()=>{const x=cart.find(x=>x.id===b.dataset.dec);if(x){x.qty=Number((x.qty-quantityStep(x)).toFixed(6));if(x.qty<=0)cart=cart.filter(y=>y.id!==x.id);renderCart();}});
  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>{cart=cart.filter(x=>x.id!==b.dataset.del);renderCart();});
@@ -309,6 +309,7 @@ function openModule(id){
 }
 
 $("saleIsDelivery").addEventListener("change",()=>{$("saleDeliveryFields").classList.toggle("hidden",!$("saleIsDelivery").checked);});
+$("saleDeliveryFee").addEventListener("input",renderCart);
 $("productSearch").addEventListener("input",renderProducts);$("discountInput").addEventListener("input",renderCart);
 $("clearCart").onclick=()=>{cart=[];renderCart();toast("تم إفراغ السلة المحلية")};
 $("discountFocus").onclick=()=>{$("discountInput").focus();$("discountInput").select()};
@@ -321,12 +322,12 @@ $("completeSale").onclick=async()=>{
  if(!cart.length)return toast("السلة فارغة");
  if(!posContext)return toast("بيانات نقطة البيع غير جاهزة");
  const pct=Math.min(100,Math.max(0,Number($("discountInput").value)||0));
- const total=cart.reduce((s,x)=>s+x.price*x.qty,0)*(1-pct/100);
+ const deliveryEnabled=$("saleIsDelivery").checked;const deliveryFee=deliveryEnabled?Number($("saleDeliveryFee").value||0):0;const total=cart.reduce((s,x)=>s+x.price*x.qty,0)*(1-pct/100)+deliveryFee;
  const payment_method_id=$("paymentMethod").value;
  if(!payment_method_id)return toast("اختر طريقة الدفع");
  const lines=cart.map(x=>({product_id:x.product_id,unit_id:x.unit_id,quantity:x.qty,unit_price:x.price,discount_amount:Number((x.price*x.qty*pct/100).toFixed(6))}));
  try{
-  const deliveryEnabled=$("saleIsDelivery").checked;const delivery=deliveryEnabled?{customer_id:$("saleDeliveryCustomer").value,address:$("saleDeliveryAddress").value.trim(),delivery_fee:Number($("saleDeliveryFee").value||0),source_channel:"pos"}:null;
+  const delivery=deliveryEnabled?{customer_id:$("saleDeliveryCustomer").value,address:$("saleDeliveryAddress").value.trim(),delivery_fee:deliveryFee,source_channel:"pos"}:null;
  if(deliveryEnabled&&(!delivery.customer_id||!delivery.address||!Number.isFinite(delivery.delivery_fee)||delivery.delivery_fee<0))return toast("أدخل عميل التوصيل والعنوان ورسوم توصيل صحيحة");
  const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,customer_id:delivery?.customer_id||null,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],delivery,idempotency_key:(crypto.randomUUID?crypto.randomUUID():"NF-"+Date.now()+"-"+Math.random().toString(36).slice(2))})});
   toast("تم حفظ الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+(result.delivery?" — طلب توصيل "+result.delivery.reference_no:""));
