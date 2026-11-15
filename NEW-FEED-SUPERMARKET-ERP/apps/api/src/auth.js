@@ -47,7 +47,7 @@ export async function authorizeModule(req,res,next){
     [/^\/(purchase-orders|purchase-receipts)(\/|$)/,"purchasing.manage"],
     [/^\/(supplier-invoices|supplier-payments)(\/|$)/,"supplier.accounting"],
     [/^\/sales\/returns\/[^/]+\/inspect$/,"returns.inspect"],
-    [/^\/sales\/returns\/[^/]+\/(approve|refund)$/,"returns.approve"],
+    [/^\/sales\/returns(\/|$)/,method==="GET"?"returns.view":method==="POST"&&/^\/sales\/returns\/[^/]+\/inspect$/.test(req.path)?"returns.inspect":method==="POST"&&/^\/sales\/returns\/[^/]+\/(approve|refund)$/.test(req.path)?"returns.approve":"sales.manage"],
     [/^\/sales(\/|$)/,"sales.manage"],
     [/^\/(inventory|warehouses)(\/|$)/,"inventory.manage"],
     [/^\/suppliers(\/|$)/,"purchasing.manage"],
