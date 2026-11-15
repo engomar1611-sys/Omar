@@ -5,6 +5,17 @@ const dateRe=/^\d{4}-\d{2}-\d{2}$/;
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const dates=(req,res)=>{const from=req.query.from||new Date().toISOString().slice(0,10),to=req.query.to||from;if(!dateRe.test(from)||!dateRe.test(to)||to<from){res.status(400).json({error:"Invalid date range"});return null;}return {from,to};};
 
+router.get("/reports/options",async(req,res,next)=>{
+ const q=String(req.query.q||"").trim().slice(0,120);
+ try{
+  const [products,categories,warehouses]=await Promise.all([
+   pool.query("SELECT id,sku,name_ar FROM products WHERE is_active=true AND ($1='' OR name_ar ILIKE '%'||$1||'%' OR sku ILIKE '%'||$1||'%') ORDER BY name_ar LIMIT 200",[q]),
+   pool.query("SELECT id,code,name_ar FROM categories WHERE is_active=true ORDER BY name_ar"),
+   pool.query("SELECT id,code,name FROM warehouses WHERE is_active=true ORDER BY name")
+  ]);
+  res.json({products:products.rows,categories:categories.rows,warehouses:warehouses.rows});
+ }catch(e){next(e);}
+});
 router.get("/reports/daily-sales",async(req,res,next)=>{
  const date=req.query.date||new Date().toISOString().slice(0,10);
  if(!dateRe.test(date))return res.status(400).json({error:"Invalid date"});
