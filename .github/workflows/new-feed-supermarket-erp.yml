@@ -254,6 +254,16 @@ jobs:
               OR to_regclass('public.idx_ecommerce_order_lines_order') IS NULL THEN
               RAISE EXCEPTION 'Ecommerce-to-POS conversion integrity indexes are missing';
             END IF;
+            IF to_regclass('public.asset_depreciation_runs') IS NULL
+              OR to_regclass('public.asset_depreciation_lines') IS NULL
+              OR to_regclass('public.idx_asset_depreciation_period') IS NULL
+              OR NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='fixed_assets' AND column_name='useful_life_months'
+              ) THEN
+              RAISE EXCEPTION 'Fixed asset depreciation module schema is missing';
+            END IF;
+
             IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
               OR NOT EXISTS (
                 SELECT 1 FROM role_permissions rp
