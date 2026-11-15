@@ -154,4 +154,26 @@ router.post("/supplier-payments",permission,async(req,res,next)=>{
  }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
 });
 
+
+router.get("/supplier-account-statement/:supplierId",permission,async(req,res,next)=>{
+ if(!uuid.test(req.params.supplierId))return res.status(400).json({error:"Invalid supplier id"});
+ try{
+  const supplier=await pool.query("SELECT id,code,name FROM suppliers WHERE id=$1",[req.params.supplierId]);
+  if(!supplier.rowCount)return res.status(404).json({error:"Supplier not found"});
+  const invoices=await pool.query("SELECT i.id,i.reference_no,i.supplier_invoice_no,i.invoice_date,i.due_date,i.subtotal,COALESCE(SUM(a.amount) FILTER(WHERE p.status='posted'),0) paid_amount FROM supplier_invoices i LEFT JOIN supplier_payment_allocations a ON a.invoice_id=i.id LEFT JOIN supplier_payments p ON p.id=a.payment_id WHERE i.supplier_id=$1 AND i.status='posted' GROUP BY i.id ORDER BY i.invoice_date,i.created_at",[req.params.supplierId]);
+  const payments=await pool.query("SELECT id,reference_no,payment_date,amount,payment_method_id,payment_reference,status FROM supplier_payments WHERE supplier_id=$1 ORDER BY payment_date,created_at",[req.params.supplierId]);
+  const totals=await pool.query("SELECT COALESCE(SUM(i.subtotal),0) invoiced,COALESCE(SUM(a.amount) FILTER(WHERE p.status='posted'),0) paid FROM supplier_invoices i LEFT JOIN supplier_payment_allocations a ON a.invoice_id=i.id LEFT JOIN supplier_payments p ON p.id=a.payment_id WHERE i.supplier_id=$1 AND i.status='posted'",[req.params.supplierId]);
+  res.json({supplier:supplier.rows[0],invoices:invoices.rows,payments:payments.rows,totals:{...totals.rows[0],outstanding:Number(totals.rows[0].invoiced)-Number(totals.rows[0].paid)}});
+ }catch(e){next(e);}
+});
+
+router.get("/supplier-aging",permission,async(req,res,next)=>{
+ const asOf=req.query.as_of||new Date().toISOString().slice(0,10);
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(asOf))return res.status(400).json({error:"Invalid as_of date"});
+ try{
+  const r=await pool.query("WITH balances AS (SELECT i.id,i.supplier_id,COALESCE(i.due_date,i.invoice_date) due_date,i.subtotal-COALESCE(SUM(a.amount) FILTER(WHERE p.status='posted'),0) balance FROM supplier_invoices i LEFT JOIN supplier_payment_allocations a ON a.invoice_id=i.id LEFT JOIN supplier_payments p ON p.id=a.payment_id WHERE i.status='posted' AND i.invoice_date<=$1::date GROUP BY i.id HAVING i.subtotal-COALESCE(SUM(a.amount) FILTER(WHERE p.status='posted'),0)>0.000001) SELECT s.id supplier_id,s.code supplier_code,s.name supplier_name,COALESCE(SUM(b.balance),0) total_due,COALESCE(SUM(b.balance) FILTER(WHERE b.due_date >= $1::date),0) current_due,COALESCE(SUM(b.balance) FILTER(WHERE $1::date-b.due_date BETWEEN 1 AND 30),0) days_1_30,COALESCE(SUM(b.balance) FILTER(WHERE $1::date-b.due_date BETWEEN 31 AND 60),0) days_31_60,COALESCE(SUM(b.balance) FILTER(WHERE $1::date-b.due_date BETWEEN 61 AND 90),0) days_61_90,COALESCE(SUM(b.balance) FILTER(WHERE $1::date-b.due_date>90),0) over_90 FROM suppliers s LEFT JOIN balances b ON b.supplier_id=s.id GROUP BY s.id ORDER BY total_due DESC,s.name",[asOf]);
+  res.json({as_of:asOf,items:r.rows,totals:r.rows.reduce((a,x)=>{for(const k of ["total_due","current_due","days_1_30","days_31_60","days_61_90","over_90"])a[k]=(a[k]||0)+Number(x[k]);return a;},{})});
+ }catch(e){next(e);}
+});
+
 export default router;
