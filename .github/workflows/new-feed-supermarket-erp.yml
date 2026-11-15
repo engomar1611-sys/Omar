@@ -12,16 +12,61 @@ on:
       - "NEW-FEED-SUPERMARKET-ERP/**"
       - ".github/workflows/new-feed-supermarket-erp.yml"
 
+permissions:
+  contents: read
+
 jobs:
-  syntax:
+  syntax-and-postgres:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: newfeed
+          POSTGRES_PASSWORD: newfeed_ci_password
+          POSTGRES_DB: newfeed_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U newfeed -d newfeed_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: NEW-FEED-SUPERMARKET-ERP
+    env:
+      DATABASE_URL: postgresql://newfeed:newfeed_ci_password@localhost:5432/newfeed_test
+      JWT_SECRET: ci-only-secret-key-with-more-than-32-characters
+      NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
-      - run: npm run check
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Check API and browser JavaScript syntax
+        run: npm run check
+      - name: Apply all PostgreSQL migrations
+        run: npm run migrate
+      - name: Verify supplier accounting schema and mappings
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF to_regclass('public.supplier_invoices') IS NULL
+              OR to_regclass('public.supplier_invoice_lines') IS NULL
+              OR to_regclass('public.supplier_payments') IS NULL
+              OR to_regclass('public.supplier_payment_allocations') IS NULL THEN
+              RAISE EXCEPTION 'Supplier accounting tables are missing';
+            END IF;
+            IF (SELECT COUNT(*) FROM system_account_mappings
+                WHERE mapping_key IN ('grni','supplier_payables','purchase_price_variance')) <> 3 THEN
+              RAISE EXCEPTION 'Supplier accounting ledger mappings are incomplete';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM permissions WHERE code='supplier.accounting') THEN
+              RAISE EXCEPTION 'Supplier accounting permission is missing';
+            END IF;
+          END $$;
+          SQL
