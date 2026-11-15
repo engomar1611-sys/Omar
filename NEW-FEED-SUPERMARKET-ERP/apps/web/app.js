@@ -168,9 +168,9 @@ async function loadOperationalModule(id){
  try{
   const data=await api(cfg.url),rows=data.items||[];
   const renderRows=items=>items.map(row=>'<tr>'+cfg.columns.map(([key])=>'<td>'+escapeHtml(formatModuleValue(row[key]))+'</td>').join("")+'</tr>').join("");
-  const header='<thead><tr>'+cfg.columns.map(([,label])=>'<th>'+escapeHtml(label)+'</th>').join("")+'</tr></thead>';
+  const header='<thead><tr>'+cfg.columns.map(([,label])=>'<th>'+escapeHtml(label)+'</th>').join("")+(id==="sales"?'<th>إجراءات</th>':"")+'</tr></thead>';
   const content=$("liveModuleContent");
-  content.innerHTML=rows.length?'<table class="module-table">'+header+(id==="sales"?'<thead><tr><th>إجراءات</th></tr></thead>':'')+'<tbody>'+rows.map((row)=>'<tr>'+cfg.columns.map(([key])=>'<td>'+escapeHtml(formatModuleValue(row[key]))+'</td>').join("")+(id==="sales"?'<td>'+(row.status==="completed"?'<button class="small-btn" data-sale-details="'+row.id+'">تفاصيل / إلغاء صنف</button>'+(posContext?.permission_codes?.includes("sales.void.invoice")?'<button class="small-btn danger-btn" data-sale-void="'+row.id+'">إلغاء الفاتورة</button>':''):'—')+'</td>':'')+'</tr>').join("")+'</tbody></table>':'<div class="empty-state">لا توجد بيانات مسجلة حتى الآن.</div>';
+  content.innerHTML=rows.length?'<table class="module-table">'+header+'<tbody>'+rows.map((row)=>'<tr>'+cfg.columns.map(([key])=>'<td>'+escapeHtml(formatModuleValue(row[key]))+'</td>').join("")+(id==="sales"?'<td>'+(row.status==="completed"?'<button class="small-btn" data-sale-details="'+row.id+'">تفاصيل / إلغاء صنف</button>'+(posContext?.permission_codes?.includes("sales.void.invoice")?'<button class="small-btn danger-btn" data-sale-void="'+row.id+'">إلغاء الفاتورة</button>':''):'—')+'</td>':'')+'</tr>').join("")+'</tbody></table>':'<div class="empty-state">لا توجد بيانات مسجلة حتى الآن.</div>';
   $("moduleSearch").oninput=()=>{
    const q=$("moduleSearch").value.toLowerCase();
    content.querySelectorAll("tbody tr").forEach(tr=>tr.hidden=!tr.textContent.toLowerCase().includes(q));
