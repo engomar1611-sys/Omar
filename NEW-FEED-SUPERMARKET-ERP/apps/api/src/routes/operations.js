@@ -101,6 +101,31 @@ router.post("/ecommerce/orders",async(req,res,next)=>{const {reference_no,custom
 router.get("/ecommerce/orders",async(_q,res,next)=>{try{const r=await pool.query("SELECT * FROM ecommerce_orders ORDER BY created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/ecommerce/orders/:id",async(req,res,next)=>{if(!uuid.test(req.params.id))return fail(res,"Invalid ecommerce order id");try{const order=await pool.query("SELECT * FROM ecommerce_orders WHERE id=$1",[req.params.id]);if(!order.rowCount)return res.status(404).json({error:"Ecommerce order not found"});const lines=await pool.query("SELECT el.*,p.sku,p.name_ar,u.code unit_code FROM ecommerce_order_lines el JOIN products p ON p.id=el.product_id JOIN units u ON u.id=p.base_unit_id WHERE el.order_id=$1 ORDER BY p.name_ar",[req.params.id]);res.json({order:order.rows[0],lines:lines.rows});}catch(e){next(e);}});
 router.patch("/ecommerce/orders/:id/status",async(req,res,next)=>{const {status}=req.body??{};if(!uuid.test(req.params.id)||!["confirmed","preparing","cancelled"].includes(status))return fail(res,"Invalid ecommerce status transition");try{const r=await pool.query("UPDATE ecommerce_orders SET status=$2 WHERE id=$1 AND ((status='new' AND $2 IN ('confirmed','cancelled')) OR (status='confirmed' AND $2 IN ('preparing','cancelled'))) RETURNING *",[req.params.id,status]);if(!r.rowCount)return res.status(409).json({error:"Order not found or transition is not allowed"});res.json(r.rows[0]);}catch(e){next(e);}});
+router.post("/ecommerce/orders/:id/quote",async(req,res,next)=>{
+ const {delivery_fee=0,tax_code_id=null}=req.body??{};
+ if(!uuid.test(req.params.id)||!Number.isFinite(Number(delivery_fee))||Number(delivery_fee)<0||(tax_code_id&&!uuid.test(tax_code_id)))return fail(res,"Invalid ecommerce quote request");
+ try{
+  const order=await pool.query("SELECT id,status FROM ecommerce_orders WHERE id=$1",[req.params.id]);
+  if(!order.rowCount||!["confirmed","preparing"].includes(order.rows[0].status))return res.status(409).json({error:"Only confirmed or preparing orders can be quoted for conversion"});
+  const lines=await pool.query(`SELECT el.product_id,el.quantity,p.sku,p.name_ar,p.base_unit_id,
+    (SELECT pp.amount FROM product_prices pp WHERE pp.product_id=p.id AND pp.price_type='retail'
+      AND pp.valid_from<=now() AND (pp.valid_to IS NULL OR pp.valid_to>now())
+      ORDER BY pp.observed_at DESC,pp.created_at DESC LIMIT 1) retail_price
+    FROM ecommerce_order_lines el JOIN products p ON p.id=el.product_id
+    WHERE el.order_id=$1 AND p.is_active=true ORDER BY p.name_ar`,[req.params.id]);
+  if(!lines.rowCount||lines.rows.some(x=>x.retail_price===null))return res.status(409).json({error:"Order contains no active products or a product without an approved retail price"});
+  const subtotal=lines.rows.reduce((sum,line)=>sum+Number(line.quantity)*Number(line.retail_price),0);
+  const rules=await pool.query("SELECT * FROM sales_discount_settings WHERE is_active=true ORDER BY updated_at DESC LIMIT 1");
+  const rule=rules.rows[0]||null,base=subtotal;
+  const orderDiscount=rule&&subtotal+0.000001>=Number(rule.min_order_amount)?Math.min(base,rule.order_discount_type==="percent"?base*Number(rule.order_discount_value)/100:Number(rule.order_discount_value)):0;
+  const fee=Number(delivery_fee);
+  const deliveryDiscount=rule&&subtotal+0.000001>=Number(rule.delivery_min_order_amount)?Math.min(fee,rule.delivery_discount_type==="percent"?fee*Number(rule.delivery_discount_value)/100:Number(rule.delivery_discount_value)):0;
+  let taxRate=0;
+  if(tax_code_id){const tax=await pool.query("SELECT rate FROM tax_codes WHERE id=$1 AND is_active=true",[tax_code_id]);if(!tax.rowCount)return res.status(400).json({error:"Selected tax code is inactive"});taxRate=Number(tax.rows[0].rate);}
+  const taxableBase=Math.max(0,subtotal-orderDiscount),taxTotal=taxableBase*taxRate/100,total=taxableBase+fee-deliveryDiscount+taxTotal;
+  res.json({order_id:req.params.id,lines:lines.rows.map(x=>({product_id:x.product_id,sku:x.sku,name_ar:x.name_ar,quantity:Number(x.quantity),unit_price:Number(x.retail_price)})),subtotal:Number(subtotal.toFixed(6)),order_discount_amount:Number(orderDiscount.toFixed(6)),delivery_fee:fee,delivery_discount_amount:Number(deliveryDiscount.toFixed(6)),tax_rate:taxRate,tax_total:Number(taxTotal.toFixed(6)),grand_total:Number(total.toFixed(6))});
+ }catch(e){next(e);}
+});
 router.post("/ecommerce/orders/:id/convert-to-sale",async(req,res,next)=>{
  const {branch_id,payments,tax_code_id=null,delivery_fee=0}=req.body??{};
  if(!uuid.test(req.params.id)||!uuid.test(branch_id||"")||!Array.isArray(payments)||!payments.length||!Number.isFinite(Number(delivery_fee))||Number(delivery_fee)<0||(tax_code_id&&!uuid.test(tax_code_id)))
