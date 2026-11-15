@@ -48,11 +48,20 @@ export async function commercialRoutes(app,{db}){
   try{const r=await db.query('INSERT INTO customers(code,name_ar,phone,address,credit_limit) VALUES($1,$2,$3,$4,$5) RETURNING *',[b.code.trim(),b.nameAr.trim(),b.phone??null,b.address??null,b.creditLimit??0]);return rep.code(201).send(r.rows[0]);}catch(e){return fail(rep,e);}
  });
  app.get('/api/v1/sales/invoices',auth(app,'SALES.READ'),async(_q,rep)=>{
-  try{return (await db.query(`SELECT i.*,c.code customer_code,c.name_ar customer_name,
+  try{return (await db.query(`SELECT i.*,
+   CASE WHEN i.status='CANCELLED' OR i.total_amount<=0 THEN i.status
+     WHEN COALESCE(p.paid_amount,0)>=i.total_amount THEN 'PAID'
+     WHEN COALESCE(p.paid_amount,0)>0 THEN 'PARTIALLY_PAID' ELSE 'POSTED' END AS status,
+   c.code customer_code,c.name_ar customer_name,
    COALESCE(json_agg(json_build_object('id',l.id,'itemId',l.item_id,'itemCode',m.code,'itemName',m.name_ar,'lotNo',l.lot_no,'quantity',l.quantity,'unitPrice',l.unit_price,'unitCost',l.unit_cost,'lineTotal',l.line_total)) FILTER(WHERE l.id IS NOT NULL),'[]'::json) lines
    FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+   LEFT JOIN LATERAL (
+     SELECT COALESCE(SUM(a.amount),0)::numeric paid_amount
+     FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id
+     WHERE a.sales_invoice_id=i.id AND r.status='POSTED' AND r.receipt_date<=CURRENT_DATE
+   ) p ON TRUE
    LEFT JOIN sales_invoice_lines l ON l.sales_invoice_id=i.id LEFT JOIN items m ON m.id=l.item_id
-   GROUP BY i.id,c.code,c.name_ar ORDER BY i.invoice_date DESC,i.invoice_no DESC`)).rows;}catch(e){return fail(rep,e);}
+   GROUP BY i.id,c.code,c.name_ar,p.paid_amount ORDER BY i.invoice_date DESC,i.invoice_no DESC`)).rows;}catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/sales/invoices',auth(app,'SALES.MANAGE'),async(req,rep)=>{
   const b=req.body??{};if(!txt(b.invoiceNo,40)||!b.customerId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||
@@ -156,8 +165,13 @@ export async function commercialRoutes(app,{db}){
       WHERE a.sales_invoice_id=$1`,[a.invoiceId]);
      if(Number(paid.rows[0].amount)+Number(a.amount)>Number(inv.rows[0].total_amount)+0.000001)throw Object.assign(new Error('مبلغ التخصيص يتجاوز المتبقي على الفاتورة'),{code:'P0001'});
      await c.query('INSERT INTO receipt_allocations(receipt_id,sales_invoice_id,amount) VALUES($1,$2,$3)',[h.rows[0].id,a.invoiceId,a.amount]);
-     const newPaid=Number(paid.rows[0].amount)+Number(a.amount);
-     await c.query(`UPDATE sales_invoices SET status=CASE WHEN $1>=total_amount THEN 'PAID' ELSE 'PARTIALLY_PAID' END WHERE id=$2`,[newPaid,a.invoiceId]);
+     const effectivePaid=await c.query(`SELECT COALESCE(SUM(a.amount),0)::numeric amount
+       FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id
+       WHERE a.sales_invoice_id=$1 AND r.status='POSTED' AND r.receipt_date<=CURRENT_DATE`,[a.invoiceId]);
+     const newPaid=Number(effectivePaid.rows[0].amount);
+     await c.query(`UPDATE sales_invoices SET status=CASE
+       WHEN $1<=0 THEN 'POSTED' WHEN $1>=total_amount THEN 'PAID' ELSE 'PARTIALLY_PAID' END
+       WHERE id=$2 AND status<>'CANCELLED'`,[newPaid,a.invoiceId]);
      allocated+=Number(a.amount);
     }
     if(Math.abs(allocated-Number(b.amount))>0.000001)throw Object.assign(new Error('يجب توزيع كامل مبلغ سند القبض على فواتير العميل'),{code:'P0001'});
@@ -518,7 +532,7 @@ export async function commercialRoutes(app,{db}){
    await reverseJournal(c,{sourceType:'CASH_RECEIPT',sourceId:req.params.id,reversalType:'CASH_RECEIPT_REVERSAL',reversalNo:'J-RRC-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
    await c.query("UPDATE cash_receipts SET status='REVERSED' WHERE id=$1",[req.params.id]);
    for(const a of allocations.rows){
-    const paid=await c.query(`SELECT COALESCE(SUM(x.amount),0) amount FROM receipt_allocations x JOIN cash_receipts r ON r.id=x.receipt_id AND r.status='POSTED' WHERE x.sales_invoice_id=$1`,[a.sales_invoice_id]);
+    const paid=await c.query(`SELECT COALESCE(SUM(x.amount),0) amount FROM receipt_allocations x JOIN cash_receipts r ON r.id=x.receipt_id AND r.status='POSTED' AND r.receipt_date<=CURRENT_DATE WHERE x.sales_invoice_id=$1`,[a.sales_invoice_id]);
     const inv=await c.query('SELECT total_amount FROM sales_invoices WHERE id=$1 FOR UPDATE',[a.sales_invoice_id]);
     if(inv.rowCount)await c.query(`UPDATE sales_invoices SET status=CASE WHEN $1<=0 THEN 'POSTED' WHEN $1>=total_amount THEN 'PAID' ELSE 'PARTIALLY_PAID' END WHERE id=$2 AND status<>'CANCELLED'`,[Number(paid.rows[0].amount),a.sales_invoice_id]);
    }

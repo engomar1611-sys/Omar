@@ -470,6 +470,14 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
         amount:15,paymentMethod:'CASH',allocations:[{invoiceId:futureInvoice.json().id,amount:15}]}
     });
     assert.equal(futureReceipt.statusCode,201,futureReceipt.body);
+    const futureInvoiceStoredStatus = await pool.query('SELECT status FROM sales_invoices WHERE id=$1',[futureInvoice.json().id]);
+    assert.equal(futureInvoiceStoredStatus.rows[0].status,'POSTED',
+      'a future-dated receipt must not mark the invoice as currently partially paid');
+    const invoiceListWithFutureReceipt = await app.inject({method:'GET',url:'/api/v1/sales/invoices',headers});
+    assert.equal(invoiceListWithFutureReceipt.statusCode,200,invoiceListWithFutureReceipt.body);
+    const listedFutureInvoice = invoiceListWithFutureReceipt.json().find(x=>x.id===futureInvoice.json().id);
+    assert.equal(listedFutureInvoice.status,'POSTED',
+      'invoice list status must reflect only receipts effective today');
     const futureReceiptMustNotReduceCurrentCredit = await app.inject({
       method:'POST',url:'/api/v1/sales/invoices',headers,
       payload:{invoiceNo:code('FUT-INV2'),customerId:futureCustomer.id,warehouseId:warehouse.id,
