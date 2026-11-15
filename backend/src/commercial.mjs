@@ -100,13 +100,15 @@ export async function commercialRoutes(app,{db}){
     const outstanding=await c.query(`SELECT
       COALESCE(SUM(total_amount),0)
       -COALESCE((SELECT SUM(a.amount) FROM receipt_allocations a
-        JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED' AND r.receipt_date<=CURRENT_DATE
+        JOIN cash_receipts r ON r.id=a.receipt_id AND r.status='POSTED'
+          AND r.receipt_date<=COALESCE($2::date,CURRENT_DATE)
         JOIN sales_invoices x ON x.id=a.sales_invoice_id WHERE x.customer_id=$1),0)
       -COALESCE((SELECT SUM(COALESCE(sr.net_amount,sr.gross_amount)) FROM sales_returns sr
         JOIN sales_invoices x ON x.id=sr.sales_invoice_id
         WHERE x.customer_id=$1 AND sr.status='APPROVED'
-          AND COALESCE(sr.accounting_approved_at::date,sr.created_at::date)<=CURRENT_DATE),0) due
-      FROM sales_invoices WHERE customer_id=$1 AND status IN ('POSTED','PARTIALLY_PAID','PAID')`,[b.customerId]);
+          AND COALESCE(sr.accounting_approved_at::date,sr.created_at::date)<=COALESCE($2::date,CURRENT_DATE)),0) due
+      FROM sales_invoices WHERE customer_id=$1 AND status IN ('POSTED','PARTIALLY_PAID','PAID')
+        AND invoice_date<=COALESCE($2::date,CURRENT_DATE)`,[b.customerId,b.invoiceDate??null]);
     if(Number(cust.rows[0].credit_limit)>0&&Number(outstanding.rows[0].due)+total>Number(cust.rows[0].credit_limit))throw Object.assign(new Error('تجاوز الحد الائتماني للعميل'),{code:'P0001'});
     await c.query(`UPDATE sales_invoices SET subtotal=$1,total_amount=$2,cost_amount=$3,status='POSTED',posted_at=NOW() WHERE id=$4`,[subtotal,total,costTotal,h.rows[0].id]);
     const ar=await account(c,'1100'),sales=await account(c,'4000'),cogs=await account(c,'5000'),inventory=await account(c,'1200');
