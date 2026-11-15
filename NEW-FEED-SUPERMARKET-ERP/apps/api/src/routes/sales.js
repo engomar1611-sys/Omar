@@ -89,12 +89,12 @@ router.post("/sales/:id/void",requirePermission("sales.void.invoice"),async(req,
 });
 
 router.post("/sales/complete",async(req,res,next)=>{
- const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null,delivery=null}=req.body??{};
+ const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null,delivery=null,tax_code_id=null}=req.body??{};
  const cashier_id=req.user.id;
  const deliveryCustomerId=delivery?.customer_id||customer_id;
  const deliveryValid=delivery===null||(delivery&&uuid.test(deliveryCustomerId||"")&&typeof delivery.address==="string"&&delivery.address.trim().length>0&&delivery.address.trim().length<=1000&&Number.isFinite(Number(delivery.delivery_fee||0))&&Number(delivery.delivery_fee||0)>=0&&["pos","phone","talabat","elmenus","breadfast","mrsool","generic"].includes(delivery.source_channel||"pos")&&(!delivery.external_order_reference||(typeof delivery.external_order_reference==="string"&&delivery.external_order_reference.length<=160)));
  if(!deliveryValid)return res.status(400).json({error:"Invalid delivery details"});
- if(!validRef(reference_no)||!uuid.test(branch_id||"")||!uuid.test(cashier_id||"")||(customer_id&&!uuid.test(customer_id))||
+ if(!validRef(reference_no)||!uuid.test(branch_id||"")||!uuid.test(cashier_id||"")||(customer_id&&!uuid.test(customer_id))||(tax_code_id&&!uuid.test(tax_code_id))||
  !Array.isArray(lines)||!lines.length||lines.length>200||lines.some(x=>!uuid.test(x.product_id||"")||!uuid.test(x.unit_id||"")||!Number.isFinite(Number(x.quantity))||Number(x.quantity)<=0||!Number.isFinite(Number(x.unit_price))||Number(x.unit_price)<0||!Number.isFinite(Number(x.discount_amount||0))||Number(x.discount_amount||0)<0)||
  !Array.isArray(payments)||!payments.length||payments.some(x=>!uuid.test(x.payment_method_id||"")||!Number.isFinite(Number(x.amount))||Number(x.amount)<=0))
  return res.status(400).json({error:"Invalid sale fields"});
@@ -144,7 +144,16 @@ router.post("/sales/complete",async(req,res,next)=>{
     deliveryDiscount=Math.min(deliveryFee,Math.max(0,deliveryDiscount));
   }
   const netDeliveryFee=deliveryFee-deliveryDiscount;
-  const total=subtotal-discountTotal-orderDiscount+netDeliveryFee,paymentTotal=payments.reduce((s,x)=>s+Number(x.amount),0);
+  const taxableBase=Math.max(0,subtotal-discountTotal-orderDiscount);
+  let taxTotal=0,taxAccountId=null;
+  if(tax_code_id){
+    const tax=await client.query("SELECT tc.rate,tc.account_id,a.account_type FROM tax_codes tc LEFT JOIN accounts a ON a.id=tc.account_id WHERE tc.id=$1 AND tc.is_active=true FOR SHARE OF tc",[tax_code_id]);
+    if(!tax.rowCount)throw Object.assign(new Error("Selected tax code is inactive or unavailable"),{statusCode:400});
+    if(Number(tax.rows[0].rate)>0&&(!tax.rows[0].account_id||tax.rows[0].account_type!=="liability"))throw Object.assign(new Error("Selected tax code must be linked to a liability account"),{statusCode:409});
+    taxTotal=taxableBase*Number(tax.rows[0].rate)/100;taxAccountId=tax.rows[0].account_id;
+  }
+  const netSales=subtotal-discountTotal-orderDiscount+netDeliveryFee;
+  const total=netSales+taxTotal,paymentTotal=payments.reduce((s,x)=>s+Number(x.amount),0);
   if(Math.abs(paymentTotal-total)>0.01)throw Object.assign(new Error("Payment total must equal the sale total"),{statusCode:400});
   const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
   if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
@@ -170,12 +179,13 @@ router.post("/sales/complete",async(req,res,next)=>{
     await client.query("INSERT INTO sale_payments(sale_id,payment_method_id,amount,reference_text,bank_id,transaction_reference,card_last_four,terminal_amount,terminal_captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $5::uuid IS NOT NULL THEN now() ELSE NULL END)",[sale.rows[0].id,p.payment_method_id,p.amount,p.reference_text||null,isCard?p.bank_id:null,isCard?p.transaction_reference.trim():null,isCard?p.card_last_four:null,isCard?Number(p.terminal_amount):null]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journal.rows[0].id,method.rows[0].account_id,p.amount]);
   }
-  if(total>0)await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.sales_revenue,total]);
+  if(netSales>0)await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.sales_revenue,netSales]);
+  if(taxTotal>0)await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,taxAccountId,taxTotal]);
   if(cogs>0){
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journal.rows[0].id,accountMap.cogs,cogs]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.inventory,cogs]);
   }
-  const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,delivery_fee=$4,grand_total=$5,order_discount_amount=$6,delivery_discount_amount=$7,delivery_fee_before_discount=$8,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal+orderDiscount,netDeliveryFee,total,orderDiscount,deliveryDiscount,deliveryFee]);
+  const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,delivery_fee=$4,tax_total=$5,tax_code_id=$6,grand_total=$7,order_discount_amount=$8,delivery_discount_amount=$9,delivery_fee_before_discount=$10,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal+orderDiscount,netDeliveryFee,taxTotal,tax_code_id,total,orderDiscount,deliveryDiscount,deliveryFee]);
   let deliveryOrder=null;
   if(delivery){
    const deliveryRef="DLV-"+reference_no.trim();
@@ -183,7 +193,7 @@ router.post("/sales/complete",async(req,res,next)=>{
    deliveryOrder=d.rows[0];
   }
   await client.query("COMMIT");
-  res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,discounts:{order_discount_amount:Number(orderDiscount.toFixed(6)),delivery_discount_amount:Number(deliveryDiscount.toFixed(6)),delivery_fee_before_discount:deliveryFee,delivery_fee_after_discount:netDeliveryFee},cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,journal_entry_id:journal.rows[0].id});
+  res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,discounts:{order_discount_amount:Number(orderDiscount.toFixed(6)),delivery_discount_amount:Number(deliveryDiscount.toFixed(6)),delivery_fee_before_discount:deliveryFee,delivery_fee_after_discount:netDeliveryFee},cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,tax_total:Number(taxTotal.toFixed(6)),tax_code_id,journal_entry_id:journal.rows[0].id});
  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
 });
 export default router;
