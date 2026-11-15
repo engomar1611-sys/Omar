@@ -6,13 +6,14 @@ router.get("/payment-banks",async(req,res,next)=>{try{const q=String(req.query.q
 
 router.get("/pos/context",async(req,res,next)=>{
   try{
-    const [branch,payments]=await Promise.all([
+    const [branch,payments,taxCodes]=await Promise.all([
       pool.query("SELECT id,code,name FROM branches WHERE code='MAIN' AND is_active=true LIMIT 1"),
-      pool.query("SELECT id,code,name_ar FROM payment_methods WHERE is_active=true ORDER BY code")
+      pool.query("SELECT id,code,name_ar FROM payment_methods WHERE is_active=true ORDER BY code"),
+      pool.query("SELECT id,code,name_ar,rate FROM tax_codes WHERE is_active=true ORDER BY code")
     ]);
     if(!branch.rowCount)return res.status(409).json({error:"Create an active branch before opening POS"});
     const permissions=await pool.query(`SELECT DISTINCT p.code FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id JOIN permissions p ON p.id=rp.permission_id WHERE ur.user_id=$1`,[req.user.id]);
-    res.json({user:req.user,branch:branch.rows[0],payment_methods:payments.rows,permission_codes:permissions.rows.map(x=>x.code)});
+    res.json({user:req.user,branch:branch.rows[0],payment_methods:payments.rows,tax_codes:taxCodes.rows,permission_codes:permissions.rows.map(x=>x.code)});
   }catch(e){next(e);}
 });
 export default router;
