@@ -1,0 +1,85 @@
+import {Router} from "express";
+import {pool} from "../db.js";
+import {requirePermission} from "../auth.js";
+const router=Router();
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const txt=(v,n=180)=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=n;
+const amount=v=>Number.isFinite(Number(v))&&Number(v)>=0;
+const date=v=>typeof v==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(v);
+const bad=(res,error)=>res.status(400).json({error});
+const guarded=(permission)=>requirePermission(permission);
+
+// Customer loyalty ledger; customer balance is updated under row lock in the same transaction.
+router.get("/loyalty/transactions",guarded("loyalty.manage"),async(req,res,next)=>{try{
+ const r=await pool.query(`SELECT l.*,c.code customer_code,c.name customer_name,u.display_name created_by_name
+ FROM customer_loyalty_transactions l JOIN customers c ON c.id=l.customer_id LEFT JOIN users u ON u.id=l.created_by
+ ORDER BY l.created_at DESC LIMIT 500`);res.json({items:r.rows});
+}catch(e){next(e);}});
+router.post("/loyalty/transactions",guarded("loyalty.manage"),async(req,res,next)=>{
+ const {customer_id,reference_no,transaction_type,points,source_type="manual",source_id=null,notes=null}=req.body??{};
+ if(!uuid.test(customer_id||"")||!txt(reference_no,60)||!["earn","redeem","adjust","expire"].includes(transaction_type)||!Number.isSafeInteger(Number(points))||Number(points)<=0||Number(points)>1000000000||!txt(source_type,40)||(source_id&&!uuid.test(source_id)))return bad(res,"Invalid loyalty transaction");
+ const c=await pool.connect();try{await c.query("BEGIN");const customer=await c.query("SELECT id,loyalty_points FROM customers WHERE id=$1 AND is_active=true FOR UPDATE",[customer_id]);if(!customer.rowCount)throw Object.assign(new Error("Customer not found or inactive"),{statusCode:404});
+ const delta=transaction_type==="earn"||transaction_type==="adjust"?Number(points):-Number(points);const next=Number(customer.rows[0].loyalty_points)+delta;if(next<0)throw Object.assign(new Error("Insufficient loyalty points"),{statusCode:409});
+ await c.query("UPDATE customers SET loyalty_points=$2 WHERE id=$1",[customer_id,next]);
+ const r=await c.query("INSERT INTO customer_loyalty_transactions(customer_id,reference_no,transaction_type,points,source_type,source_id,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",[customer_id,reference_no,transaction_type,points,source_type,source_id,notes,req.user.id]);
+ await c.query("COMMIT");res.status(201).json({transaction:r.rows[0],balance:next});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
+
+// Attendance is one record per employee/day. Clock events are immutable after clock-out.
+router.get("/hr/attendance",guarded("hr.attendance"),async(req,res,next)=>{try{
+ const from=date(req.query.from)?req.query.from:new Date().toISOString().slice(0,10),to=date(req.query.to)?req.query.to:from;
+ if(to<from)return bad(res,"Invalid attendance date range");
+ const r=await pool.query(`SELECT a.*,e.employee_code,e.full_name,b.name branch_name
+ FROM employee_attendance a JOIN employees e ON e.id=a.employee_id JOIN branches b ON b.id=a.branch_id
+ WHERE a.attendance_date BETWEEN $1::date AND $2::date ORDER BY a.attendance_date DESC,e.full_name`,[from,to]);res.json({from,to,items:r.rows});
+}catch(e){next(e);}});
+router.post("/hr/attendance/clock-in",guarded("hr.attendance"),async(req,res,next)=>{
+ const {employee_id,attendance_date=new Date().toISOString().slice(0,10),notes=null}=req.body??{};
+ if(!uuid.test(employee_id||"")||!date(attendance_date))return bad(res,"Invalid employee or attendance date");
+ try{const e=await pool.query("SELECT id,branch_id FROM employees WHERE id=$1 AND employment_status='active'",[employee_id]);if(!e.rowCount)return res.status(404).json({error:"Active employee not found"});
+ const r=await pool.query("INSERT INTO employee_attendance(employee_id,branch_id,attendance_date,clock_in,status,notes) VALUES($1,$2,$3,now(),'present',$4) ON CONFLICT(employee_id,attendance_date) DO NOTHING RETURNING *",[employee_id,e.rows[0].branch_id,attendance_date,notes]);if(!r.rowCount)return res.status(409).json({error:"Attendance already exists for this employee and date"});res.status(201).json(r.rows[0]);
+ }catch(e){next(e);}
+});
+router.post("/hr/attendance/:id/clock-out",guarded("hr.attendance"),async(req,res,next)=>{
+ if(!uuid.test(req.params.id))return bad(res,"Invalid attendance id");
+ try{const r=await pool.query("UPDATE employee_attendance SET clock_out=now() WHERE id=$1 AND clock_in IS NOT NULL AND clock_out IS NULL RETURNING *",[req.params.id]);if(!r.rowCount)return res.status(409).json({error:"Attendance not found or already closed"});res.json(r.rows[0]);}catch(e){next(e);}
+});
+
+// Payroll draft calculation uses the employee's configured monthly salary. Approval and payment are separate controls.
+router.get("/hr/payroll-runs",guarded("hr.payroll"),async(_req,res,next)=>{try{
+ const r=await pool.query("SELECT pr.*,COUNT(pl.id)::int employee_count FROM payroll_runs pr LEFT JOIN payroll_lines pl ON pl.payroll_run_id=pr.id GROUP BY pr.id ORDER BY pr.created_at DESC LIMIT 200");res.json({items:r.rows});
+}catch(e){next(e);}});
+router.get("/hr/payroll-runs/:id",guarded("hr.payroll"),async(req,res,next)=>{if(!uuid.test(req.params.id))return bad(res,"Invalid payroll run id");try{
+ const [run,lines]=await Promise.all([pool.query("SELECT * FROM payroll_runs WHERE id=$1",[req.params.id]),pool.query("SELECT pl.*,e.employee_code,e.full_name FROM payroll_lines pl JOIN employees e ON e.id=pl.employee_id WHERE pl.payroll_run_id=$1 ORDER BY e.full_name",[req.params.id])]);if(!run.rowCount)return res.status(404).json({error:"Payroll run not found"});res.json({run:run.rows[0],lines:lines.rows});
+}catch(e){next(e);}});
+router.post("/hr/payroll-runs",guarded("hr.payroll"),async(req,res,next)=>{
+ const {reference_no,period_start,period_end,lines}=req.body??{};
+ if(!txt(reference_no,50)||!date(period_start)||!date(period_end)||period_end<period_start||!Array.isArray(lines)||!lines.length||lines.length>1000||lines.some(x=>!uuid.test(x.employee_id||"")||!amount(x.additions??0)||!amount(x.deductions??0)))return bad(res,"Invalid payroll run");
+ const c=await pool.connect();try{await c.query("BEGIN");const run=await c.query("INSERT INTO payroll_runs(reference_no,period_start,period_end,created_by) VALUES($1,$2,$3,$4) RETURNING *",[reference_no,period_start,period_end,req.user.id]);let gross=0,deductions=0,net=0;
+ for(const line of lines){const e=await c.query("SELECT id,monthly_salary FROM employees WHERE id=$1 AND employment_status='active' FOR SHARE",[line.employee_id]);if(!e.rowCount)throw Object.assign(new Error("Employee not found or inactive"),{statusCode:400});const base=Number(e.rows[0].monthly_salary),add=Number(line.additions||0),ded=Number(line.deductions||0);if(ded>base+add)throw Object.assign(new Error("Payroll deductions exceed gross salary"),{statusCode:400});const take=base+add-ded;await c.query("INSERT INTO payroll_lines(payroll_run_id,employee_id,base_salary,additions,deductions,net_salary) VALUES($1,$2,$3,$4,$5,$6)",[run.rows[0].id,line.employee_id,base,add,ded,take]);gross+=base+add;deductions+=ded;net+=take;}
+ const updated=await c.query("UPDATE payroll_runs SET total_gross=$2,total_deductions=$3,total_net=$4 WHERE id=$1 RETURNING *",[run.rows[0].id,gross,deductions,net]);await c.query("COMMIT");res.status(201).json({run:updated.rows[0],employee_count:lines.length});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
+router.post("/hr/payroll-runs/:id/approve",guarded("hr.payroll"),async(req,res,next)=>{if(!uuid.test(req.params.id))return bad(res,"Invalid payroll run id");try{const r=await pool.query("UPDATE payroll_runs SET status='approved',approved_by=$2,approved_at=now() WHERE id=$1 AND status='draft' RETURNING *",[req.params.id,req.user.id]);if(!r.rowCount)return res.status(409).json({error:"Only a draft payroll run can be approved"});res.json(r.rows[0]);}catch(e){next(e);}});
+router.post("/hr/payroll-runs/:id/mark-paid",guarded("hr.payroll"),async(req,res,next)=>{if(!uuid.test(req.params.id))return bad(res,"Invalid payroll run id");try{const r=await pool.query("UPDATE payroll_runs SET status='paid' WHERE id=$1 AND status='approved' RETURNING *",[req.params.id]);if(!r.rowCount)return res.status(409).json({error:"Only an approved payroll run can be marked paid"});res.json(r.rows[0]);}catch(e){next(e);}});
+
+// Cashbox session close records the counted cash and the variance against movements posted to this box.
+router.get("/cashboxes",guarded("cash.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT cb.*,b.name branch_name FROM cashboxes cb JOIN branches b ON b.id=cb.branch_id WHERE cb.is_active ORDER BY cb.name");res.json({items:r.rows});}catch(e){next(e);}});
+router.get("/cash/sessions",guarded("cash.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT cs.*,cb.code cashbox_code,cb.name cashbox_name,u.display_name cashier_name FROM cash_sessions cs JOIN cashboxes cb ON cb.id=cs.cashbox_id JOIN users u ON u.id=cs.cashier_id ORDER BY cs.opened_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
+router.post("/cash/sessions",guarded("cash.manage"),async(req,res,next)=>{const {reference_no,cashbox_id,opening_float=0}=req.body??{};if(!txt(reference_no,50)||!uuid.test(cashbox_id||"")||!amount(opening_float))return bad(res,"Invalid cash session");try{const r=await pool.query("INSERT INTO cash_sessions(reference_no,cashbox_id,cashier_id,opening_float) VALUES($1,$2,$3,$4) RETURNING *",[reference_no,cashbox_id,req.user.id,opening_float]);res.status(201).json(r.rows[0]);}catch(e){if(e.code==="23505")return res.status(409).json({error:"Cashbox already has an open session or reference is duplicated"});next(e);}});
+router.post("/cash/sessions/:id/close",guarded("cash.manage"),async(req,res,next)=>{const {counted_cash}=req.body??{};if(!uuid.test(req.params.id)||!amount(counted_cash))return bad(res,"Invalid cash count");const c=await pool.connect();try{await c.query("BEGIN");const s=await c.query("SELECT * FROM cash_sessions WHERE id=$1 AND status='open' FOR UPDATE",[req.params.id]);if(!s.rowCount)throw Object.assign(new Error("Open cash session not found"),{statusCode:404});const movement=await c.query("SELECT COALESCE(SUM(CASE WHEN direction='in' THEN amount ELSE -amount END),0) movement FROM cash_transactions WHERE cashbox_id=$1 AND created_at >= $2",[s.rows[0].cashbox_id,s.rows[0].opened_at]);const expected=Number(s.rows[0].opening_float)+Number(movement.rows[0].movement),variance=Number(counted_cash)-expected;const r=await c.query("UPDATE cash_sessions SET expected_cash=$2,counted_cash=$3,variance=$4,status='closed',closed_at=now(),closed_by=$5 WHERE id=$1 RETURNING *",[req.params.id,expected,counted_cash,variance,req.user.id]);await c.query("COMMIT");res.json(r.rows[0]);}catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}});
+
+// Bank ledger transactions are auditable operational records. General-ledger posting is not implied by this endpoint.
+router.get("/bank/transactions",guarded("bank.manage"),async(req,res,next)=>{try{const r=await pool.query("SELECT bt.*,ba.code bank_code,ba.bank_name,ba.account_name FROM bank_transactions bt JOIN bank_accounts ba ON ba.id=bt.bank_account_id ORDER BY bt.transaction_date DESC,bt.created_at DESC LIMIT 1000");res.json({items:r.rows});}catch(e){next(e);}});
+router.post("/bank/transactions",guarded("bank.manage"),async(req,res,next)=>{const {bank_account_id,reference_no,transaction_date=new Date().toISOString().slice(0,10),direction,amount:amt,description=null}=req.body??{};if(!uuid.test(bank_account_id||"")||!txt(reference_no,60)||!date(transaction_date)||!["in","out"].includes(direction)||!Number.isFinite(Number(amt))||Number(amt)<=0)return bad(res,"Invalid bank transaction");try{const r=await pool.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[bank_account_id,reference_no,transaction_date,direction,amt,description,req.user.id]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
+router.post("/bank/transactions/:id/reverse",guarded("bank.manage"),async(req,res,next)=>{if(!uuid.test(req.params.id))return bad(res,"Invalid bank transaction id");try{const r=await pool.query("UPDATE bank_transactions SET status='reversed',reversed_by=$2,reversed_at=now() WHERE id=$1 AND status='posted' RETURNING *",[req.params.id,req.user.id]);if(!r.rowCount)return res.status(409).json({error:"Transaction not found or already reversed"});res.json(r.rows[0]);}catch(e){next(e);}});
+
+// Company identity and tax code setup. Tax codes are configuration only until explicitly selected by a sales workflow.
+router.get("/settings/company",guarded("settings.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT setting_key,setting_value,updated_at FROM company_settings ORDER BY setting_key");res.json({items:r.rows});}catch(e){next(e);}});
+router.put("/settings/company",guarded("settings.manage"),async(req,res,next)=>{const {settings}=req.body??{};const allowed=["company_name_ar","company_name_en","commercial_registration","tax_card","address","phone","email","currency","receipt_footer"];if(!settings||typeof settings!=="object"||Array.isArray(settings)||Object.keys(settings).some(k=>!allowed.includes(k))||Object.keys(settings).length>30)return bad(res,"Invalid company settings");const c=await pool.connect();try{await c.query("BEGIN");for(const [key,value] of Object.entries(settings)){if(typeof value!=="string"||value.length>500)throw Object.assign(new Error("Setting values must be text up to 500 characters"),{statusCode:400});await c.query("INSERT INTO company_settings(setting_key,setting_value,updated_by,updated_at) VALUES($1,to_jsonb($2::text),$3,now()) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=now()",[key,value,req.user.id]);}await c.query("COMMIT");res.json({saved:Object.keys(settings).length});}catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}});
+router.get("/tax-codes",guarded("settings.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT tc.*,a.code account_code,a.name_ar account_name FROM tax_codes tc LEFT JOIN accounts a ON a.id=tc.account_id ORDER BY tc.code");res.json({items:r.rows});}catch(e){next(e);}});
+router.post("/tax-codes",guarded("settings.manage"),async(req,res,next)=>{const {code,name_ar,rate,account_id=null}=req.body??{};if(!txt(code,40)||!txt(name_ar,120)||!Number.isFinite(Number(rate))||Number(rate)<0||Number(rate)>100||(account_id&&!uuid.test(account_id)))return bad(res,"Invalid tax code");try{const r=await pool.query("INSERT INTO tax_codes(code,name_ar,rate,account_id) VALUES($1,$2,$3,$4) RETURNING *",[code.trim(),name_ar.trim(),rate,account_id]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
+router.patch("/tax-codes/:id",guarded("settings.manage"),async(req,res,next)=>{const {name_ar,rate,account_id,is_active}=req.body??{};if(!uuid.test(req.params.id)||!txt(name_ar,120)||!Number.isFinite(Number(rate))||Number(rate)<0||Number(rate)>100||(account_id!==null&&account_id!==undefined&&!uuid.test(account_id))||typeof is_active!=="boolean")return bad(res,"Invalid tax code update");try{const r=await pool.query("UPDATE tax_codes SET name_ar=$2,rate=$3,account_id=$4,is_active=$5 WHERE id=$1 RETURNING *",[req.params.id,name_ar.trim(),rate,account_id||null,is_active]);if(!r.rowCount)return res.status(404).json({error:"Tax code not found"});res.json(r.rows[0]);}catch(e){next(e);}});
+
+export default router;
