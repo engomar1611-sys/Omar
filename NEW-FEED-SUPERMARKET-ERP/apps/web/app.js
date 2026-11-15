@@ -189,7 +189,7 @@ async function loadOperationalModule(id){
    });
    content.querySelectorAll("[data-sale-details]").forEach(btn=>btn.onclick=async()=>{
     try{
-     const d=await api("/api/sales/"+btn.dataset.saleDetails);
+     const d=await api("/api/sales/"+btn.dataset.saleDetails+"/details");
      const list=d.lines.map((x,i)=>(i+1)+". "+x.name_ar+" — الكمية "+x.quantity+" — المتاح للإرجاع "+x.quantity+" — "+money(x.line_total)+" ج.م").join("\\n");
      alert("بنود الفاتورة:\\n"+list);
      if(!posContext?.permission_codes?.includes("sales.void.line"))return;
