@@ -291,7 +291,7 @@ router.post("/sales/returns/:id/refund",requirePermission("returns.approve"),asy
     if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
     const payable=await client.query("SELECT account_id FROM system_account_mappings WHERE mapping_key='refund_payable'");
     if(!payable.rowCount)throw Object.assign(new Error("Refund payable mapping is missing; apply migration 012"),{statusCode:409});
-    let cashSessionId=null;
+    let cashSessionId=null,cashLedgerAccountId=null;
     if(String(method.rows[0].code||"").toUpperCase()==="CASH"){
       const session=await client.query("SELECT * FROM cash_sessions WHERE cashier_id=$1 AND status='open' ORDER BY opened_at DESC LIMIT 1 FOR UPDATE",[processed_by]);
       if(!session.rowCount)throw Object.assign(new Error("Open a cash session before paying a cash refund"),{statusCode:409});
@@ -302,10 +302,13 @@ router.post("/sales/returns/:id/refund",requirePermission("returns.approve"),asy
       if(Number(cashBalance.rows[0].balance)+0.000001<Number(amount))
         throw Object.assign(new Error("Cash session does not have enough available cash for this refund"),{statusCode:409});
       cashSessionId=session.rows[0].id;
+      const cashbox=await client.query("SELECT ledger_account_id FROM cashboxes WHERE id=$1 AND is_active=true",[session.rows[0].cashbox_id]);
+      if(!cashbox.rowCount||!cashbox.rows[0].ledger_account_id)throw Object.assign(new Error("Cashbox ledger account mapping is missing"),{statusCode:409});
+      cashLedgerAccountId=cashbox.rows[0].ledger_account_id;
     }
     const je=await client.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'sale_return_refund',$2,CURRENT_DATE,'posted') RETURNING id",["JER-"+req.params.id,req.params.id]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,payable.rows[0].account_id,amount]);
-    const refundCreditAccountId=isCard?settlementBank.ledger_account_id:method.rows[0].account_id;
+    const refundCreditAccountId=isCard?settlementBank.ledger_account_id:(cashSessionId?cashLedgerAccountId:method.rows[0].account_id);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,refundCreditAccountId,amount]);
     await client.query(
       "INSERT INTO sale_return_refunds(return_id,payment_method_id,amount,reference_text,processed_by,cash_session_id,bank_id,transaction_reference,card_last_four,settlement_bank_account_id,terminal_amount) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
