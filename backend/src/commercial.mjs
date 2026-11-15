@@ -145,7 +145,7 @@ export async function commercialRoutes(app,{db}){
     const ar=await account(c,'1100'),sales=await account(c,'4000'),cogs=await account(c,'5000'),inventory=await account(c,'1200');
     const lines=[];if(total>0)lines.push({account:ar,debit:total});if(total>0)lines.push({account:sales,credit:total});
     if(costTotal>0){lines.push({account:cogs,debit:costTotal});lines.push({account:inventory,credit:costTotal});}
-    if(lines.length)await journal(c,{no:'J-SI-'+b.invoiceNo,date:b.invoiceDate,sourceType:'SALES_INVOICE',sourceId:h.rows[0].id,description:'ترحيل فاتورة مبيعات '+b.invoiceNo,actor:req.authUser.user_id,lines});
+    if(lines.length)await journal(c,{no:'J-SI-'+b.invoiceNo,date:invoiceDate,sourceType:'SALES_INVOICE',sourceId:h.rows[0].id,description:'ترحيل فاتورة مبيعات '+b.invoiceNo,actor:req.authUser.user_id,lines});
     return {id:h.rows[0].id,invoiceNo:b.invoiceNo,subtotal,totalAmount:total,costAmount:costTotal,status:'POSTED'};
    });
    return rep.code(201).send(out);
