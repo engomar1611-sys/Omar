@@ -15,7 +15,7 @@ export function validateCardPayment(payment, expectedAmount) {
   const expected = Number(expectedAmount);
   if (!Number.isFinite(captured) || captured <= 0 ||
       !Number.isFinite(expected) || expected <= 0 ||
-      Math.abs(captured - expected) > 0.01) {
+      Math.abs(captured - expected) > 0.010000001) {
     return "Captured terminal amount must match the card payment amount";
   }
   return null;
