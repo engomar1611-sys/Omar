@@ -3,7 +3,7 @@
   <name>NEW FEED ERP Server</name>
   <description>Central API service for NEW FEED ERP</description>
   <executable>%BASE%\node.exe</executable>
-  <arguments>src\server.mjs</arguments>
+  <arguments>src\server.js</arguments>
   <workingdirectory>%BASE%\backend</workingdirectory>
   <env name="NODE_ENV" value="production" />
   <startmode>Automatic</startmode>
