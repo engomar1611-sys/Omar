@@ -518,7 +518,7 @@ function bindReportExports(container){
     await api("/api/reports/export-permission");
     const csv=window.NewFeedReportExport?.toCsv(report.rows,report.columns);
     if(typeof csv!=="string")throw new Error("مكوّن تصدير CSV غير محمّل");
-    const blob=new Blob(["\\uFEFF",csv],{type:"text/csv;charset=utf-8"});
+    const blob=new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"});
     const url=URL.createObjectURL(blob),a=document.createElement("a");
     a.href=url;a.download="newfeed-report-"+new Date().toISOString().slice(0,10)+".csv";
     document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);
