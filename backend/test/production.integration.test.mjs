@@ -284,6 +284,15 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(finalDelivery.statusCode,200,finalDelivery.body);
     assert.equal(finalDelivery.json().status,'DELIVERED');
 
+    const reverseDeliveredInvoice = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices/'+invoice.json().id+'/reverse',headers,
+      payload:{reason:'لا يجوز عكس فاتورة تم تسليمها للعميل'}
+    });
+    assert.equal(reverseDeliveredInvoice.statusCode,409,
+      'a delivered invoice must be settled through the returns workflow, not by restoring stock through invoice reversal');
+    const invoiceStillPosted = await pool.query('SELECT status FROM sales_invoices WHERE id=$1',[invoice.json().id]);
+    assert.equal(invoiceStillPosted.rows[0].status,'POSTED');
+
     const receipt = await app.inject({method:'POST',url:'/api/v1/accounting/receipts',headers,payload:{
       receiptNo:code('RC'),customerId:customer.json().id,amount:10,paymentMethod:'CASH',allocations:[{invoiceId:invoice.json().id,amount:10}]
     }});
