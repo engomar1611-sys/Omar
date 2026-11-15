@@ -311,13 +311,19 @@ async function openPurchasing(){
     area.innerHTML=invHtml+receiptHtml;
     area.querySelectorAll("[data-create-supplier-invoice]").forEach(btn=>btn.onclick=async()=>{
      try{
-      const receipt=await api("/api/purchase-receipts/"+btn.dataset.createSupplierInvoice);
-      const order=await api("/api/purchase-orders/"+receipt.receipt.purchase_order_id);
-      const acceptedLines=receipt.lines.filter(l=>Number(l.accepted_quantity)>0);
-      if(!acceptedLines.length)return toast("لا توجد كميات مقبولة في هذا الاستلام");
+      const eligible=await api("/api/supplier-invoice-eligible-lines/"+btn.dataset.createSupplierInvoice);
+      const order=await api("/api/purchase-orders/"+eligible.receipt.purchase_order_id);
+      if(!eligible.items.length)return toast("تمت فوترة كامل الكميات المقبولة لهذا الاستلام");
       const supplierInvoiceNo=prompt("أدخل رقم فاتورة المورد");
       if(!supplierInvoiceNo?.trim())return;
-      const lines=acceptedLines.map(l=>({receipt_line_id:l.id,quantity:Number(l.accepted_quantity),unit_price:Number(l.unit_cost)}));
+      const lines=[];
+      for(const l of eligible.items){
+       const priceText=prompt("سعر فاتورة المورد للوحدة: "+l.name_ar+" | الكمية المتبقية: "+l.remaining_quantity+" | تكلفة الاستلام: "+l.unit_cost,l.unit_cost);
+       if(priceText===null)return;
+       const unit_price=Number(priceText);
+       if(!Number.isFinite(unit_price)||unit_price<0)return toast("سعر فاتورة المورد غير صحيح");
+       lines.push({receipt_line_id:l.receipt_line_id,quantity:Number(l.remaining_quantity),unit_price});
+      }
       const draft=await api("/api/supplier-invoices",{method:"POST",body:JSON.stringify({reference_no:"SINV-"+Date.now(),supplier_invoice_no:supplierInvoiceNo.trim(),supplier_id:order.purchase_order.supplier_id,purchase_order_id:order.purchase_order.id,invoice_date:new Date().toLocaleDateString("en-CA"),lines})});
       await api("/api/supplier-invoices/"+draft.invoice.id+"/post",{method:"POST",body:"{}"});
       toast("تم ترحيل فاتورة المورد وربطها بحساب المستحقات");
