@@ -78,10 +78,32 @@ test('sales quotation to reserved order, invoice, and partial delivery fulfillme
     const consumed = await pool.query("SELECT COUNT(*)::int count FROM sales_order_reservations WHERE sales_order_id=$1 AND status='CONSUMED'", [orderId]);
     assert.equal(consumed.rows[0].count, 1);
 
+    const reversed = await app.inject({
+      method: 'POST', url: '/api/v1/sales/invoices/' + invoice.json().id + '/reverse', headers,
+      payload: { reason: 'اختبار عكس فاتورة أمر البيع' }
+    });
+    assert.equal(reversed.statusCode, 200, reversed.body);
+    const reopened = await pool.query('SELECT status FROM sales_orders WHERE id=$1', [orderId]);
+    assert.equal(reopened.rows[0].status, 'OPEN');
+    const restoredReservation = await pool.query("SELECT COUNT(*)::int count FROM sales_order_reservations WHERE sales_order_id=$1 AND status='RESERVED'", [orderId]);
+    assert.equal(restoredReservation.rows[0].count, 1);
+    const restoredBalance = await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3', [warehouse.id,item.id,'LOT-'+suffix]);
+    assert.equal(Number(restoredBalance.rows[0].quantity), 10);
+
+    const reissued = await app.inject({
+      method: 'POST', url: '/api/v1/sales/invoices', headers,
+      payload: { invoiceNo: code('INV2'), salesOrderId: orderId }
+    });
+    assert.equal(reissued.statusCode, 201, reissued.body);
+    const finalInvoiceLines = await pool.query('SELECT id,quantity FROM sales_invoice_lines WHERE sales_invoice_id=$1', [reissued.json().id]);
+    assert.equal(finalInvoiceLines.rowCount, 1);
+    const finalBalance = await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3', [warehouse.id,item.id,'LOT-'+suffix]);
+    assert.equal(Number(finalBalance.rows[0].quantity), 0);
+
     const delivery = await app.inject({
       method: 'POST', url: '/api/v1/sales/deliveries', headers,
-      payload: { deliveryNo: code('DEL'), invoiceId: invoice.json().id,
-        lines: [{ invoiceLineId: invoiceLines.rows[0].id, quantity: 10 }] }
+      payload: { deliveryNo: code('DEL'), invoiceId: reissued.json().id,
+        lines: [{ invoiceLineId: finalInvoiceLines.rows[0].id, quantity: 10 }] }
     });
     assert.equal(delivery.statusCode, 201, delivery.body);
     const deliveryId = delivery.json().id;
