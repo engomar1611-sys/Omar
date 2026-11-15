@@ -6,6 +6,25 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const validText = (v,n=60) => typeof v==="string" && v.trim().length>0 && v.trim().length<=n;
 const positive = (v) => Number.isFinite(Number(v)) && Number(v)>0;
 
+router.get("/purchase-receipts",async(_req,res,next)=>{try{
+ const r=await pool.query(`SELECT pr.*,po.reference_no purchase_order_reference,s.name supplier_name,w.name warehouse_name
+ FROM purchase_receipts pr JOIN purchase_orders po ON po.id=pr.purchase_order_id
+ JOIN suppliers s ON s.id=po.supplier_id JOIN warehouses w ON w.id=pr.warehouse_id
+ ORDER BY pr.created_at DESC LIMIT 200`);
+ res.json({items:r.rows});
+}catch(e){next(e);}});
+router.get("/purchase-receipts/:id",async(req,res,next)=>{if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid receipt id"});try{
+ const receipt=await pool.query("SELECT pr.*,po.reference_no purchase_order_reference,s.name supplier_name,w.name warehouse_name FROM purchase_receipts pr JOIN purchase_orders po ON po.id=pr.purchase_order_id JOIN suppliers s ON s.id=po.supplier_id JOIN warehouses w ON w.id=pr.warehouse_id WHERE pr.id=$1",[req.params.id]);
+ if(!receipt.rowCount)return res.status(404).json({error:"Receipt not found"});
+ const lines=await pool.query("SELECT prl.*,p.sku,p.name_ar product_name,p.tracks_expiry FROM purchase_receipt_lines prl JOIN products p ON p.id=prl.product_id WHERE prl.receipt_id=$1 ORDER BY p.name_ar",[req.params.id]);
+ res.json({receipt:receipt.rows[0],lines:lines.rows});
+}catch(e){next(e);}});
+router.get("/purchase-orders/:id",async(req,res,next)=>{if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid purchase order id"});try{
+ const order=await pool.query("SELECT po.*,s.name supplier_name,b.name branch_name FROM purchase_orders po JOIN suppliers s ON s.id=po.supplier_id JOIN branches b ON b.id=po.branch_id WHERE po.id=$1",[req.params.id]);
+ if(!order.rowCount)return res.status(404).json({error:"Purchase order not found"});
+ const lines=await pool.query("SELECT pol.*,p.sku,p.name_ar product_name,u.code unit_code FROM purchase_order_lines pol JOIN products p ON p.id=pol.product_id JOIN units u ON u.id=pol.unit_id WHERE pol.purchase_order_id=$1 ORDER BY p.name_ar",[req.params.id]);
+ res.json({purchase_order:order.rows[0],lines:lines.rows});
+}catch(e){next(e);}});
 router.get("/purchase-orders", async (_req,res,next) => {
   try {
     const {rows}=await pool.query(
