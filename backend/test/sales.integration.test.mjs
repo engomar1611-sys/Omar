@@ -249,7 +249,9 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     });
     assert.equal(accountingApproval.statusCode, 200, accountingApproval.body);
     assert.equal(accountingApproval.json().status, 'APPROVED');
-    assert.equal(Number(accountingApproval.json().amount), 24);
+    assert.equal(Number(accountingApproval.json().grossAmount), 24);
+    assert.equal(Number(accountingApproval.json().discountAmount), 2);
+    assert.equal(Number(accountingApproval.json().amount), 22);
     assert.equal(Number(accountingApproval.json().cost), 10);
 
     const balanceAfterFirstReturn = await app.inject({
@@ -287,6 +289,9 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
       headers, payload: {}
     });
     assert.equal(secondAccountingApproval.statusCode, 200, secondAccountingApproval.body);
+    assert.equal(Number(secondAccountingApproval.json().grossAmount), 12);
+    assert.equal(Number(secondAccountingApproval.json().discountAmount), 1);
+    assert.equal(Number(secondAccountingApproval.json().amount), 11);
 
     const firstQualityInspection = await app.inject({
       method: 'POST', url: '/api/v1/quality/sales-returns/' + returnId + '/inspect',
@@ -343,8 +348,8 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
       [returnId]
     );
     assert.equal(returnJournal.rowCount, 1);
-    assert.equal(Number(returnJournal.rows[0].total_debit), 34);
-    assert.equal(Number(returnJournal.rows[0].total_credit), 34);
+    assert.equal(Number(returnJournal.rows[0].total_debit), 32);
+    assert.equal(Number(returnJournal.rows[0].total_credit), 32);
 
     const duplicateApproval = await app.inject({
       method: 'POST',
@@ -362,6 +367,9 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.ok(statement.json().some(row => row.transaction_type === 'SALES_INVOICE'));
     assert.ok(statement.json().some(row => row.transaction_type === 'CASH_RECEIPT'));
     assert.ok(statement.json().some(row => row.transaction_type === 'SALES_RETURN'));
+    const netReturnCredits = statement.json().filter(row => row.transaction_type === 'SALES_RETURN')
+      .reduce((sum,row)=>sum+Number(row.credit),0);
+    assert.equal(netReturnCredits,33,'customer statement must reflect invoice discount on approved returns');
 
     const aging = await app.inject({
       method: 'GET',
@@ -370,7 +378,7 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     });
     assert.equal(aging.statusCode, 200, aging.body);
     assert.equal(aging.json().length, 1);
-    assert.equal(Number(aging.json()[0].outstanding), 34);
+    assert.equal(Number(aging.json()[0].outstanding), 37);
     assert.equal(String(aging.json()[0].due_date).slice(0, 10), dueDate);
     assert.equal(aging.json()[0].aging_bucket, 'غير مستحق');
 
