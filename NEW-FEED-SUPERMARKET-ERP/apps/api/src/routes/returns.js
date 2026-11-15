@@ -121,7 +121,7 @@ router.post("/sales/:saleId/returns",requirePermission("sales.void.line"),async(
   }finally{client.release();}
 });
 
-router.post("/sales/returns/:id/inspect",async(req,res,next)=>{
+router.post("/sales/returns/:id/inspect",requirePermission("returns.inspect"),async(req,res,next)=>{
   const {warehouse_id,inspection_note=null,lines}=req.body??{};
   const inspected_by=req.user.id;
   if(!uuid.test(req.params.id)||!uuid.test(warehouse_id||"")||(inspected_by&&!uuid.test(inspected_by))||
@@ -165,7 +165,7 @@ router.post("/sales/returns/:id/inspect",async(req,res,next)=>{
   }finally{client.release();}
 });
 
-router.post("/sales/returns/:id/approve",async(req,res,next)=>{
+router.post("/sales/returns/:id/approve",requirePermission("returns.approve"),async(req,res,next)=>{
   const financially_approved_by=req.user.id;
   if(!uuid.test(req.params.id)||(financially_approved_by&&!uuid.test(financially_approved_by)))
     return fail(res,400,"Invalid financial approval fields");
@@ -260,7 +260,7 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
   }finally{client.release();}
 });
 
-router.post("/sales/returns/:id/refund",async(req,res,next)=>{
+router.post("/sales/returns/:id/refund",requirePermission("returns.approve"),async(req,res,next)=>{
   const {payment_method_id,amount,reference_text=null,bank_id=null,bank_account_id=null,transaction_reference=null,card_last_four=null,terminal_amount=null}=req.body??{};
   const processed_by=req.user.id;
   if(!uuid.test(req.params.id)||!uuid.test(payment_method_id||"")||
