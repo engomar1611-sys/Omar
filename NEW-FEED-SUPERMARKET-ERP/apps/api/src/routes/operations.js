@@ -177,17 +177,29 @@ router.post("/ecommerce/orders/:id/convert-to-sale",async(req,res,next)=>{
     delivery:{customer_id:customerId,address:order.rows[0].address,delivery_fee:Number(delivery_fee),source_channel:"generic",external_order_reference:order.rows[0].reference_no}
   };
   await c.query("COMMIT");
+  // Re-lock the order while the shared POS checkout runs. Concurrent conversions wait here,
+  // then observe sales_id and return the already-created invoice instead of racing a duplicate.
+  await c.query("BEGIN");
+  const locked=await c.query("SELECT * FROM ecommerce_orders WHERE id=$1 FOR UPDATE",[req.params.id]);
+  if(!locked.rowCount)throw Object.assign(new Error("Ecommerce order disappeared during conversion"),{statusCode:404});
+  if(locked.rows[0].sales_id){
+    const existing=await c.query("SELECT * FROM sales WHERE id=$1",[locked.rows[0].sales_id]);
+    await c.query("COMMIT");
+    return res.json({order:locked.rows[0],sale:existing.rows[0],duplicate:true});
+  }
   let resultBody=null,resultStatus=200,handlerError=null;
   const response={status(code){resultStatus=code;return this;},json(body){resultBody=body;return this;}};
   await completeSaleHandler({...req,body:payload},response,error=>{handlerError=error;});
   if(handlerError)throw handlerError;
-  if(resultStatus>=400)return res.status(resultStatus).json(resultBody);
+  if(resultStatus>=400){await c.query("ROLLBACK");return res.status(resultStatus).json(resultBody);}
   const sale=resultBody?.sale;
   if(!sale?.id)throw new Error("POS checkout did not return a completed sale");
-  const updated=await pool.query("UPDATE ecommerce_orders SET status='converted',sales_id=$2 WHERE id=$1 AND status IN ('confirmed','preparing') RETURNING *",[req.params.id,sale.id]);
+  const updated=await c.query("UPDATE ecommerce_orders SET status='converted',sales_id=$2 WHERE id=$1 AND status IN ('confirmed','preparing') RETURNING *",[req.params.id,sale.id]);
   if(!updated.rowCount)throw Object.assign(new Error("Sale was created but ecommerce order status could not be updated; retry safely using the same order"),{statusCode:409});
+  await c.query("COMMIT");
   res.status(201).json({order:updated.rows[0],sale,delivery:resultBody.delivery||null,duplicate:Boolean(resultBody.duplicate)});
  }catch(e){
+  await c.query("ROLLBACK").catch(()=>{});
   if(e.statusCode)return res.status(e.statusCode).json({error:e.message});
   next(e);
  }finally{c.release();}
