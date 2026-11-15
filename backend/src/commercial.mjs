@@ -545,6 +545,11 @@ export async function commercialRoutes(app,{db}){
    }
    await reverseJournal(c,{sourceType:'SALES_INVOICE',sourceId:req.params.id,reversalType:'SALES_INVOICE_REVERSAL',reversalNo:'J-RSI-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
    await c.query("UPDATE sales_invoices SET status='CANCELLED' WHERE id=$1",[req.params.id]);
+   if(h.rows[0].sales_order_id){
+    await c.query("UPDATE sales_order_reservations SET status='RESERVED' WHERE sales_order_id=$1 AND status='CONSUMED'",[h.rows[0].sales_order_id]);
+    await c.query('UPDATE sales_order_lines SET invoiced_qty=0 WHERE sales_order_id=$1',[h.rows[0].sales_order_id]);
+    await c.query("UPDATE sales_orders SET status='OPEN' WHERE id=$1",[h.rows[0].sales_order_id]);
+   }
    return {invoiceId:req.params.id,status:'CANCELLED',restoredLines:lines.rowCount};
   });return out;}catch(e){return fail(rep,e);}
  });
