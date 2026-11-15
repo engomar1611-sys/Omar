@@ -96,10 +96,18 @@ router.post("/sales/complete",async(req,res,next)=>{
     "INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'sale',$2,CURRENT_DATE,'posted') RETURNING id",
     ["JE-"+sale.rows[0].id,sale.rows[0].id]);
   for(const p of payments){
-    const method=await client.query("SELECT id,account_id FROM payment_methods WHERE id=$1 AND is_active=true",[p.payment_method_id]);
+    const method=await client.query("SELECT id,code,name_ar,account_id FROM payment_methods WHERE id=$1 AND is_active=true",[p.payment_method_id]);
     if(!method.rowCount||!method.rows[0].account_id)
       throw Object.assign(new Error("Payment method has no mapped ledger account"),{statusCode:409});
-    await client.query("INSERT INTO sale_payments(sale_id,payment_method_id,amount,reference_text) VALUES($1,$2,$3,$4)",[sale.rows[0].id,p.payment_method_id,p.amount,p.reference_text||null]);
+    const isCard=/card|visa|بطاقة|فيزا/i.test(String(method.rows[0].code||"")+" "+String(method.rows[0].name_ar||""));
+    if(isCard){
+      if(!uuid.test(p.bank_id||"")||!validRef(p.transaction_reference)||!/^[0-9]{4}$/.test(String(p.card_last_four||""))||
+        !Number.isFinite(Number(p.terminal_amount))||Number(p.terminal_amount)<=0||Math.abs(Number(p.terminal_amount)-Number(p.amount))>0.01)
+        throw Object.assign(new Error("Card payment requires bank, transaction reference, last 4 card digits and matching captured amount"),{statusCode:400});
+      const bank=await client.query("SELECT id FROM payment_banks WHERE id=$1 AND is_active=true",[p.bank_id]);
+      if(!bank.rowCount)throw Object.assign(new Error("Selected payment bank is not active"),{statusCode:400});
+    }
+    await client.query("INSERT INTO sale_payments(sale_id,payment_method_id,amount,reference_text,bank_id,transaction_reference,card_last_four,terminal_amount,terminal_captured_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,CASE WHEN $5::uuid IS NOT NULL THEN now() ELSE NULL END)",[sale.rows[0].id,payment_method_id,p.amount,p.reference_text||null,isCard?p.bank_id:null,isCard?p.transaction_reference.trim():null,isCard?p.card_last_four:null,isCard?Number(p.terminal_amount):null]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journal.rows[0].id,method.rows[0].account_id,p.amount]);
   }
   if(total>0)await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.sales_revenue,total]);
