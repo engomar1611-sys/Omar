@@ -396,13 +396,19 @@ async function openDelivery(){
   const courierOptions='<option value="">بدون مندوب</option>'+employees.items.filter(e=>e.employment_status==="active").map(e=>'<option value="'+e.id+'">'+escapeHtml(e.full_name)+'</option>').join("");
   const statuses=[["pending","جديد"],["assigned","تم التخصيص"],["out_for_delivery","خرج للتوصيل"],["delivered","تم التسليم"],["failed","تعذر التسليم"],["cancelled","ملغي"]];
   const statusName=s=>statuses.find(x=>x[0]===s)?.[1]||s;
+  const transitions={pending:["assigned","cancelled","failed"],assigned:["out_for_delivery","cancelled","failed"],out_for_delivery:["delivered","failed"],failed:["assigned","cancelled"]};
   const render=()=>{
    $("deliveryRows").innerHTML=orders.items.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>رقم طلب التوصيل</th><th>فاتورة البيع</th><th>العميل</th><th>العنوان</th><th>القناة</th><th>رسوم التوصيل</th><th>المندوب</th><th>الحالة</th><th>حفظ التحديث</th></tr></thead><tbody>'+orders.items.map(o=>'<tr data-delivery-row="'+o.id+'"><td>'+escapeHtml(o.reference_no)+'</td><td>'+escapeHtml(o.sale_reference||"—")+'</td><td>'+escapeHtml(o.customer_name)+'</td><td>'+escapeHtml(o.address)+'</td><td>'+escapeHtml(o.source_channel||"pos")+'</td><td>'+money(o.delivery_fee)+' ج.م</td><td><select class="delivery-courier">'+courierOptions.replace('value="'+(o.courier_employee_id||"__none__")+'"','value="'+(o.courier_employee_id||"__none__")+'"')+'</select></td><td><select class="delivery-status">'+statuses.map(s=>'<option value="'+s[0]+'" '+(s[0]===o.status?"selected":"")+'>'+s[1]+'</option>').join("")+'</select><small class="muted"> '+escapeHtml(statusName(o.status))+'</small></td><td><button class="small-btn" data-save-delivery="'+o.id+'">تحديث</button></td></tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد طلبات توصيل حتى الآن.</div>';
    document.querySelectorAll("[data-save-delivery]").forEach(btn=>btn.onclick=async()=>{
     const row=btn.closest("tr"),courier=row.querySelector(".delivery-courier").value,status=row.querySelector(".delivery-status").value;
-    try{await api("/api/delivery/orders/"+btn.dataset.saveDelivery+"/status",{method:"PATCH",body:JSON.stringify({status,courier_employee_id:courier||null})});toast("تم تحديث حالة طلب التوصيل");await openDelivery();}catch(e){toast(e.message);}
+    const detail={status,courier_employee_id:courier||null};
+    if(status==="failed"){detail.failure_reason=prompt("سبب تعذر التسليم");if(!detail.failure_reason?.trim())return;}
+    if(status==="cancelled"){detail.cancelled_reason=prompt("سبب إلغاء طلب التوصيل");if(!detail.cancelled_reason?.trim())return;}
+    if(status==="delivered")detail.note=prompt("ملاحظة التسليم (اختياري)")||null;
+    try{await api("/api/delivery/orders/"+btn.dataset.saveDelivery+"/status",{method:"PATCH",body:JSON.stringify(detail)});toast("تم تحديث حالة طلب التوصيل");await openDelivery();}catch(e){toast(e.message);}
    });
    document.querySelectorAll(".delivery-courier").forEach((s,i)=>{const order=orders.items[i];if(order?.courier_employee_id)s.value=order.courier_employee_id;else s.value="";});
+   document.querySelectorAll("[data-delivery-history]").forEach(b=>b.onclick=async()=>{try{const history=await api("/api/delivery/orders/"+b.dataset.deliveryHistory+"/history");const text=history.items.map(x=>new Date(x.changed_at).toLocaleString("ar-EG")+" — "+statusName(x.previous_status||"بداية")+" ← "+statusName(x.new_status)+(x.note?" — "+x.note:"")).join("\\n");alert(text||"لا يوجد سجل حالات");}catch(e){toast(e.message);}});
   };
   render();
   $("createDelivery").onclick=async()=>{
