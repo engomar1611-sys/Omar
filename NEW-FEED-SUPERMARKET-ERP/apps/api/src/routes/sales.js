@@ -70,7 +70,7 @@ router.post("/sales/complete",async(req,res,next)=>{
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[journal.rows[0].id,accountMap.cogs,cogs]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[journal.rows[0].id,accountMap.inventory,cogs]);
   }
-  const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,grand_total=$4,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal,total]);
+  const done=await client.query("UPDATE sales SET subtotal=$2,discount_total=$3,delivery_fee=$4,grand_total=$5,status='completed',completed_at=now() WHERE id=$1 RETURNING *",[sale.rows[0].id,subtotal,discountTotal,deliveryFee,total]);
   let deliveryOrder=null;
   if(delivery){
    const deliveryRef="DLV-"+reference_no.trim();
