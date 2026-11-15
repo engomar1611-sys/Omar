@@ -1,4 +1,4 @@
-name: Windows Installers
+name: NEW FEED ERP Windows Installers
 on:
   workflow_dispatch:
   push:
@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
 concurrency:
-  group: windows-installers-${{ github.event.pull_request.number || github.ref }}
+  group: new-feed-windows-installers-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 permissions:
   contents: read
@@ -15,24 +15,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Package complete supermarket ERP source and Windows client
+      - name: Package complete NEW FEED ERP source and Windows client
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          zip -r dist/NEW-FEED-SUPERMARKET-ERP-Full-Source.zip \
-            NEW-FEED-SUPERMARKET-ERP desktop server-installer \
-            .github/workflows/windows-installers.yml \
-            .github/workflows/new-feed-supermarket-erp.yml README.md \
-            -x '*/node_modules/*' '*/.env' '*/dist/*' '*/coverage/*'
-          sha256sum dist/NEW-FEED-SUPERMARKET-ERP-Full-Source.zip > dist/NEW-FEED-SUPERMARKET-ERP-Full-Source.sha256
-      - name: Upload complete source package
+          zip -r dist/NEW-FEED-ERP-Full-Source.zip \
+            README.md docs backend desktop server-installer scripts docker-compose.yml \
+            .github/workflows/backend-ci.yml .github/workflows/windows-installers.yml \
+            -x '*/node_modules/*' '*/.env' '*/dist/*' '*/coverage/*' '*/.git/*'
+          sha256sum dist/NEW-FEED-ERP-Full-Source.zip > dist/NEW-FEED-ERP-Full-Source.sha256
+      - name: Upload complete NEW FEED ERP source package
         uses: actions/upload-artifact@v4
         with:
-          name: NEW-FEED-SUPERMARKET-ERP-Full-Source
+          name: NEW-FEED-ERP-Full-Source
           path: |
-            dist/NEW-FEED-SUPERMARKET-ERP-Full-Source.zip
-            dist/NEW-FEED-SUPERMARKET-ERP-Full-Source.sha256
+            dist/NEW-FEED-ERP-Full-Source.zip
+            dist/NEW-FEED-ERP-Full-Source.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -48,8 +47,9 @@ jobs:
           node-version: 22
       - run: npm install --no-audit --no-fund
       - run: npm test
-      - name: Verify Windows server network hardening
+      - name: Verify NEW FEED ERP server installer contract
         run: node --test ../server-installer/configuration.test.cjs
+
   build-windows:
     runs-on: windows-latest
     needs: desktop-tests
@@ -63,28 +63,26 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npm run dist:win
-      - name: Prepare server payload
+      - name: Prepare NEW FEED ERP backend payload
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Push-Location NEW-FEED-SUPERMARKET-ERP
+          Push-Location backend
           npm install --omit=dev --no-audit --no-fund
           Pop-Location
           $payload = Join-Path $PWD 'dist/server-payload'
-          New-Item -ItemType Directory -Force -Path "$payload/backend/apps/api" | Out-Null
-          Copy-Item NEW-FEED-SUPERMARKET-ERP/package.json "$payload/backend/"
-          Copy-Item NEW-FEED-SUPERMARKET-ERP/apps/api/src "$payload/backend/apps/api/" -Recurse
-          Copy-Item NEW-FEED-SUPERMARKET-ERP/apps/web "$payload/backend/apps/web" -Recurse
-          Copy-Item NEW-FEED-SUPERMARKET-ERP/database "$payload/backend/" -Recurse
-          Copy-Item NEW-FEED-SUPERMARKET-ERP/scripts "$payload/backend/" -Recurse
-          Copy-Item NEW-FEED-SUPERMARKET-ERP/node_modules "$payload/backend/" -Recurse
+          New-Item -ItemType Directory -Force -Path $payload | Out-Null
+          Copy-Item backend "$payload/backend" -Recurse
           Copy-Item (Get-Command node).Source "$payload/node.exe"
           Invoke-WebRequest -Uri 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET461.exe' -OutFile "$payload/NewFeedERPService.exe"
           Copy-Item server-installer/NewFeedERPService.xml "$payload/"
+          if (-not (Test-Path "$payload/backend/src/server.mjs")) { throw 'NEW FEED ERP API entrypoint is missing from installer payload.' }
+          if (-not (Test-Path "$payload/backend/migrations")) { throw 'NEW FEED ERP migrations are missing from installer payload.' }
+          if (-not (Test-Path "$payload/backend/node_modules/pg")) { throw 'PostgreSQL runtime dependency is missing from installer payload.' }
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --yes --no-progress
-      - name: Build server setup EXE
+      - name: Build NEW FEED ERP server setup EXE
         shell: pwsh
         run: |
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
