@@ -2,6 +2,7 @@ import { Router } from "express";
 import { pool } from "../db.js";
 import { completeSaleHandler } from "./sales.js";
 import { calculateMonthlyDepreciation } from "../domain/assets.js";
+import { getBarcodeLabelSize } from "../domain/barcode-labels.js";
 import { canTransitionDeliveryStatus } from "../domain/delivery.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -28,6 +29,30 @@ router.post("/employees",async(req,res,next)=>{const {employee_code,branch_id,fu
 
 // Fixed assets and maintenance
 router.get("/assets",async(_q,res,next)=>{try{const r=await pool.query("SELECT a.*,b.name branch_name FROM fixed_assets a JOIN branches b ON b.id=a.branch_id ORDER BY a.asset_code");res.json({items:r.rows});}catch(e){next(e);}});
+router.post("/assets/:id/internal-barcode",async(req,res,next)=>{
+ if(!uuid.test(req.params.id))return fail(res,"Invalid asset id");
+ try{
+  const r=await pool.query("UPDATE fixed_assets SET barcode=COALESCE(barcode,'NFA'||lpad(nextval('fixed_asset_barcode_seq')::text,12,'0')) WHERE id=$1 RETURNING id,asset_code,barcode",[req.params.id]);
+  if(!r.rowCount)return res.status(404).json({error:"Asset not found"});
+  res.status(200).json(r.rows[0]);
+ }catch(e){next(e);}
+});
+router.get("/assets/:id/label",async(req,res,next)=>{
+ if(!uuid.test(req.params.id))return res.status(400).send("Invalid asset id");
+ try{
+  const result=await pool.query("SELECT a.asset_code,a.name,a.category,a.serial_number,a.barcode,b.name branch_name FROM fixed_assets a JOIN branches b ON b.id=a.branch_id WHERE a.id=$1",[req.params.id]);
+  if(!result.rowCount)return res.status(404).send("Asset not found");
+  const a=result.rows[0];
+  if(!a.barcode)return res.status(409).send("Asset barcode has not been generated");
+  const size=getBarcodeLabelSize({preset:req.query.size,width:req.query.width,height:req.query.height});
+  if(!size)return res.status(400).send("Invalid label size. Use a listed preset or custom width and height within supported limits.");
+  const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  res.type("html").send(`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>ملصق الأصل</title>
+  <style>@page{size:auto;margin:2mm}body{font-family:Arial,sans-serif;margin:0}.label{width:${size.width}mm;min-height:${size.height}mm;border:1px solid #ddd;padding:2mm;text-align:center;break-inside:avoid;box-sizing:border-box}.name{font-weight:bold;font-size:12px}.meta{font-size:9px;color:#444}svg{width:100%;height:${Math.max(7,size.height*.38)}mm}</style>
+  <div class="label"><div class="name">${esc(a.name)}</div><div class="meta">${esc(a.asset_code)} — ${esc(a.branch_name)}</div><svg id="barcode"></svg><div class="meta">${esc(a.barcode)}</div><div class="meta">${esc(a.serial_number||"")}</div></div>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script><script>JsBarcode("#barcode",${JSON.stringify(a.barcode)},{format:"CODE128",displayValue:false,margin:0});window.onload=()=>window.print();</script></html>`);
+ }catch(e){next(e);}
+});
 router.post("/assets",async(req,res,next)=>{const {asset_code,name,branch_id,category=null,purchase_date=null,purchase_cost=0,serial_number=null,useful_life_months=null,residual_value=0,depreciation_start_date=purchase_date}=req.body??{};if(!txt(asset_code,50)||!txt(name)||!uuid.test(branch_id||"")||!num(purchase_cost)||!num(residual_value)||Number(residual_value)>Number(purchase_cost)||(useful_life_months!==null&&(!Number.isInteger(Number(useful_life_months))||Number(useful_life_months)<=0))||(depreciation_start_date&&!/^\d{4}-\d{2}-\d{2}$/.test(depreciation_start_date)))return fail(res,"Invalid asset or depreciation fields");try{const r=await pool.query("INSERT INTO fixed_assets(asset_code,name,branch_id,category,purchase_date,purchase_cost,serial_number,useful_life_months,residual_value,depreciation_start_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",[asset_code,name,branch_id,category,purchase_date,purchase_cost,serial_number,useful_life_months,residual_value,depreciation_start_date]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
 router.get("/assets/depreciation/runs",async(_req,res,next)=>{try{const r=await pool.query("SELECT r.*,u.display_name created_by_name FROM asset_depreciation_runs r LEFT JOIN users u ON u.id=r.created_by ORDER BY r.period_month DESC LIMIT 120");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/assets/depreciation/run",async(req,res,next)=>{
