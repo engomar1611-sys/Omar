@@ -205,7 +205,7 @@ export async function salesQuotesOrdersRoutes(app, { db }) {
       const result=await tx(db,async client=>{
         const order=await client.query('SELECT * FROM sales_orders WHERE id=$1 FOR UPDATE',[request.params.id]);
         if(!order.rowCount||order.rows[0].status!=='OPEN')return {conflict:'ORDER_NOT_CANCELLABLE'};
-        const invoice=await client.query('SELECT id FROM sales_invoices WHERE sales_order_id=$1',[request.params.id]);
+        const invoice=await client.query('SELECT id FROM sales_invoices WHERE sales_order_id=$1 AND status<>'CANCELLED',[request.params.id]);
         if(invoice.rowCount)return {conflict:'ORDER_ALREADY_INVOICED'};
         await client.query("UPDATE sales_order_reservations SET status='RELEASED' WHERE sales_order_id=$1 AND status='RESERVED'",[request.params.id]);
         const updated=await client.query("UPDATE sales_orders SET status='CANCELLED' WHERE id=$1 RETURNING *",[request.params.id]);
