@@ -45,6 +45,7 @@ export async function authorizeModule(req,res,next){
     [/^\/(categories|units|brands)(\/|$)/,method==="POST"?"catalog.create":"catalog.view"],
     [/^\/pos(\/|$)/,"sales.manage"],
     [/^\/(purchase-orders|purchase-receipts)(\/|$)/,"purchasing.manage"],
+    [/^\/(supplier-invoices|supplier-payments)(\/|$)/,"supplier.accounting"],
     [/^\/sales\/returns\/[^/]+\/inspect$/,"returns.inspect"],
     [/^\/sales\/returns\/[^/]+\/(approve|refund)$/,"returns.approve"],
     [/^\/sales(\/|$)/,"sales.manage"],
