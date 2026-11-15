@@ -146,6 +146,25 @@ export async function qualityLabRoutes(app,{db}){
   }catch(e){return fail(reply,e);}
  });
 
+ app.get('/api/v1/quality/samples/:id',auth(app,'QUALITY.SAMPLES.READ'),async(req,reply)=>{
+  try{
+   const sample=await db.query(`
+    SELECT s.*,i.code item_code,i.name_ar item_name,q.version_no
+    FROM quality_samples s JOIN items i ON i.id=s.item_id
+    JOIN quality_specifications q ON q.id=s.specification_id WHERE s.id=$1
+   `,[req.params.id]);
+   if(!sample.rowCount)return reply.code(404).send({error:'NOT_FOUND'});
+   const results=await db.query(`
+    SELECT p.parameter_code,p.name_ar,p.unit,p.minimum_value,p.maximum_value,p.target_value,p.required,p.test_method,
+      r.numeric_value,r.text_value,r.result,r.notes,r.tested_at
+    FROM quality_specification_parameters p
+    LEFT JOIN quality_sample_results r ON r.parameter_id=p.id AND r.sample_id=$1
+    WHERE p.specification_id=$2 ORDER BY p.parameter_code
+   `,[req.params.id,sample.rows[0].specification_id]);
+   return {...sample.rows[0],results:results.rows};
+  }catch(e){return fail(reply,e);}
+ });
+
  app.post('/api/v1/quality/samples/:id/results',auth(app,'QUALITY.SAMPLES.TEST'),async(req,reply)=>{
   const b=req.body??{};
   if(!Array.isArray(b.results)||!b.results.length||b.results.some(x=>!x||!textOk(x.parameterCode,40)||
