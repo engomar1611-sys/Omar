@@ -2,6 +2,7 @@ import {Router} from "express";
 import {pool} from "../db.js";
 import {requirePermission} from "../auth.js";
 import {calculateLoyaltyRedemption} from "../domain/loyalty.js";
+import {validateCardPayment} from "../domain/card-payments.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const validRef=v=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=50;
@@ -203,9 +204,8 @@ export async function completeSaleHandler(req,res,next){
       throw Object.assign(new Error("Payment method has no mapped ledger account"),{statusCode:409});
     const isCard=/card|visa|بطاقة|فيزا/i.test(String(method.rows[0].code||"")+" "+String(method.rows[0].name_ar||""));
     if(isCard){
-      if(!uuid.test(p.bank_id||"")||!validRef(p.transaction_reference)||!/^[0-9]{4}$/.test(String(p.card_last_four||""))||
-        !Number.isFinite(Number(p.terminal_amount))||Number(p.terminal_amount)<=0||Math.abs(Number(p.terminal_amount)-Number(p.amount))>0.01)
-        throw Object.assign(new Error("Card payment requires bank, transaction reference, last 4 card digits and matching captured amount"),{statusCode:400});
+      const cardError=validateCardPayment(p,p.amount);
+      if(cardError)throw Object.assign(new Error(cardError),{statusCode:400});
       const bank=await client.query("SELECT id FROM payment_banks WHERE id=$1 AND is_active=true",[p.bank_id]);
       if(!bank.rowCount)throw Object.assign(new Error("Selected payment bank is not active"),{statusCode:400});
     }
