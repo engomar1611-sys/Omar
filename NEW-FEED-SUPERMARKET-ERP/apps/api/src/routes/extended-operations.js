@@ -139,6 +139,13 @@ router.post("/hr/payroll-runs/:id/reverse-payment",guarded("hr.payroll"),async(r
 
 // Cashbox session close records the counted cash and the variance against movements posted to this box.
 router.post("/cashboxes",guarded("cash.manage"),async(req,res,next)=>{const {branch_id,code,name,ledger_account_id=null}=req.body??{};if(!uuid.test(branch_id||"")||!txt(code,40)||!txt(name,120)||(ledger_account_id&&!uuid.test(ledger_account_id)))return bad(res,"Invalid cashbox");try{const mapping=ledger_account_id?await pool.query("SELECT id,account_type FROM accounts WHERE id=$1 AND is_active=true",[ledger_account_id]):await pool.query("SELECT id,account_type FROM accounts WHERE code='1000' AND is_active=true");if(!mapping.rowCount||mapping.rows[0].account_type!=="asset")return bad(res,"An active cash asset ledger account is required");const r=await pool.query("INSERT INTO cashboxes(branch_id,code,name,ledger_account_id) VALUES($1,$2,$3,$4) RETURNING *",[branch_id,code.trim(),name.trim(),mapping.rows[0].id]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
+router.get("/cash/transactions",guarded("cash.manage"),async(_req,res,next)=>{try{
+ const r=await pool.query(`SELECT ct.*,cb.code cashbox_code,cb.name cashbox_name,u.display_name created_by_name,
+   CASE WHEN ct.reversed_at IS NULL THEN false ELSE true END is_reversed
+   FROM cash_transactions ct JOIN cashboxes cb ON cb.id=ct.cashbox_id LEFT JOIN users u ON u.id=ct.created_by
+   ORDER BY ct.created_at DESC LIMIT 500`);
+ res.json({items:r.rows});
+}catch(e){next(e);}});
 router.get("/cash/offset-accounts",guarded("cash.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT id,code,name_ar,account_type FROM accounts WHERE is_active=true AND account_type IN ('asset','liability','equity','revenue','expense') ORDER BY code");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/cash/transactions",guarded("cash.manage"),async(req,res,next)=>{
  const {cashbox_id,reference_no,direction,amount:amt,source_type="manual",description=null,offset_account_id}=req.body??{};
