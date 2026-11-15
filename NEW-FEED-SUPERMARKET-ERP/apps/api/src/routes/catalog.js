@@ -165,12 +165,12 @@ router.get("/suppliers", async (_req,res,next) => {
 });
 
 router.post("/suppliers", async (req,res,next) => {
-  const {code,name,phone=null} = req.body ?? {};
+  const {code,name,phone=null,email=null,tax_number=null,address=null} = req.body ?? {};
   if (!text(code,60)||!text(name,200)) return res.status(400).json({error:"Invalid supplier fields"});
   try {
     const {rows}=await pool.query(
-      "INSERT INTO suppliers(code,name,phone) VALUES($1,$2,$3) RETURNING *",
-      [code.trim(),name.trim(),phone]
+      "INSERT INTO suppliers(code,name,phone,email,tax_number,address) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",
+      [code.trim(),name.trim(),phone,email,tax_number,address]
     );
     res.status(201).json(rows[0]);
   } catch(e) { next(e); }
@@ -184,12 +184,12 @@ router.get("/customers", async (_req,res,next) => {
 });
 
 router.post("/customers", async (req,res,next) => {
-  const {code,name,phone=null}=req.body ?? {};
+  const {code,name,phone=null,email=null,address=null}=req.body ?? {};
   if (!text(code,60)||!text(name,200)) return res.status(400).json({error:"Invalid customer fields"});
   try {
     const {rows}=await pool.query(
-      "INSERT INTO customers(code,name,phone) VALUES($1,$2,$3) RETURNING *",
-      [code.trim(),name.trim(),phone]
+      "INSERT INTO customers(code,name,phone,email,address) VALUES($1,$2,$3,$4,$5) RETURNING *",
+      [code.trim(),name.trim(),phone,email,address]
     );
     res.status(201).json(rows[0]);
   } catch(e) { next(e); }
