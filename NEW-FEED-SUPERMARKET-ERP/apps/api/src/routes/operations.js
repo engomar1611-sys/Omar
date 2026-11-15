@@ -68,7 +68,7 @@ router.post("/ecommerce/orders/:id/convert-to-sale",async(req,res,next)=>{
   if(!lines.rowCount)throw Object.assign(new Error("Ecommerce order has no active products"),{statusCode:409});
   if(lines.rows.some(x=>x.retail_price===null))throw Object.assign(new Error("Every ecommerce product must have an active approved retail price"),{statusCode:409});
   const payload={
-    reference_no:"WEB-"+order.rows[0].reference_no,
+    reference_no:"WEB-"+order.rows[0].id.replaceAll("-","").slice(0,42),
     branch_id,customer_id:customerId,
     lines:lines.rows.map(x=>({product_id:x.product_id,unit_id:x.base_unit_id,quantity:Number(x.quantity),unit_price:Number(x.retail_price),discount_amount:0})),
     payments,idempotency_key:"ecommerce:"+req.params.id,tax_code_id,
