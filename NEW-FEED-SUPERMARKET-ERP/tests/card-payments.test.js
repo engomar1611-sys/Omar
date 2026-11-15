@@ -34,7 +34,7 @@ test("rejects card numbers that do not contain exactly four digits",()=>{
 });
 
 test("rejects zero, negative, non-finite, and mismatched captured amounts",()=>{
-  for(const value of [0,-1,NaN,Infinity,125.52]) {
+  for(const value of [0,-1,NaN,Infinity,125.511,125.52]) {
     assert.match(validateCardPayment({...valid,terminal_amount:value},125.50),/amount/i);
   }
 });
