@@ -68,6 +68,34 @@ export async function qualityLabRoutes(app,{db}){
   }catch(e){return fail(reply,e);}
  });
 
+ app.get('/api/v1/quality/sample-sources',auth(app,'QUALITY.SAMPLES.MANAGE'),async(req,reply)=>{
+  try{
+   if(req.query.sourceType==='GOODS_RECEIPT'){
+    return (await db.query(`
+     SELECT g.id source_id,l.id source_line_id,l.item_id,i.code item_code,i.name_ar item_name,
+       p.warehouse_id,w.code warehouse_code,COALESCE(l.lot_no,'') lot_no,l.received_qty,
+       'RAW_MATERIAL' stage
+     FROM goods_receipt_lines l JOIN goods_receipts g ON g.id=l.goods_receipt_id
+     JOIN purchase_orders p ON p.id=g.purchase_order_id JOIN warehouses w ON w.id=p.warehouse_id
+     JOIN items i ON i.id=l.item_id
+     WHERE g.status='PENDING_QC' ORDER BY g.received_at,l.id
+    `)).rows;
+   }
+   if(req.query.sourceType==='PRODUCTION_ORDER'){
+    return (await db.query(`
+     SELECT p.id source_id,o.id source_line_id,o.item_id,i.code item_code,i.name_ar item_name,
+       p.warehouse_id,w.code warehouse_code,o.lot_no,o.quantity,'FINISHED_GOOD' stage
+     FROM production_outputs o JOIN production_orders p ON p.id=o.production_order_id
+     JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no
+     JOIN warehouses w ON w.id=p.warehouse_id JOIN items i ON i.id=o.item_id
+     WHERE p.status='COMPLETED' AND b.quality_status IN ('PENDING_QC','QUARANTINED')
+     ORDER BY p.completed_at DESC,o.id
+    `)).rows;
+   }
+   return invalid(reply,'INVALID_SOURCE_TYPE');
+  }catch(e){return fail(reply,e);}
+ });
+
  app.get('/api/v1/quality/samples',auth(app,'QUALITY.SAMPLES.READ'),async(_req,reply)=>{
   try{return (await db.query(`
    SELECT s.*,i.code item_code,i.name_ar item_name,q.version_no specification_version,
