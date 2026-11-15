@@ -310,6 +310,17 @@ jobs:
               RAISE EXCEPTION 'Operational role permission defaults are incomplete';
             END IF;
 
+            IF EXISTS (
+              SELECT p.id FROM permissions p
+              WHERE NOT EXISTS (
+                SELECT 1 FROM role_permissions rp
+                JOIN roles r ON r.id=rp.role_id
+                WHERE r.code='SUPER_ADMIN' AND rp.permission_id=p.id
+              )
+            ) THEN
+              RAISE EXCEPTION 'Super administrator is missing one or more permissions';
+            END IF;
+
             IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
               OR NOT EXISTS (
                 SELECT 1 FROM role_permissions rp
