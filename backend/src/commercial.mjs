@@ -413,19 +413,49 @@ export async function commercialRoutes(app,{db}){
   }catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/production/orders/:id/cost-components',auth(app,'PRODUCTION.COSTS.MANAGE'),async(req,rep)=>{
-  const b=req.body??{};if(!['LABOR','ENERGY','OVERHEAD','PACKAGING','WASTE'].includes(b.componentCode)||!txt(b.description,200)||!Number.isFinite(Number(b.amount))||Number(b.amount)<0)return bad(rep);
+  const b=req.body??{};
+  const mapping={LABOR:'5100',ENERGY:'5200',OVERHEAD:'5300',PACKAGING:'5410',WASTE:'5300'};
+  if(!Object.hasOwn(mapping,b.componentCode)||!txt(b.description,200)||!Number.isFinite(Number(b.amount))||Number(b.amount)<0)return bad(rep);
   try{
    const out=await tx(db,async c=>{
-    const p=await c.query('SELECT * FROM production_orders WHERE id=$1 AND status=\'COMPLETED\' FOR UPDATE',[req.params.id]);
-    if(!p.rowCount)throw Object.assign(new Error('أمر التشغيل غير مكتمل'),{code:'P0001'});
-    const output=await c.query('SELECT * FROM production_outputs WHERE production_order_id=$1 FOR UPDATE',[req.params.id]);
-    const oldTotal=Number(p.rows[0].total_material_cost),add=Number(b.amount),newTotal=oldTotal+add,qty=Number(output.rows[0].quantity),delta=add/qty;
-    await c.query('INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by) VALUES($1,$2,$3,$4,$5)',[req.params.id,b.componentCode,b.description,add,req.authUser.user_id]);
-    await c.query('UPDATE production_orders SET total_material_cost=$1,unit_production_cost=$2 WHERE id=$3',[newTotal,newTotal/qty,req.params.id]);
-    await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,newTotal/qty,req.params.id]);
-    await c.query('UPDATE inventory_balances SET average_unit_cost=average_unit_cost+($1/NULLIF(quantity,0)) WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4 AND quantity>0',[delta,p.rows[0].warehouse_id,output.rows[0].item_id,output.rows[0].lot_no]);
-    return {productionOrderId:req.params.id,additionalCost:add,totalCost:newTotal,unitCost:newTotal/qty};
-   });return rep.code(201).send(out);
+    const h=await c.query(`SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no,o.quantity,o.total_cost,
+      bal.quantity balance_qty,bal.quality_status
+      FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id
+      JOIN inventory_balances bal ON bal.warehouse_id=p.warehouse_id AND bal.item_id=o.item_id AND bal.lot_no=o.lot_no
+      WHERE p.id=$1 FOR UPDATE OF p,bal`,[req.params.id]);
+    if(!h.rowCount||h.rows[0].status!=='COMPLETED'||!['PENDING_QC','QUARANTINED'].includes(h.rows[0].quality_status))
+      throw Object.assign(new Error('يجب أن يكون الإنتاج مكتملاً والمنتج بانتظار فحص الجودة لإضافة تكلفة'),{code:'P0001'});
+    const row=h.rows[0],qty=Number(row.quantity),add=Number(b.amount);
+    if(qty<=0||Math.abs(Number(row.balance_qty)-qty)>0.000001)
+      throw Object.assign(new Error('تغير رصيد التشغيلة بعد الإتمام؛ لا يمكن رسملة تكلفة إضافية'),{code:'P0001'});
+    const batchJournal=await c.query("SELECT id FROM journal_entries WHERE source_type='PRODUCTION_COST' AND source_id=$1 FOR UPDATE",[req.params.id]);
+    if(batchJournal.rowCount)
+      throw Object.assign(new Error('تم ترحيل تكاليف التشغيل دفعة واحدة؛ لا يمكن إضافة مكون منفرد بعدها'),{code:'P0001'});
+    const period=await c.query('SELECT status FROM accounting_periods WHERE CURRENT_DATE BETWEEN start_date AND end_date FOR UPDATE');
+    if(add>0&&period.rowCount&&period.rows[0].status!=='OPEN')
+      throw Object.assign(new Error('الفترة المحاسبية مغلقة أو مقفلة'),{code:'P0001'});
+    const expenseCode=mapping[b.componentCode];
+    const accounts=await c.query('SELECT id,code FROM gl_accounts WHERE code=ANY($1::text[]) AND is_active=TRUE',[['1200',expenseCode]]);
+    const ids=Object.fromEntries(accounts.rows.map(x=>[x.code,x.id]));
+    if(!ids['1200']||!ids[expenseCode])
+      throw Object.assign(new Error('حساب المخزون أو حساب التكلفة غير معرف'),{code:'P0001'});
+    const component=await c.query(`INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by)
+      VALUES($1,$2,$3,$4,$5) RETURNING id`,[req.params.id,b.componentCode,b.description.trim(),add,req.authUser.user_id]);
+    const newTotal=Number(row.total_cost)+add,newUnit=newTotal/qty;
+    await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,newUnit,req.params.id]);
+    await c.query('UPDATE production_orders SET unit_production_cost=$1 WHERE id=$2',[newUnit,req.params.id]);
+    await c.query('UPDATE inventory_balances SET average_unit_cost=$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',
+      [newUnit,row.warehouse_id,row.item_id,row.lot_no]);
+    if(add>0){
+      const entry=await c.query(`INSERT INTO journal_entries(entry_no,entry_date,source_type,source_id,description,total_debit,total_credit,created_by)
+        VALUES($1,CURRENT_DATE,'PRODUCTION_COST_COMPONENT',$2,$3,$4,$4,$5) RETURNING id`,
+        ['J-PCOMP-'+component.rows[0].id.slice(0,12),component.rows[0].id,'رسملة '+b.description.trim()+' لأمر الإنتاج '+req.params.id,add,req.authUser.user_id]);
+      await c.query('INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit,description) VALUES($1,$2,$3,0,$4),($1,$5,0,$3,$6)',
+        [entry.rows[0].id,ids['1200'],add,'إضافة تكلفة إلى مخزون المنتج النهائي',ids[expenseCode],b.description.trim()]);
+    }
+    return {productionOrderId:req.params.id,componentId:component.rows[0].id,additionalCost:add,totalCost:newTotal,unitCost:newUnit};
+   });
+   return rep.code(201).send(out);
   }catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/production/orders/:id/losses',auth(app,'PRODUCTION.LOSSES.MANAGE'),async(req,rep)=>{
