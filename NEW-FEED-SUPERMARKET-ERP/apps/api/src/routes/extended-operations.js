@@ -71,14 +71,63 @@ router.post("/hr/payroll-runs",guarded("hr.payroll"),async(req,res,next)=>{
  }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
 });
 router.post("/hr/payroll-runs/:id/approve",guarded("hr.payroll"),async(req,res,next)=>{if(!uuid.test(req.params.id))return bad(res,"Invalid payroll run id");try{const r=await pool.query("UPDATE payroll_runs SET status='approved',approved_by=$2,approved_at=now() WHERE id=$1 AND status='draft' RETURNING *",[req.params.id,req.user.id]);if(!r.rowCount)return res.status(409).json({error:"Only a draft payroll run can be approved"});res.json(r.rows[0]);}catch(e){next(e);}});
-router.post("/hr/payroll-runs/:id/mark-paid",guarded("hr.payroll"),async(req,res,next)=>{const {payment_method,payment_reference,cashbox_id=null,bank_account_id=null}=req.body??{};if(!uuid.test(req.params.id)||!["cash","bank"].includes(payment_method)||!txt(payment_reference,60)||(payment_method==="cash"?!uuid.test(cashbox_id||""):!uuid.test(bank_account_id||"")))return bad(res,"Payment method, reference and matching cashbox/bank account are required");const c=await pool.connect();try{await c.query("BEGIN");const run=await c.query("SELECT * FROM payroll_runs WHERE id=$1 AND status='approved' FOR UPDATE",[req.params.id]);if(!run.rowCount)throw Object.assign(new Error("Only an approved payroll run can be paid"),{statusCode:409});const total=Number(run.rows[0].total_net);if(total<=0)throw Object.assign(new Error("Payroll net total must be greater than zero"),{statusCode:400});if(payment_method==="cash"){await c.query("INSERT INTO cash_transactions(cashbox_id,reference_no,direction,amount,source_type,source_id,description,created_by) VALUES($1,$2,'out',$3,'payroll',$4,$5,$6)",[cashbox_id,payment_reference,total,req.params.id,"Payroll "+run.rows[0].reference_no,req.user.id]);}else{const account=await c.query("SELECT id,currency FROM bank_accounts WHERE id=$1 AND is_active FOR SHARE",[bank_account_id]);if(!account.rowCount||account.rows[0].currency!=="EGP")throw Object.assign(new Error("An active EGP bank account is required"),{statusCode:400});await c.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,source_type,source_id,created_by) VALUES($1,$2,CURRENT_DATE,'out',$3,$4,'payroll',$5,$6)",[bank_account_id,payment_reference,total,"Payroll "+run.rows[0].reference_no,req.params.id,req.user.id]);}const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+router.post("/hr/payroll-runs/:id/mark-paid",guarded("hr.payroll"),async(req,res,next)=>{const {payment_method,payment_reference,cashbox_id=null,bank_account_id=null}=req.body??{};if(!uuid.test(req.params.id)||!["cash","bank"].includes(payment_method)||!txt(payment_reference,60)||(payment_method==="cash"?!uuid.test(cashbox_id||""):!uuid.test(bank_account_id||"")))return bad(res,"Payment method, reference and matching cashbox/bank account are required");const c=await pool.connect();try{await c.query("BEGIN");const run=await c.query("SELECT * FROM payroll_runs WHERE id=$1 AND status='approved' FOR UPDATE",[req.params.id]);if(!run.rowCount)throw Object.assign(new Error("Only an approved payroll run can be paid"),{statusCode:409});const total=Number(run.rows[0].total_net);if(total<=0)throw Object.assign(new Error("Payroll net total must be greater than zero"),{statusCode:400});let cashTransactionId=null,bankTransactionId=null;
+if(payment_method==="cash"){
+ const session=await c.query("SELECT id FROM cash_sessions WHERE cashbox_id=$1 AND cashier_id=$2 AND status='open' FOR UPDATE",[cashbox_id,req.user.id]);
+ if(!session.rowCount)throw Object.assign(new Error("Open cashier session for this cashbox before paying payroll in cash"),{statusCode:409});
+ const tx=await c.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,source_id,description,created_by) VALUES($1,$2,$3,'out',$4,'payroll',$5,$6,$7) RETURNING id",[cashbox_id,session.rows[0].id,payment_reference,total,req.params.id,"Payroll "+run.rows[0].reference_no,req.user.id]);
+ cashTransactionId=tx.rows[0].id;
+}else{
+ const account=await c.query("SELECT id,currency,ledger_account_id FROM bank_accounts WHERE id=$1 AND is_active FOR SHARE",[bank_account_id]);
+ if(!account.rowCount||account.rows[0].currency!=="EGP"||!account.rows[0].ledger_account_id)throw Object.assign(new Error("An active EGP bank account with ledger mapping is required"),{statusCode:400});
+ const tx=await c.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,source_type,source_id,created_by) VALUES($1,$2,CURRENT_DATE,'out',$3,$4,'payroll',$5,$6) RETURNING id",[bank_account_id,payment_reference,total,"Payroll "+run.rows[0].reference_no,req.params.id,req.user.id]);
+ bankTransactionId=tx.rows[0].id;
+}const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
 if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
 const maps=await c.query("SELECT mapping_key,account_id FROM system_account_mappings WHERE mapping_key=ANY($1::varchar[])",[["payroll_expense",payment_method==="cash"?"cash":"bank"]]);
 const map=Object.fromEntries(maps.rows.map(x=>[x.mapping_key,x.account_id]));
 if(!map.payroll_expense||!map[payment_method==="cash"?"cash":"bank"])throw Object.assign(new Error("Payroll accounting mappings are missing; apply migration 034"),{statusCode:409});
 const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'payroll_payment',$2,CURRENT_DATE,'posted') RETURNING id",["JE-PAY-"+run.rows[0].reference_no,req.params.id]);
 await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0),($1,$4,0,$3)",[je.rows[0].id,map.payroll_expense,total,map[payment_method==="cash"?"cash":"bank"]]);
-const r=await c.query("UPDATE payroll_runs SET status='paid',payment_method=$2,payment_reference=$3,paid_at=now(),paid_by=$4,payment_journal_entry_id=$5 WHERE id=$1 RETURNING *",[req.params.id,payment_method,payment_reference,req.user.id,je.rows[0].id]);await c.query("COMMIT");res.json(r.rows[0]);}catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}});
+if(bankTransactionId)await c.query("UPDATE bank_transactions SET journal_entry_id=$2 WHERE id=$1",[bankTransactionId,je.rows[0].id]);
+const r=await c.query("UPDATE payroll_runs SET status='paid',payment_method=$2,payment_reference=$3,paid_at=now(),paid_by=$4,payment_journal_entry_id=$5,payment_cash_transaction_id=$6,payment_bank_transaction_id=$7 WHERE id=$1 RETURNING *",[req.params.id,payment_method,payment_reference,req.user.id,je.rows[0].id,cashTransactionId,bankTransactionId]);await c.query("COMMIT");res.json(r.rows[0]);}catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}});
+
+router.post("/hr/payroll-runs/:id/reverse-payment",guarded("hr.payroll"),async(req,res,next)=>{
+ const {reason}=req.body??{};
+ if(!uuid.test(req.params.id)||!txt(reason,1000))return bad(res,"A clear payroll payment reversal reason is required");
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const run=await c.query("SELECT * FROM payroll_runs WHERE id=$1 AND status='paid' FOR UPDATE",[req.params.id]);
+  if(!run.rowCount)throw Object.assign(new Error("Only a paid payroll run can be reversed"),{statusCode:409});
+  const period=await c.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const original=await c.query("SELECT id FROM journal_entries WHERE id=$1 AND status='posted' FOR UPDATE",[run.rows[0].payment_journal_entry_id]);
+  if(!original.rowCount)throw Object.assign(new Error("Original payroll payment journal is missing or already reversed"),{statusCode:409});
+  const lines=await c.query("SELECT account_id,debit,credit FROM journal_lines WHERE journal_entry_id=$1",[original.rows[0].id]);
+  if(!lines.rowCount)throw Object.assign(new Error("Original payroll journal lines are missing"),{statusCode:409});
+  const reversal=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'payroll_payment_reversal',$2,CURRENT_DATE,'posted') RETURNING id",["JE-PAY-REV-"+run.rows[0].reference_no,req.params.id]);
+  for(const line of lines.rows)await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,$4)",[reversal.rows[0].id,line.account_id,line.credit,line.debit]);
+  await c.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
+  if(run.rows[0].payment_method==="cash"){
+    const originalCash=await c.query("SELECT cashbox_id FROM cash_transactions WHERE id=$1 AND source_type='payroll' AND source_id=$2",[run.rows[0].payment_cash_transaction_id,req.params.id]);
+    if(!originalCash.rowCount)throw Object.assign(new Error("Original payroll cash movement is missing"),{statusCode:409});
+    const session=await c.query("SELECT id FROM cash_sessions WHERE cashbox_id=$1 AND cashier_id=$2 AND status='open' FOR UPDATE",[originalCash.rows[0].cashbox_id,req.user.id]);
+    if(!session.rowCount)throw Object.assign(new Error("Open a cash session for the original cashbox before reversing this cash payroll payment"),{statusCode:409});
+    await c.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,source_id,description,created_by) VALUES($1,$2,$3,'in',$4,'payroll_reversal',$5,$6,$7)",
+      [originalCash.rows[0].cashbox_id,session.rows[0].id,"REV-"+run.rows[0].payment_reference,run.rows[0].total_net,req.params.id,"Reversal of payroll "+run.rows[0].reference_no,req.user.id]);
+  }else{
+    const originalBank=await c.query("SELECT * FROM bank_transactions WHERE id=$1 AND source_type='payroll' AND source_id=$2 AND status='posted' FOR UPDATE",[run.rows[0].payment_bank_transaction_id,req.params.id]);
+    if(!originalBank.rowCount)throw Object.assign(new Error("Original payroll bank movement is missing or already reversed"),{statusCode:409});
+    await c.query("UPDATE bank_transactions SET status='reversed',reversed_by=$2,reversed_at=now() WHERE id=$1",[originalBank.rows[0].id,req.user.id]);
+    const reverseBank=await c.query("INSERT INTO bank_transactions(bank_account_id,reference_no,transaction_date,direction,amount,description,source_type,source_id,journal_entry_id,created_by) VALUES($1,$2,CURRENT_DATE,'in',$3,$4,'payroll_reversal',$5,$6,$7) RETURNING id",
+      [originalBank.rows[0].bank_account_id,"REV-"+run.rows[0].payment_reference,run.rows[0].total_net,"Reversal of payroll "+run.rows[0].reference_no,req.params.id,reversal.rows[0].id,req.user.id]);
+  }
+  const updated=await c.query("UPDATE payroll_runs SET status='reversed',reversal_journal_entry_id=$2,reversed_by=$3,reversed_at=now(),reversal_reason=$4 WHERE id=$1 RETURNING *",[req.params.id,reversal.rows[0].id,req.user.id,reason.trim()]);
+  await c.query("COMMIT");
+  res.json({run:updated.rows[0],reversal_journal_entry_id:reversal.rows[0].id});
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
 
 // Cashbox session close records the counted cash and the variance against movements posted to this box.
 router.post("/cashboxes",guarded("cash.manage"),async(req,res,next)=>{const {branch_id,code,name}=req.body??{};if(!uuid.test(branch_id||"")||!txt(code,40)||!txt(name,120))return bad(res,"Invalid cashbox");try{const r=await pool.query("INSERT INTO cashboxes(branch_id,code,name) VALUES($1,$2,$3) RETURNING *",[branch_id,code.trim(),name.trim()]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
