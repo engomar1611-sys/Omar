@@ -58,7 +58,10 @@ jobs:
             IF to_regclass('public.supplier_invoices') IS NULL
               OR to_regclass('public.supplier_invoice_lines') IS NULL
               OR to_regclass('public.supplier_payments') IS NULL
-              OR to_regclass('public.supplier_payment_allocations') IS NULL THEN
+              OR to_regclass('public.supplier_payment_allocations') IS NULL
+              OR to_regclass('public.supplier_returns') IS NULL
+              OR to_regclass('public.supplier_return_lines') IS NULL
+              OR to_regclass('public.supplier_return_allocations') IS NULL THEN
               RAISE EXCEPTION 'Supplier accounting tables are missing';
             END IF;
             IF (SELECT COUNT(*) FROM system_account_mappings
