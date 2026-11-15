@@ -55,6 +55,13 @@ router.get("/hr/shifts",guarded("hr.attendance"),async(_req,res,next)=>{try{cons
 router.post("/hr/shifts",guarded("hr.attendance"),async(req,res,next)=>{const {employee_id,starts_at,ends_at=null}=req.body??{};if(!uuid.test(employee_id||"")||!starts_at||Number.isNaN(Date.parse(starts_at))||(ends_at&&(!Number.isFinite(Date.parse(ends_at))||Date.parse(ends_at)<=Date.parse(starts_at))))return bad(res,"Invalid employee shift");try{const e=await pool.query("SELECT id,branch_id FROM employees WHERE id=$1 AND employment_status='active'",[employee_id]);if(!e.rowCount)return res.status(404).json({error:"Active employee not found"});const r=await pool.query("INSERT INTO employee_shifts(employee_id,branch_id,starts_at,ends_at,status) VALUES($1,$2,$3,$4,$5) RETURNING *",[employee_id,e.rows[0].branch_id,starts_at,ends_at,ends_at?"closed":"open"]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
 router.post("/hr/shifts/:id/close",guarded("hr.attendance"),async(req,res,next)=>{if(!uuid.test(req.params.id))return bad(res,"Invalid shift id");try{const r=await pool.query("UPDATE employee_shifts SET ends_at=now(),status='closed' WHERE id=$1 AND status='open' RETURNING *",[req.params.id]);if(!r.rowCount)return res.status(409).json({error:"Open shift not found"});res.json(r.rows[0]);}catch(e){next(e);}});
 
+router.get("/hr/payroll-payment-context",guarded("hr.payroll"),async(_req,res,next)=>{try{
+ const [cashboxes,banks]=await Promise.all([
+  pool.query("SELECT id,code,name FROM cashboxes WHERE is_active ORDER BY name"),
+  pool.query("SELECT id,code,bank_name,account_name,currency FROM bank_accounts WHERE is_active AND currency='EGP' AND ledger_account_id IS NOT NULL ORDER BY bank_name,account_name")
+ ]);
+ res.json({cashboxes:cashboxes.rows,bank_accounts:banks.rows});
+}catch(e){next(e);}});
 // Payroll draft calculation uses the employee's configured monthly salary. Approval and payment are separate controls.
 router.get("/hr/payroll-runs",guarded("hr.payroll"),async(_req,res,next)=>{try{
  const r=await pool.query("SELECT pr.*,COUNT(pl.id)::int employee_count FROM payroll_runs pr LEFT JOIN payroll_lines pl ON pl.payroll_run_id=pr.id GROUP BY pr.id ORDER BY pr.created_at DESC LIMIT 200");res.json({items:r.rows});
