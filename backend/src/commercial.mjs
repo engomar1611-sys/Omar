@@ -187,10 +187,13 @@ export async function commercialRoutes(app,{db}){
   const b=req.body??{};if(!txt(b.returnNo,40)||!b.invoiceId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||b.lines.some(x=>!x.invoiceLineId||!pos(x.quantity)))return bad(rep);
   try{
    const out=await tx(db,async c=>{
+    const invoice=await c.query("SELECT id,status FROM sales_invoices WHERE id=$1 FOR UPDATE",[b.invoiceId]);
+    if(!invoice.rowCount||!['POSTED','PARTIALLY_PAID','PAID'].includes(invoice.rows[0].status))
+     throw Object.assign(new Error('الفاتورة غير موجودة أو غير متاحة للمرتجع'),{code:'P0001'});
     const h=await c.query(`INSERT INTO sales_returns(return_no,sales_invoice_id,warehouse_id,reason,created_by)
       VALUES($1,$2,$3,$4,$5) RETURNING *`,[b.returnNo,b.invoiceId,b.warehouseId,b.reason??null,req.authUser.user_id]);
     for(const l of b.lines){
-     const src=await c.query('SELECT id,item_id,lot_no,quantity,unit_price,unit_cost FROM sales_invoice_lines WHERE id=$1 AND sales_invoice_id=$2',[l.invoiceLineId,b.invoiceId]);
+     const src=await c.query('SELECT id,item_id,lot_no,quantity,unit_price,unit_cost FROM sales_invoice_lines WHERE id=$1 AND sales_invoice_id=$2 FOR UPDATE',[l.invoiceLineId,b.invoiceId]);
      if(!src.rowCount)throw Object.assign(new Error('بند الفاتورة غير موجود'),{code:'P0001'});
      const prior=await c.query(`SELECT COALESCE(SUM(rl.quantity),0) q FROM sales_return_lines rl JOIN sales_returns r ON r.id=rl.sales_return_id WHERE rl.invoice_line_id=$1 AND r.status<>'REJECTED'`,[l.invoiceLineId]);
      if(Number(prior.rows[0].q)+Number(l.quantity)>Number(src.rows[0].quantity))throw Object.assign(new Error('كمية المرتجع تتجاوز المبيع'),{code:'P0001'});
