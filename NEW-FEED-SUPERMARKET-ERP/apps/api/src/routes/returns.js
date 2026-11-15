@@ -2,6 +2,7 @@ import {Router} from "express";
 import {pool} from "../db.js";
 import {calculateReturnPointsRestoration} from "../domain/loyalty.js";
 import {requirePermission} from "../auth.js";
+import {validateCardRefund} from "../domain/card-refunds.js";
 
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -279,8 +280,8 @@ router.post("/sales/returns/:id/refund",requirePermission("returns.approve"),asy
     if(!method.rowCount||!method.rows[0].account_id)throw Object.assign(new Error("Active payment method has no ledger account mapping"),{statusCode:400});
     const isCard=/card|visa|بطاقة|فيزا/i.test(String(method.rows[0].code||"")+" "+String(method.rows[0].name_ar||""));
     if(isCard){
-      if(!uuid.test(bank_id||"")||!uuid.test(bank_account_id||"")||!text(transaction_reference,100)||!/^[0-9]{4}$/.test(String(card_last_four||""))||!text(reference_text,120)||!Number.isFinite(Number(terminal_amount))||Math.abs(Number(terminal_amount)-Number(amount))>0.01)
-        throw Object.assign(new Error("Card refunds require issuing bank, merchant settlement bank account, terminal refund reference, last 4 digits and matching terminal amount"),{statusCode:400});
+      const refundError=validateCardRefund({bank_id,bank_account_id,transaction_reference,card_last_four,reference_text,terminal_amount},amount);
+      if(refundError)throw Object.assign(new Error(refundError),{statusCode:400});
       const bank=await client.query("SELECT id FROM payment_banks WHERE id=$1 AND is_active=true",[bank_id]);
       if(!bank.rowCount)throw Object.assign(new Error("Selected card refund bank is inactive"),{statusCode:400});
       const settlement=await client.query("SELECT id,ledger_account_id FROM bank_accounts WHERE id=$1 AND is_active=true AND currency='EGP' AND ledger_account_id IS NOT NULL FOR UPDATE",[bank_account_id]);
