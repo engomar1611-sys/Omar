@@ -41,11 +41,26 @@ test('PostgreSQL inventory adjustment: positive quantity remains held until insp
   assert.equal(hold.status,'PENDING_QC');
   assert.equal(Number(hold.held_qty),5);
 
+  const secondCreated=await app.inject({method:'POST',url:'/api/v1/inventory/adjustments',headers,payload:{
+   adjustmentNo:code('ADJ-QC2'),warehouseId:warehouse.id,reason:'إضافة ثانية لنفس التشغيلة',
+   lines:[{itemId:item.id,lotNo:lot,quantityDelta:3,unitCost:4}]
+  }});
+  assert.equal(secondCreated.statusCode,201,secondCreated.body);
+  const secondId=secondCreated.json().id;
+  const secondLine=(await pool.query('SELECT id FROM inventory_adjustment_lines WHERE adjustment_id=$1',[secondId])).rows[0];
+  const secondApproved=await app.inject({method:'POST',url:'/api/v1/inventory/adjustments/'+secondId+'/approve',headers,payload:{}});
+  assert.equal(secondApproved.statusCode,200,secondApproved.body);
+  const secondHold=(await pool.query(`SELECT id,status,held_qty FROM inventory_quality_holds
+   WHERE source_type='INVENTORY_ADJUSTMENT' AND source_id=$1 AND source_line_id=$2`,[secondId,secondLine.id])).rows[0];
+  assert.ok(secondHold);
+  assert.equal(secondHold.status,'PENDING_QC');
+  assert.equal(Number(secondHold.held_qty),3);
+
   const before=await app.inject({method:'GET',url:'/api/v1/inventory/balances?warehouseId='+warehouse.id,headers});
   assert.equal(before.statusCode,200,before.body);
   let row=before.json().find(x=>x.item_id===item.id);
   assert.equal(Number(row.available_quantity),0);
-  assert.equal(Number(row.quality_held_qty),5);
+  assert.equal(Number(row.quality_held_qty),8);
 
   const failInspection=await app.inject({method:'POST',url:'/api/v1/quality/inventory-holds/'+hold.id+'/inspect',headers,
    payload:{result:'FAIL',parameters:{moisture:18.5},notes:'الرطوبة أعلى من الحد المسموح'}});
@@ -55,7 +70,7 @@ test('PostgreSQL inventory adjustment: positive quantity remains held until insp
   const stillHeld=await app.inject({method:'GET',url:'/api/v1/inventory/balances?warehouseId='+warehouse.id,headers});
   row=stillHeld.json().find(x=>x.item_id===item.id);
   assert.equal(Number(row.available_quantity),0);
-  assert.equal(Number(row.quality_held_qty),5);
+  assert.equal(Number(row.quality_held_qty),8);
 
   const passInspection=await app.inject({method:'POST',url:'/api/v1/quality/inventory-holds/'+hold.id+'/inspect',headers,
    payload:{result:'PASS',parameters:{moisture:11.2,protein:21.4},notes:'اجتازت إعادة الفحص'}});
@@ -64,13 +79,25 @@ test('PostgreSQL inventory adjustment: positive quantity remains held until insp
 
   const after=await app.inject({method:'GET',url:'/api/v1/inventory/balances?warehouseId='+warehouse.id,headers});
   row=after.json().find(x=>x.item_id===item.id);
-  assert.equal(Number(row.available_quantity),5);
+  assert.equal(Number(row.available_quantity),5,
+    'passing the first source document releases only its own 5 kg');
+  assert.equal(Number(row.quality_held_qty),3,
+    'the second source document remains quarantined on the same lot');
+
+  const secondPass=await app.inject({method:'POST',url:'/api/v1/quality/inventory-holds/'+secondHold.id+'/inspect',headers,
+   payload:{result:'PASS',parameters:{moisture:10.8},notes:'اجتازت الإضافة الثانية'}});
+  assert.equal(secondPass.statusCode,200,secondPass.body);
+  const afterSecondPass=await app.inject({method:'GET',url:'/api/v1/inventory/balances?warehouseId='+warehouse.id,headers});
+  row=afterSecondPass.json().find(x=>x.item_id===item.id);
+  assert.equal(Number(row.available_quantity),8);
   assert.equal(Number(row.quality_held_qty),0);
 
   const history=await pool.query('SELECT attempt_no,result,inventory_status FROM inventory_quality_inspections WHERE quality_hold_id=$1 ORDER BY attempt_no',[hold.id]);
   assert.deepEqual(history.rows.map(x=>[x.attempt_no,x.result,x.inventory_status]),[
    [1,'FAIL','QUARANTINED'],[2,'PASS','RELEASED']
   ]);
+  const secondHistory=await pool.query('SELECT attempt_no,result,inventory_status FROM inventory_quality_inspections WHERE quality_hold_id=$1',[secondHold.id]);
+  assert.deepEqual(secondHistory.rows.map(x=>[x.attempt_no,x.result,x.inventory_status]),[[1,'PASS','RELEASED']]);
   const list=await app.inject({method:'GET',url:'/api/v1/quality/inventory-holds',headers});
   assert.equal(list.statusCode,200,list.body);
   assert.ok(!list.json().some(x=>x.id===hold.id),'released holds must leave the pending/quarantine work queue');
