@@ -22,7 +22,7 @@ document.getElementById("bootstrapForm").addEventListener("submit",async e=>{
 if(storedToken){document.getElementById("authGate").style.display="none";const name=sessionStorage.getItem("nf_user_name");const userLabel=document.querySelector(".user b");if(name&&userLabel)userLabel.textContent=name;}
 document.getElementById("logoutButton").onclick=()=>{sessionStorage.removeItem("nf_access_token");sessionStorage.removeItem("nf_user_name");location.reload();};
 let posProducts=[],posAllProducts=[],posContext=null,posDiscountSettings=null,productSearchTimer=null;
-const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["discounts","％","قواعد الخصم"],["customers","♙","العملاء والولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات والخزينة"],["hr","♙","الموارد البشرية"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["orderChannels","↔","ربط تطبيقات الطلبات"],["ecommerce","▧","المتجر الإلكتروني"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
+const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["reports","▥","التقارير"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["discounts","％","قواعد الخصم"],["customers","♙","العملاء والولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات والخزينة"],["hr","♙","الموارد البشرية"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["orderChannels","↔","ربط تطبيقات الطلبات"],["ecommerce","▧","المتجر الإلكتروني"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
 const moduleData={catalog:["الأصناف والباركود",["كود الصنف","اسم الصنف","التصنيف","الوحدة الأساسية","باركود","حالة الوزن","الصلاحية"],"لا توجد أصناف مسجلة بعد. أضف بيانات الأصناف المعتمدة أو استوردها من ملف موثوق."],inventory:["المخازن والمخزون",["كود الصنف","الصنف","المخزن","التشغيلة","الصلاحية","الكمية","متوسط التكلفة"],"ستظهر أرصدة المخزون وحركاته بعد تهيئة المخازن وإدخال أرصدة افتتاحية معتمدة."],purchasing:["المشتريات وطلبات الشراء",["الرقم المرجعي","المورد","التاريخ","الحالة","القيمة"],"أنشئ طلب شراء، ثم اعتمده وأصدر أمر الشراء وسجل الاستلام وفحص الجودة."],sales:["المبيعات والفواتير",["الرقم المرجعي","التاريخ","الكاشير","العميل","الإجمالي","الحالة"],"تظهر فواتير البيع المكتملة والمرتجعات بعد ربط نقاط البيع بقاعدة البيانات."],customers:["العملاء والولاء",["كود العميل","اسم العميل","الهاتف","نقاط الولاء","الحالة"],"سجل العملاء وربطهم بالمبيعات ونظام الولاء."],suppliers:["الموردون",["كود المورد","اسم المورد","الهاتف","الرصيد","الحالة"],"سجل الموردين وربطهم بطلبات الشراء والاستلام والمستحقات."],accounting:["الحسابات والخزينة",["كود الحساب","اسم الحساب","نوع الحساب","الحالة"],"دليل الحسابات والقيود اليومية والخزائن والبنوك والتسويات."],hr:["الموارد البشرية",["كود الموظف","اسم الموظف","الوظيفة","الفرع","الحالة"],"ملفات الموظفين والورديات والحضور والإجازات والصلاحيات الوظيفية."],assets:["الأصول والصيانة",["كود الأصل","اسم الأصل","التصنيف","الموقع","الحالة"],"سجل الأصول والترقيم وطباعة ملصقات الباركود والصيانة."],delivery:["التوصيل",["رقم الطلب","العميل","العنوان","مندوب التوصيل","الحالة"],"إدارة طلبات التوصيل وتخصيص المندوب ومتابعة التسليم."],ecommerce:["المتجر الإلكتروني",["رقم الطلب","العميل","قناة الطلب","الدفع","الحالة"],"إدارة كتالوج المتجر والطلبات ومزامنتها مع المخزون ونقاط البيع."],users:["المستخدمون والصلاحيات",["اسم المستخدم","الاسم","الدور","الصلاحيات","الحالة"],"إدارة المستخدمين والأدوار والصلاحيات على مستوى الموديول والإجراء."],settings:["إعدادات النظام",["الإعداد","القيمة","الوصف"],"إعدادات الشركة والفروع والضرائب والترقيم والطباعة والنسخ الاحتياطي والاتصال."],discounts:["قواعد الخصم",["الحد الأدنى","نوع الخصم","القيمة"],"إعداد خصومات تلقائية للطلبات ورسوم التوصيل."]};
 let cart=[],activeCategory="الكل";
 const $=id=>document.getElementById(id),money=n=>Number(n).toFixed(2);
@@ -343,12 +343,92 @@ async function openUsers(){
   };
  }catch(e){root.innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'</div>';}
 }
+async function openInventory(){
+ const root=$("moduleView");
+ root.innerHTML='<h1 class="module-title">المخازن والجرد والتسوية</h1><div class="module-toolbar"><button class="primary-btn" id="inventoryRefresh">تحديث الأرصدة</button><button class="primary-btn" id="newStocktakeTab">بدء جردية جديدة</button></div><div id="inventoryWorkspace" class="empty-state">جارٍ تحميل المخزون...</div>';
+ try{
+  const [warehouses,stocktakes,stock]=await Promise.all([api("/api/warehouses"),api("/api/inventory/stocktakes"),api("/api/inventory/stock")]);
+  const host=$("inventoryWorkspace");
+  const render=()=>{
+   host.innerHTML='<section class="purchase-panel"><h2>أرصدة المخزون الحالية</h2><div class="module-toolbar"><input id="inventorySearch" placeholder="بحث باسم الصنف أو الكود أو المخزن"></div><div class="table-scroll"><table class="module-table"><thead><tr><th>كود الصنف</th><th>الصنف</th><th>المخزن</th><th>التشغيلة</th><th>الصلاحية</th><th>الكمية</th><th>تكلفة الوحدة</th></tr></thead><tbody id="inventoryRows">'+(stock.items||[]).map(x=>'<tr><td>'+escapeHtml(x.sku)+'</td><td>'+escapeHtml(x.name_ar)+'</td><td>'+escapeHtml(x.warehouse_name)+'</td><td>'+escapeHtml(x.lot_number||"—")+'</td><td>'+escapeHtml(x.expiry_date||"—")+'</td><td>'+formatModuleValue(Number(x.quantity_on_hand))+'</td><td>'+money(x.unit_cost)+' ج.م</td></tr>').join("")+'</tbody></table></div></section><section class="purchase-panel"><h2>الجرديات</h2><div class="table-scroll"><table class="module-table"><thead><tr><th>رقم الجرد</th><th>المخزن</th><th>الحالة</th><th>البنود</th><th>تم عده</th><th>تاريخ الإنشاء</th><th>إجراء</th></tr></thead><tbody>'+(stocktakes.items||[]).map(x=>'<tr><td>'+escapeHtml(x.reference_no)+'</td><td>'+escapeHtml(x.warehouse_name)+'</td><td>'+escapeHtml(x.status==="posted"?"مرحّل":x.status==="cancelled"?"ملغي":"قيد العد")+'</td><td>'+x.line_count+'</td><td>'+x.counted_lines+'</td><td>'+escapeHtml(formatModuleValue(x.created_at))+'</td><td><button class="small-btn" data-stocktake="'+x.id+'">فتح الجردية</button></td></tr>').join("")+'</tbody></table></div></section>';
+   $("inventorySearch").oninput=()=>{const q=$("inventorySearch").value.toLowerCase();$("inventoryRows").querySelectorAll("tr").forEach(tr=>tr.hidden=!tr.textContent.toLowerCase().includes(q));};
+   document.querySelectorAll("[data-stocktake]").forEach(b=>b.onclick=()=>openStocktake(b.dataset.stocktake));
+  };
+  render();
+  $("inventoryRefresh").onclick=()=>openInventory();
+  $("newStocktakeTab").onclick=()=>{
+   host.insertAdjacentHTML("afterbegin",'<section class="purchase-panel" id="newStocktakePanel"><h2>إنشاء جردية مخزنية</h2><div class="form-grid"><label>رقم الجردية<input id="stocktakeReference" value="STK-'+Date.now()+'"></label><label>المخزن<select id="stocktakeWarehouse">'+warehouses.items.map(w=>'<option value="'+w.id+'">'+escapeHtml(w.name)+'</option>').join("")+'</select></label><label>ملاحظات<input id="stocktakeNotes" placeholder="ملاحظات الجرد"></label></div><button class="primary-btn" id="createStocktake">إنشاء وبدء العد</button></section>');
+   $("createStocktake").onclick=async()=>{const warehouse_id=$("stocktakeWarehouse").value,reference_no=$("stocktakeReference").value.trim();if(!warehouse_id||!reference_no)return toast("اختر المخزن وأدخل رقم الجردية");try{const d=await api("/api/inventory/stocktakes",{method:"POST",body:JSON.stringify({warehouse_id,reference_no,notes:$("stocktakeNotes").value.trim()||null})});toast("تم إنشاء الجردية بعدد "+d.line_count+" بند");await openStocktake(d.stocktake.id);}catch(e){toast(e.message);}};
+  };
+ }catch(e){hostError(root,e.message);}
+}
+async function openStocktake(id){
+ const root=$("moduleView");root.innerHTML='<h1 class="module-title">إدخال الجرد الفعلي</h1><div class="empty-state">جارٍ تحميل بنود الجرد...</div>';
+ try{
+  const d=await api("/api/inventory/stocktakes/"+id),h=d.stocktake,items=d.items||[];
+  root.innerHTML='<h1 class="module-title">الجردية '+escapeHtml(h.reference_no)+' — '+escapeHtml(h.warehouse_name)+'</h1><p class="muted">أدخل الكمية الفعلية لكل تشغيلة. لا يتم ترحيل التسوية إذا حدثت أي حركة مخزنية بعد بدء الجرد؛ لتجنب فروق غير صحيحة.</p><div class="module-toolbar"><input id="stocktakeSearch" placeholder="بحث عن صنف أو باركود أو تشغيلة"><span>الحالة: '+(h.status==="posted"?"مرحّلة":h.status==="cancelled"?"ملغاة":"قيد العد")+'</span></div><div class="table-scroll"><table class="module-table"><thead><tr><th>الكود</th><th>الصنف</th><th>التشغيلة</th><th>الصلاحية</th><th>الكمية الدفترية</th><th>الكمية الفعلية</th><th>فرق الجرد</th></tr></thead><tbody id="stocktakeLines">'+items.map(x=>'<tr data-stocktake-line="'+x.id+'"><td>'+escapeHtml(x.sku)+'</td><td>'+escapeHtml(x.name_ar)+'</td><td>'+(x.stock_lot_id?escapeHtml(x.lot_number||"—"):'<input class="count-lot" placeholder="رقم التشغيلة">')+'</td><td>'+(x.stock_lot_id?escapeHtml(x.expiry_date||"—"):(x.tracks_expiry?'<input class="count-expiry" type="date">':'—'))+'</td><td>'+money(x.expected_quantity)+'</td><td>'+(h.status==="counting"?'<input class="count-quantity" type="number" min="0" step="0.000001" value="'+(x.counted_quantity??"")+'" placeholder="أدخل الفعلي">':money(x.counted_quantity??0))+'</td><td>'+ (x.posted_variance===null||x.posted_variance===undefined?"—":money(x.posted_variance))+'</td></tr>').join("")+'</tbody></table></div><div class="module-toolbar"><button class="primary-btn" id="saveStocktakeCounts" '+(h.status!=="counting"?"disabled":"")+'>حفظ الكميات الفعلية</button><button class="primary-btn" id="postStocktake" '+(h.status!=="counting"?"disabled":"")+'>ترحيل التسوية الجردية</button><button class="small-btn" id="cancelStocktake" '+(h.status!=="counting"?"disabled":"")+'>إلغاء الجردية</button><button class="small-btn" id="backInventory">رجوع للمخزون</button></div>';
+  $("stocktakeSearch").oninput=()=>{const q=$("stocktakeSearch").value.toLowerCase();$("stocktakeLines").querySelectorAll("tr").forEach(tr=>tr.hidden=!tr.textContent.toLowerCase().includes(q));};
+  if(h.status==="counting"){
+   $("saveStocktakeCounts").onclick=async()=>{const rows=[...$("stocktakeLines").querySelectorAll("tr[data-stocktake-line]")],payload=rows.filter(tr=>tr.querySelector(".count-quantity")?.value!=="").map(tr=>({id:tr.dataset.stocktakeLine,counted_quantity:Number(tr.querySelector(".count-quantity").value),lot_number:tr.querySelector(".count-lot")?.value.trim()||null,expiry_date:tr.querySelector(".count-expiry")?.value||null}));try{for(const line of payload){await api("/api/inventory/stocktakes/"+id+"/lines/"+line.id,{method:"PATCH",body:JSON.stringify(line)});}if(payload.length!==rows.length)toast("تم حفظ المدخلات؛ ما زالت هناك بنود بدون كمية فعلية");else toast("تم حفظ كميات الجرد");await openStocktake(id);}catch(e){toast(e.message);}};
+   $("postStocktake").onclick=async()=>{if(!confirm("تأكيد ترحيل التسوية الجردية؟ سيتم تعديل أرصدة التشغـيلات وإنشاء قيد محاسبي للفروق ذات التكلفة."))return;try{const result=await api("/api/inventory/stocktakes/"+id+"/post",{method:"POST",body:"{}"});toast("تم الترحيل. بنود معدلة: "+result.adjusted_lines+" — زيادة: "+money(result.positive_adjustment_value)+" — عجز: "+money(result.negative_adjustment_value));await openStocktake(id);}catch(e){toast(e.message);}};
+   $("cancelStocktake").onclick=async()=>{if(!confirm("إلغاء الجردية؟"))return;try{await api("/api/inventory/stocktakes/"+id+"/cancel",{method:"POST",body:"{}"});toast("تم إلغاء الجردية");await openInventory();}catch(e){toast(e.message);}};
+  }
+  $("backInventory").onclick=openInventory;
+ }catch(e){hostError(root,e.message);}
+}
+function reportTable(title,items,columns){
+ return '<section class="purchase-panel"><h2>'+escapeHtml(title)+'</h2>'+(items&&items.length?'<div class="table-scroll"><table class="module-table"><thead><tr>'+columns.map(c=>'<th>'+escapeHtml(c[1])+'</th>').join("")+'</tr></thead><tbody>'+items.map(row=>'<tr>'+columns.map(c=>'<td>'+escapeHtml(formatModuleValue(row[c[0]]))+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد بيانات في الفترة المحددة.</div>')+'</section>';
+}
+async function openReports(){
+ const root=$("moduleView"),today=new Date().toLocaleDateString("en-CA");
+ root.innerHTML='<h1 class="module-title">مركز التقارير</h1><section class="purchase-panel"><div class="form-grid"><label>من تاريخ<input id="reportFrom" type="date" value="'+today+'"></label><label>إلى تاريخ<input id="reportTo" type="date" value="'+today+'"></label><label>الصنف (اختياري)<select id="reportProduct"><option value="">كل الأصناف</option></select></label><label>التصنيف (اختياري)<select id="reportCategory"><option value="">كل التصنيفات</option></select></label><label>المخزن (اختياري)<select id="reportWarehouse"><option value="">كل المخازن</option></select></label></div><div class="report-actions"><button class="primary-btn" data-report="daily-sales">البيع اليومي</button><button class="primary-btn" data-report="product-sales">مبيعات صنف / تصنيف</button><button class="primary-btn" data-report="inventory">أرصدة وقيمة المخزون</button><button class="primary-btn" data-report="purchases">المشتريات</button><button class="primary-btn" data-report="customers">حركة العملاء</button><button class="primary-btn" data-report="suppliers">حركة الموردين</button><button class="primary-btn" data-report="accounting">القيود والحسابات</button><button class="primary-btn" data-report="delivery">التوصيل</button><button class="primary-btn" data-report="ecommerce">المتجر الإلكتروني</button><button class="primary-btn" data-report="hr-assets">الموظفون والأصول</button></div></section><div id="reportResults"><div class="empty-state">اختر التقرير المطلوب لعرض البيانات.</div></div>';
+ try{
+  const [products,categories,warehouses]=await Promise.all([api("/api/products?limit=200"),api("/api/categories"),api("/api/warehouses")]);
+  $("reportProduct").innerHTML+=[...products.items].map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name_ar)+' ('+escapeHtml(x.sku)+')</option>').join("");
+  $("reportCategory").innerHTML+=[...categories.items].map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name_ar)+'</option>').join("");
+  $("reportWarehouse").innerHTML+=[...warehouses.items].map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name)+'</option>').join("");
+ }catch(e){toast("تعذر تحميل فلاتر التقارير: "+e.message);}
+ const results=$("reportResults");
+ const range=()=>({from:$("reportFrom").value,to:$("reportTo").value});
+ const buttons=[...root.querySelectorAll("[data-report]")];
+ buttons.forEach(b=>b.onclick=async()=>{
+  const kind=b.dataset.report,{from,to}=range();
+  if(!from||!to||to<from)return toast("حدد فترة تاريخ صحيحة");
+  results.innerHTML='<div class="empty-state">جارٍ إعداد التقرير...</div>';
+  try{
+   let d,url,html="";
+   if(kind==="daily-sales"){
+    d=await api("/api/reports/daily-sales?date="+encodeURIComponent(to));const s=d.summary;
+    html='<div class="report-kpis"><div><small>عدد الفواتير</small><b>'+s.invoice_count+'</b></div><div><small>إجمالي قبل الخصم</small><b>'+money(s.subtotal)+' ج.م</b></div><div><small>الخصومات</small><b>'+money(s.discounts)+' ج.م</b></div><div><small>صافي المبيعات</small><b>'+money(s.net_sales)+' ج.م</b></div></div>'+reportTable("أكثر الأصناف مبيعًا",d.top_products,[["sku","الكود"],["name_ar","الصنف"],["quantity","الكمية"],["net_sales","صافي البيع"]])+reportTable("طرق الدفع",d.payments,[["payment_method","طريقة الدفع"],["transactions","عدد العمليات"],["amount","المبلغ"]]);
+   }else if(kind==="product-sales"){
+    const params=new URLSearchParams({from,to});if($("reportProduct").value)params.set("product_id",$("reportProduct").value);if($("reportCategory").value)params.set("category_id",$("reportCategory").value);
+    d=await api("/api/reports/product-sales?"+params.toString());html='<div class="report-kpis"><div><small>إجمالي الكميات</small><b>'+money(d.totals.sold_quantity)+'</b></div><div><small>صافي المبيعات</small><b>'+money(d.totals.net_sales)+' ج.م</b></div></div>'+reportTable("تفاصيل مبيعات الأصناف",d.items,[["sku","الكود"],["name_ar","الصنف"],["category_name","التصنيف"],["unit_code","الوحدة"],["sold_quantity","الكمية المباعة"],["gross_sales","إجمالي البيع"],["line_discounts","خصم السطور"],["net_sales","صافي البيع"],["invoice_count","عدد الفواتير"]]);
+   }else if(kind==="inventory"){
+    const params=new URLSearchParams();if($("reportWarehouse").value)params.set("warehouse_id",$("reportWarehouse").value);d=await api("/api/reports/inventory?"+params.toString());html='<div class="report-kpis"><div><small>إجمالي قيمة المخزون</small><b>'+money(d.totals.stock_value)+' ج.م</b></div><div><small>إجمالي الكميات</small><b>'+money(d.totals.quantity)+'</b></div></div>'+reportTable("تفاصيل المخزون",d.items,[["sku","الكود"],["name_ar","الصنف"],["category_name","التصنيف"],["warehouse_name","المخزن"],["quantity","الكمية"],["weighted_avg_cost","متوسط التكلفة"],["stock_value","قيمة المخزون"],["lots_count","عدد التشغيلات"]]);
+   }else{
+    const endpoints={"purchases":"purchases","customers":"customers","suppliers":"suppliers","accounting":"accounting","delivery":"delivery","ecommerce":"ecommerce","hr-assets":"hr-assets"};
+    d=await api("/api/reports/"+endpoints[kind]+"?from="+encodeURIComponent(from)+"&to="+encodeURIComponent(to));
+    if(kind==="purchases")html=reportTable("تقرير المشتريات",d.items,[["reference_no","رقم الطلب"],["supplier_name","المورد"],["created_at","التاريخ"],["status","الحالة"],["lines_count","عدد البنود"],["quantity","الكميات"],["order_value","القيمة"]]);
+    if(kind==="customers")html=reportTable("تقرير العملاء",d.items,[["customer_number","رقم العميل"],["name","العميل"],["phone","الهاتف"],["invoice_count","عدد الفواتير"],["sales_value","قيمة المشتريات"],["last_purchase","آخر شراء"]]);
+    if(kind==="suppliers")html=reportTable("تقرير الموردين",d.items,[["supplier_number","رقم المورد"],["name","المورد"],["phone","الهاتف"],["purchase_orders","أوامر الشراء"],["ordered_value","قيمة المشتريات"]]);
+    if(kind==="accounting")html='<div class="report-kpis"><div><small>إجمالي المدين</small><b>'+money(d.totals.debit)+' ج.م</b></div><div><small>إجمالي الدائن</small><b>'+money(d.totals.credit)+' ج.م</b></div></div>'+reportTable("حركة القيود",d.items,[["reference_no","المرجع"],["source_type","المصدر"],["entry_date","التاريخ"],["status","الحالة"],["total_debit","مدين"],["total_credit","دائن"]]);
+    if(kind==="delivery")html=reportTable("تقرير التوصيل",d.items,[["status","الحالة"],["orders","عدد الطلبات"],["delivery_fees","رسوم التوصيل"]]);
+    if(kind==="ecommerce")html=reportTable("تقرير المتجر الإلكتروني",d.items,[["status","الحالة"],["orders","عدد الطلبات"],["converted_orders","طلبات تحولت لفواتير"]]);
+    if(kind==="hr-assets")html=reportTable("حالة الموظفين",d.employees,[["status","الحالة"],["count","العدد"]])+reportTable("ورديات اليوم",d.today_shifts,[["status","الحالة"],["count","العدد"]])+reportTable("الأصول الثابتة",d.assets,[["status","الحالة"],["count","العدد"],["purchase_cost","تكلفة الشراء"]])+reportTable("صيانة اليوم",d.today_maintenance,[["status","الحالة"],["count","العدد"],["maintenance_cost","تكلفة الصيانة"]]);
+   }
+   results.innerHTML=html||'<div class="empty-state">لا توجد بيانات لهذا التقرير.</div>';
+  }catch(e){results.innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'</div>';}
+ });
+ const daily=buttons.find(b=>b.dataset.report==="daily-sales");if(daily)daily.click();
+}
 function openModule(id){
  document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.module===id));
  $("posView").classList.toggle("hidden",id!=="pos");$("posActions").classList.toggle("hidden",id!=="pos");$("moduleView").classList.toggle("hidden",id==="pos");
  const title=modules.find(x=>x[0]===id)?.[2]||"نقطة البيع";$("screenTitle").textContent=title;
  if(id==="pos")return;
  if(id==="catalog"){openCatalog();return;}
+ if(id==="inventory"){openInventory();return;}
+ if(id==="reports"){openReports();return;}
  if(id==="discounts"){openDiscountSettings();return;}
  if(id==="purchasing"){openPurchasing();return;}
  if(id==="customers"||id==="suppliers"){openBusinessMaster(id);return;}
