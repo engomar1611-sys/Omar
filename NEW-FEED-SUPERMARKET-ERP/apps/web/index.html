@@ -72,6 +72,8 @@
             <label>المبلغ المسحوب من الماكينة (ج.م)<input id="cardTerminalAmount" type="number" min="0.01" step="0.01"></label>
             <p class="muted">يجب أن يطابق المبلغ المسحوب مبلغ الفيزا المسجل في الفاتورة. لا يتم تخزين رقم البطاقة الكامل أو الرقم السري.</p>
           </div>
+          <label class="check-label split-cash-card"><input type="checkbox" id="splitCashCard"> تقسيم الدفع: جزء نقدي والباقي فيزا</label>
+          <div id="splitCashFields" class="hidden"><label>المبلغ النقدي (ج.م)<input id="cashSplitAmount" type="number" min="0.01" step="0.01"></label></div>
           <button class="complete-sale" id="completeSale">🛒 إتمام البيع</button>
         </section>
       </section>
