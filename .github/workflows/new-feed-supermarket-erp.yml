@@ -219,6 +219,19 @@ jobs:
               RAISE EXCEPTION 'Return refund tender audit and cash session linkage are missing';
             END IF;
 
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='loyalty_program_settings' AND column_name='egp_per_point'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sales' AND column_name='loyalty_points_redeemed'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='sales' AND column_name='loyalty_discount_amount'
+            ) THEN
+              RAISE EXCEPTION 'POS loyalty redemption schema is missing';
+            END IF;
+
             IF NOT EXISTS (SELECT 1 FROM roles WHERE code='HR_MANAGER')
               OR NOT EXISTS (
                 SELECT 1 FROM role_permissions rp
