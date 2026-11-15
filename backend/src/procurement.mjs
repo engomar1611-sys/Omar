@@ -35,6 +35,8 @@ export async function procurementRoutes(app,{db}){
    const h=await c.query("SELECT * FROM purchase_requests WHERE id=$1 FOR UPDATE",[req.params.id]);
    if(!h.rowCount||h.rows[0].status!=='APPROVED'||h.rows[0].purchase_order_id)throw Object.assign(new Error('يجب اعتماد الطلب ولم يسبق تحويله'),{code:'P0001'});
    const requested=await c.query('SELECT * FROM purchase_request_lines WHERE purchase_request_id=$1 ORDER BY line_no',[req.params.id]);
+   const quoteCount=await c.query('SELECT COUNT(*)::int AS count FROM supplier_quotes WHERE purchase_request_id=$1',[req.params.id]);
+   if(quoteCount.rows[0].count>0)throw Object.assign(new Error('تم تسجيل عروض أسعار لهذا الطلب؛ يجب ترسية عرض وتحويله من شاشة عروض الموردين'),{code:'P0001'});
    if(b.lines.length!==requested.rowCount)throw Object.assign(new Error('يجب تحديد تكلفة كل بند من الطلب مرة واحدة'),{code:'P0001'});
    const costs=new Map(b.lines.map(x=>[x.requestLineId,x.unitCost]));
    for(const l of requested.rows)if(!costs.has(l.id)||!Number.isFinite(Number(costs.get(l.id)))||Number(costs.get(l.id))<0)throw Object.assign(new Error('تكلفة بند غير صحيحة أو مفقودة'),{code:'P0001'});
