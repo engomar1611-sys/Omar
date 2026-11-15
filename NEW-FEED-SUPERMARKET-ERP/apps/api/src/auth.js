@@ -48,6 +48,7 @@ export async function authorizeModule(req,res,next){
     [/^\/delivery(\/|$)/,"delivery.manage"],
     [/^\/ecommerce(\/|$)/,"ecommerce.manage"],
     [/^\/accounting(\/|$)/,"accounting.manage"],
+    [/^\/(integrations\/order-channels)(\/|$)/,"ecommerce.manage"],
     [/^\/(users|roles|permissions)(\/|$)/,"users.manage"]
   ];
   const rule=rules.find(([pattern])=>pattern.test(req.path));
