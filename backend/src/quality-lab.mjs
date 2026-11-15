@@ -222,7 +222,7 @@ export async function qualityLabRoutes(app,{db}){
       FROM quality_sample_results r JOIN quality_specification_parameters p ON p.id=r.parameter_id
       WHERE r.sample_id=$1 ORDER BY p.parameter_code
      `,[req.params.id]);
-     const certNo=('COA-'+sample.rows[0].sample_no).slice(0,50);
+     const certNo='COA-'+sample.rows[0].id.slice(0,16).toUpperCase();
      certificate=await c.query(`
       INSERT INTO quality_certificates(certificate_no,sample_id,item_id,lot_no,issued_by,certificate_data)
       VALUES($1,$2,$3,$4,$5,$6::jsonb) RETURNING *
