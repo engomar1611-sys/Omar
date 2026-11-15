@@ -532,6 +532,15 @@ async function openReports(){
  const daily=buttons.find(b=>b.dataset.report==="daily-sales");if(daily)daily.click();
 }
 
+async function openEcommerce(){
+ const root=$("moduleView");
+ try{
+  const data=await api("/api/ecommerce/orders"),items=data.items||[];
+  const labels={new:"جديد",confirmed:"مؤكد",preparing:"قيد التجهيز",converted:"تم تحويله لفاتورة",cancelled:"ملغي"};
+  root.innerHTML='<h1 class="module-title">طلبات المتجر الإلكتروني</h1><section class="purchase-panel"><p class="muted">يتم تحديث حالات الطلبات بالتسلسل. التحويل إلى فاتورة بيع يتطلب ربطًا إضافيًا بدورة الصرف والدفع.</p><div class="table-scroll"><table class="module-table"><thead><tr><th>المرجع</th><th>العميل</th><th>الهاتف</th><th>العنوان</th><th>الحالة</th><th>التاريخ</th><th>الإجراء</th></tr></thead><tbody>'+items.map(x=>'<tr><td>'+escapeHtml(x.reference_no)+'</td><td>'+escapeHtml(x.customer_name)+'</td><td>'+escapeHtml(x.phone)+'</td><td>'+escapeHtml(x.address)+'</td><td>'+escapeHtml(labels[x.status]||x.status)+'</td><td>'+escapeHtml(formatModuleValue(x.created_at))+'</td><td>'+(x.status==="new"?'<button class="small-btn" data-ecom-status="confirmed" data-ecom-id="'+x.id+'">تأكيد</button><button class="small-btn danger-btn" data-ecom-status="cancelled" data-ecom-id="'+x.id+'">إلغاء</button>':x.status==="confirmed"?'<button class="small-btn" data-ecom-status="preparing" data-ecom-id="'+x.id+'">بدء التجهيز</button><button class="small-btn danger-btn" data-ecom-status="cancelled" data-ecom-id="'+x.id+'">إلغاء</button>':"—")+'</td></tr>').join("")+'</tbody></table></div></section>';
+  root.querySelectorAll("[data-ecom-status]").forEach(b=>b.onclick=async()=>{try{await api("/api/ecommerce/orders/"+b.dataset.ecomId+"/status",{method:"PATCH",body:JSON.stringify({status:b.dataset.ecomStatus})});toast("تم تحديث حالة الطلب");await openEcommerce();}catch(e){toast(e.message);}});
+ }catch(e){root.innerHTML='<h1 class="module-title">طلبات المتجر الإلكتروني</h1><div class="empty-state">'+escapeHtml(e.message)+'</div>';}
+}
 async function openExtendedModule(id){
  const root=$("moduleView");
  const today=new Date().toISOString().slice(0,10);
@@ -570,6 +579,13 @@ async function openExtendedModule(id){
    $("saveBankTransaction").onclick=async()=>{const bank_account_id=$("bankAccount").value,amount=Number($("bankAmount").value);if(!bank_account_id||!Number.isFinite(amount)||amount<=0)return toast("أكمل بيانات الحركة");try{await api("/api/bank/transactions",{method:"POST",body:JSON.stringify({bank_account_id,reference_no:$("bankReference").value.trim(),transaction_date:$("bankDate").value,direction:$("bankDirection").value,amount,description:$("bankDescription").value.trim()||null})});toast("تم تسجيل حركة البنك في سجل المتابعة");await openExtendedModule("bank");}catch(e){toast(e.message);}};
    return;
   }
+  if(id==="assets"){
+   const [assets,branches]=await Promise.all([api("/api/assets"),api("/api/branches")]);
+   root.innerHTML='<h1 class="module-title">الأصول الثابتة والصيانة</h1><section class="purchase-panel"><h2>تسجيل أصل جديد</h2><div class="form-grid"><label>كود الأصل<input id="assetCode"></label><label>اسم الأصل<input id="assetName"></label><label>التصنيف<input id="assetCategory"></label><label>الفرع<select id="assetBranch"><option value="">اختر الفرع</option>'+branches.items.map(x=>'<option value="'+x.id+'">'+escapeHtml(x.name)+'</option>').join("")+'</select></label><label>تاريخ الشراء<input id="assetPurchaseDate" type="date"></label><label>تكلفة الشراء<input id="assetCost" type="number" min="0" step="0.01" value="0"></label><label>الرقم المسلسل<input id="assetSerial"></label></div><button class="primary-btn" id="saveAsset">حفظ الأصل</button></section><section class="purchase-panel"><h2>سجل الأصول</h2><div id="assetRows">'+table([["asset_code","الكود"],["name","الأصل"],["category","التصنيف"],["branch_name","الفرع"],["purchase_date","تاريخ الشراء"],["purchase_cost","التكلفة"],["status","الحالة"]],assets.items)+'</div></section>';
+   $("saveAsset").onclick=async()=>{const body={asset_code:$("assetCode").value.trim(),name:$("assetName").value.trim(),branch_id:$("assetBranch").value,category:$("assetCategory").value.trim()||null,purchase_date:$("assetPurchaseDate").value||null,purchase_cost:Number($("assetCost").value),serial_number:$("assetSerial").value.trim()||null};if(!body.asset_code||!body.name||!body.branch_id||!Number.isFinite(body.purchase_cost)||body.purchase_cost<0)return toast("أكمل بيانات الأصل");try{await api("/api/assets",{method:"POST",body:JSON.stringify(body)});toast("تم تسجيل الأصل");await openExtendedModule("assets");}catch(e){toast(e.message);}};
+   $("assetRows").querySelectorAll("tbody tr").forEach((tr,i)=>{const row=assets.items[i];if(!row)return;const b=document.createElement("button");b.className="small-btn";b.textContent="طلب صيانة";b.onclick=async()=>{const description=prompt("وصف الصيانة المطلوبة");if(!description?.trim())return;try{await api("/api/assets/"+row.id+"/maintenance",{method:"POST",body:JSON.stringify({reference_no:"NF-MNT-"+Date.now(),description})});toast("تم تسجيل طلب الصيانة");}catch(e){toast(e.message);}};tr.lastElementChild?.append(b);});
+   return;
+  }
   if(id==="settings"){
    const [settings,taxes]=await Promise.all([api("/api/settings/company"),api("/api/tax-codes")]);
    const values=Object.fromEntries(settings.items.map(x=>[x.setting_key,typeof x.setting_value==="string"?x.setting_value:JSON.stringify(x.setting_value)]));
@@ -586,7 +602,8 @@ function openModule(id){
  $("posView").classList.toggle("hidden",id!=="pos");$("posActions").classList.toggle("hidden",id!=="pos");$("moduleView").classList.toggle("hidden",id==="pos");
  const title=modules.find(x=>x[0]===id)?.[2]||"نقطة البيع";$("screenTitle").textContent=title;
  if(id==="pos")return;
- if(["loyalty","cash","bank","hr","settings"].includes(id)){openExtendedModule(id);return;}
+ if(id==="ecommerce"){openEcommerce();return;}
+ if(["loyalty","cash","bank","hr","settings","assets"].includes(id)){openExtendedModule(id);return;}
  if(id==="catalog"){openCatalog();return;}
  if(id==="inventory"||id==="stocktake"){openInventory();return;}
  if(id==="reports"){openReports();return;}
