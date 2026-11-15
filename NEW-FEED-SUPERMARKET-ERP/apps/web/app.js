@@ -521,7 +521,7 @@ function bindReportExports(container){
     const blob=new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"});
     const url=URL.createObjectURL(blob),a=document.createElement("a");
     a.href=url;a.download="newfeed-report-"+new Date().toISOString().slice(0,10)+".csv";
-    document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);
+    document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),5000);
    }catch(e){toast(e.message);}
   };
  });
