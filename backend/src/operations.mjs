@@ -294,9 +294,16 @@ export async function operationsRoutes(app, { db }) {
       COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
         WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
           AND qh.status IN ('PENDING_QC','QUARANTINED')),0) AS quality_held_qty,
-      b.quantity-COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
-        WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
-          AND qh.status IN ('PENDING_QC','QUARANTINED')),0) AS available_quantity,
+      COALESCE((SELECT SUM(r.reserved_qty) FROM sales_order_reservations r
+        WHERE r.warehouse_id=b.warehouse_id AND r.item_id=b.item_id AND r.lot_no=b.lot_no
+          AND r.status='RESERVED'),0) AS sales_reserved_qty,
+      b.quantity
+        -COALESCE((SELECT SUM(qh.held_qty) FROM inventory_quality_holds qh
+          WHERE qh.warehouse_id=b.warehouse_id AND qh.item_id=b.item_id AND qh.lot_no=b.lot_no
+            AND qh.status IN ('PENDING_QC','QUARANTINED')),0)
+        -COALESCE((SELECT SUM(r.reserved_qty) FROM sales_order_reservations r
+          WHERE r.warehouse_id=b.warehouse_id AND r.item_id=b.item_id AND r.lot_no=b.lot_no
+            AND r.status='RESERVED'),0) AS available_quantity,
       i.code item_code,i.name_ar item_name,w.code warehouse_code
       FROM inventory_balances b JOIN items i ON i.id=b.item_id JOIN warehouses w ON w.id=b.warehouse_id
       WHERE ($1::uuid IS NULL OR b.warehouse_id=$1) ORDER BY i.code,b.lot_no`,[req.query?.warehouseId??null])).rows;}
