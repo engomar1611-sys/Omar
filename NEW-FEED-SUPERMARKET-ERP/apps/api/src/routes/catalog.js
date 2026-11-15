@@ -1,10 +1,13 @@
 import { Router } from "express";
 import { pool } from "../db.js";
+import { requirePermission } from "../auth.js";
 
 const router = Router();
 const text = (v, max = 240) => typeof v === "string" && v.trim() && v.trim().length <= max;
 const positive = (v) => Number.isFinite(Number(v)) && Number(v) > 0;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+router.get("/catalog/export-permission",requirePermission("catalog.export"),(_req,res)=>res.json({allowed:true}));
 
 router.get("/categories", async (_req, res, next) => {
   try {
