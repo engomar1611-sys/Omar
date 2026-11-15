@@ -2,7 +2,7 @@ import { Router } from "express";
 import { pool } from "../db.js";
 import { completeSaleHandler } from "./sales.js";
 import { calculateMonthlyDepreciation } from "../domain/assets.js";
-import { deliveryTransitions, canTransitionDeliveryStatus } from "../domain/delivery.js";
+import { canTransitionDeliveryStatus } from "../domain/delivery.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const txt=(v,n=180)=>typeof v==="string"&&v.trim().length>0&&v.trim().length<=n;
