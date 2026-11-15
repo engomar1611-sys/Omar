@@ -21,7 +21,7 @@ router.get("/supplier-invoices",permission,async(req,res,next)=>{try{
 router.post("/supplier-invoices",permission,async(req,res,next)=>{
  const {reference_no,supplier_invoice_no,supplier_id,purchase_order_id,invoice_date,due_date=null,lines}=req.body??{};
  if(!txt(reference_no,50)||!txt(supplier_invoice_no,100)||!uuid.test(supplier_id||"")||!uuid.test(purchase_order_id||"")||
-   !/^\\d{4}-\\d{2}-\\d{2}$/.test(invoice_date||"")||(due_date&&!/^\\d{4}-\\d{2}-\\d{2}$/.test(due_date))||
+   !/^\d{4}-\d{2}-\d{2}$/.test(invoice_date||"")||(due_date&&!/^\d{4}-\d{2}-\d{2}$/.test(due_date))||
    !Array.isArray(lines)||!lines.length||lines.length>500||lines.some(x=>!uuid.test(x.receipt_line_id||"")||!num(x.quantity)||!Number.isFinite(Number(x.unit_price))||Number(x.unit_price)<0))
   return res.status(400).json({error:"Invalid supplier invoice fields"});
  const c=await pool.connect();
@@ -97,7 +97,7 @@ router.get("/supplier-payments",permission,async(_req,res,next)=>{try{
 router.post("/supplier-payments",permission,async(req,res,next)=>{
  const {reference_no,supplier_id,payment_method_id,amount,payment_date,payment_reference=null,bank_id=null,transaction_reference=null,card_last_four=null,allocations}=req.body??{};
  if(!txt(reference_no,50)||!uuid.test(supplier_id||"")||!uuid.test(payment_method_id||"")||!num(amount)||
-   !/^\\d{4}-\\d{2}-\\d{2}$/.test(payment_date||"")||!Array.isArray(allocations)||!allocations.length||allocations.length>300||
+   !/^\d{4}-\d{2}-\d{2}$/.test(payment_date||"")||!Array.isArray(allocations)||!allocations.length||allocations.length>300||
    allocations.some(x=>!uuid.test(x.invoice_id||"")||!num(x.amount))||
    (bank_id&&!uuid.test(bank_id))||(transaction_reference&&!txt(transaction_reference,120))||
    (card_last_four!==null&&!/^[0-9]{4}$/.test(String(card_last_four))))
