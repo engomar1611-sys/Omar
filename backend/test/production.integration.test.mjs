@@ -247,6 +247,56 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(reversedIssue.rows[0].reversal_reason,'إلغاء التشغيل قبل البدء — اختبار');
     const restoredRaw=await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',[warehouse.id,raw.id,'LATE']);
     assert.equal(Number(restoredRaw.rows[0].quantity),13,'reversing an issue restores the exact lot quantity');
+
+    const legacyCostOrder=await app.inject({method:'POST',url:'/api/v1/production/orders',headers,payload:{
+      orderNo:code('POCOST'),feedProductId:product.id,formulationId,warehouseId:warehouse.id,plannedQty:2
+    }});
+    assert.equal(legacyCostOrder.statusCode,201,legacyCostOrder.body);
+    const legacyCostOrderId=legacyCostOrder.json().id;
+    const legacyCostRelease=await app.inject({method:'POST',url:'/api/v1/production/orders/'+legacyCostOrderId+'/release',headers,payload:{}});
+    assert.equal(legacyCostRelease.statusCode,200,legacyCostRelease.body);
+    const legacyCostIssue=await app.inject({method:'POST',url:'/api/v1/production/orders/'+legacyCostOrderId+'/issue',headers,payload:{issueQty:2}});
+    assert.equal(legacyCostIssue.statusCode,201,legacyCostIssue.body);
+    const legacyCostComplete=await app.inject({method:'POST',url:'/api/v1/production/orders/'+legacyCostOrderId+'/complete',headers,payload:{
+      actualQty:2,outputLotNo:code('LOT-COST')
+    }});
+    assert.equal(legacyCostComplete.statusCode,200,legacyCostComplete.body);
+    const legacyCostFirst=await app.inject({method:'POST',url:'/api/v1/production/orders/'+legacyCostOrderId+'/cost-components',headers,payload:{
+      componentCode:'LABOR',description:'أجور إضافية',amount:10
+    }});
+    assert.equal(legacyCostFirst.statusCode,201,legacyCostFirst.body);
+    assert.equal(Number(legacyCostFirst.json().totalCost),24);
+    assert.equal(Number(legacyCostFirst.json().unitCost),12);
+    const legacyCostSecond=await app.inject({method:'POST',url:'/api/v1/production/orders/'+legacyCostOrderId+'/cost-components',headers,payload:{
+      componentCode:'ENERGY',description:'طاقة إضافية',amount:2
+    }});
+    assert.equal(legacyCostSecond.statusCode,201,legacyCostSecond.body);
+    assert.equal(Number(legacyCostSecond.json().totalCost),26);
+    assert.equal(Number(legacyCostSecond.json().unitCost),13);
+    const legacyCostState=await pool.query(`SELECT p.total_material_cost,p.unit_production_cost,o.total_cost,o.unit_cost,b.quantity,b.average_unit_cost
+      FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id
+      JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no
+      WHERE p.id=$1`,[legacyCostOrderId]);
+    assert.equal(Number(legacyCostState.rows[0].total_material_cost),14,'incremental costs must not overwrite raw material cost');
+    assert.equal(Number(legacyCostState.rows[0].unit_production_cost),13);
+    assert.equal(Number(legacyCostState.rows[0].total_cost),26);
+    assert.equal(Number(legacyCostState.rows[0].unit_cost),13);
+    assert.equal(Number(legacyCostState.rows[0].average_unit_cost),13,'inventory unit cost must equal total production cost divided by output quantity');
+    const legacyCostJournals=await pool.query(`SELECT source_id,total_debit,total_credit FROM journal_entries
+      WHERE source_type='PRODUCTION_COST_COMPONENT' AND source_id IN
+        (SELECT id FROM production_cost_components WHERE production_order_id=$1) ORDER BY created_at`,[legacyCostOrderId]);
+    assert.equal(legacyCostJournals.rowCount,2);
+    assert.deepEqual(legacyCostJournals.rows.map(x=>[Number(x.total_debit),Number(x.total_credit)]),[[10,10],[2,2]]);
+    const mixedCostPosting=await app.inject({method:'POST',url:'/api/v1/production/orders/'+legacyCostOrderId+'/costs',headers,payload:{
+      components:[{componentCode:'LABOR',description:'تكلفة بعد الترحيل',amount:1}]
+    }});
+    assert.equal(mixedCostPosting.statusCode,409,'incremental and batch cost posting must not be mixed');
+    const incrementalCostDetails=await app.inject({method:'GET',url:'/api/v1/production/orders/'+legacyCostOrderId+'/details',headers});
+    assert.equal(incrementalCostDetails.statusCode,200,incrementalCostDetails.body);
+    assert.equal(incrementalCostDetails.json().costComponents.length,2);
+    assert.equal(incrementalCostDetails.json().journalEntries.filter(x=>x.source_type==='PRODUCTION_COST_COMPONENT').length,2,
+      'production order details must include every incremental cost journal');
+
     const customer = await app.inject({method:'POST',url:'/api/v1/customers',headers,payload:{code:code('CUS'),nameAr:'عميل اختبار تكامل',creditLimit:0}});
     assert.equal(customer.statusCode,201,customer.body);
     const invoice = await app.inject({method:'POST',url:'/api/v1/sales/invoices',headers,payload:{

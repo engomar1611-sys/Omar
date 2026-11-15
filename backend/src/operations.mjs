@@ -408,6 +408,8 @@ export async function operationsRoutes(app, { db }) {
           FROM journal_entries j LEFT JOIN journal_lines l ON l.journal_entry_id=j.id
           LEFT JOIN gl_accounts a ON a.id=l.account_id
           WHERE (j.source_id=$1 AND j.source_type IN ('PRODUCTION_COST','PRODUCTION_COMPLETION'))
+             OR (j.source_type='PRODUCTION_COST_COMPONENT' AND j.source_id IN
+               (SELECT id FROM production_cost_components WHERE production_order_id=$1))
              OR (j.source_type='PRODUCTION_MATERIAL_ISSUE' AND j.source_id=(SELECT id FROM production_material_issues WHERE production_order_id=$1))
              OR (j.source_type='PRODUCTION_MATERIAL_ISSUE_REVERSAL' AND j.source_id=(SELECT id FROM production_material_issues WHERE production_order_id=$1))
           GROUP BY j.id ORDER BY j.created_at`,[req.params.id]),
@@ -805,7 +807,11 @@ export async function operationsRoutes(app, { db }) {
         if(Math.abs(Number(h.rows[0].balance_qty)-Number(h.rows[0].quantity))>0.000001)
           throw Object.assign(new Error('تغير رصيد التشغيلة بعد الإتمام؛ طابق رصيد المخزون قبل رسملة التكاليف الإضافية'),{code:'P0001'});
         const existingJournal=await c.query("SELECT id FROM journal_entries WHERE source_type='PRODUCTION_COST' AND source_id=$1 FOR UPDATE",[req.params.id]);
-        if(existingJournal.rowCount)throw Object.assign(new Error('تم ترحيل تكلفة هذا الأمر محاسبياً ولا يمكن تعديلها مباشرة'),{code:'P0001'});
+        const incrementalJournals=await c.query(`SELECT je.id FROM journal_entries je
+          JOIN production_cost_components pc ON pc.id=je.source_id
+          WHERE pc.production_order_id=$1 AND je.source_type='PRODUCTION_COST_COMPONENT' LIMIT 1 FOR UPDATE OF je`,[req.params.id]);
+        if(existingJournal.rowCount||incrementalJournals.rowCount)
+          throw Object.assign(new Error('تم ترحيل تكاليف هذا الأمر محاسبياً؛ لا يمكن إعادة استبدالها دفعة واحدة'),{code:'P0001'});
         await c.query('DELETE FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
         for(const x of components)await c.query('INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by) VALUES($1,$2,$3,$4,$5)',[req.params.id,x.componentCode,x.description.trim(),x.amount,req.authUser.user_id]);
         const sums=await c.query('SELECT COALESCE(SUM(amount),0) extras FROM production_cost_components WHERE production_order_id=$1',[req.params.id]);
