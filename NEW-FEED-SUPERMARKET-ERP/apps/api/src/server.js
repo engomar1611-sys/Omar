@@ -18,7 +18,6 @@ import posRoutes from "./routes/pos.js";
 import usersRoutes from "./routes/users.js";
 import orderChannelRoutes from "./routes/order-channels.js";
 import inventoryRoutes from "./routes/inventory.js";
-import reportingRoutes from "./routes/reporting.js";
 import supplierAccountingRoutes from "./routes/supplier-accounting.js";
 import extendedOperationsRoutes from "./routes/extended-operations.js";
 
@@ -76,7 +75,6 @@ app.use("/api", posRoutes);
 app.use("/api", usersRoutes);
 app.use("/api", orderChannelRoutes);
 app.use("/api", inventoryRoutes);
-app.use("/api", reportingRoutes);
 app.use("/api", supplierAccountingRoutes);
 app.use("/api", extendedOperationsRoutes);
 app.use("/api", (_req, res) => res.status(404).json({ error: "API route not found" }));
