@@ -10,7 +10,7 @@ $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   throw 'شغّل الإعداد بصلاحية مسؤول النظام.'
 }
-if (-not (Test-Path $node) -or -not (Test-Path $service) -or -not (Test-Path (Join-Path $backend 'node_modules')) -or -not (Test-Path (Join-Path $backend 'src\server.js'))) {
+if (-not (Test-Path $node) -or -not (Test-Path $service) -or -not (Test-Path (Join-Path $backend 'node_modules')) -or -not (Test-Path (Join-Path $backend 'apps\api\src\server.js'))) {
   throw 'ملفات تثبيت NEW FEED SUPERMARKET ERP غير مكتملة.'
 }
 $serviceExists = [bool](Get-Service -Name 'NewFeedERP' -ErrorAction SilentlyContinue)
