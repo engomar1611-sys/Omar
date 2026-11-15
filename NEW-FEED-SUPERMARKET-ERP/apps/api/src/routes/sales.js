@@ -28,7 +28,7 @@ router.put("/sales/discount-settings",requirePermission("sales.discount.manage")
  }catch(e){await client.query("ROLLBACK");next(e);}finally{client.release();}
 });
 router.get("/sales/:id/payments",async(req,res,next)=>{if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid sale id"});try{const r=await pool.query(`SELECT sp.id,sp.amount,sp.reference_text,sp.transaction_reference,sp.card_last_four,sp.terminal_amount,sp.terminal_captured_at,pm.code payment_method_code,pm.name_ar payment_method_name,pb.name_ar bank_name_ar,pb.name_en bank_name_en FROM sale_payments sp JOIN payment_methods pm ON pm.id=sp.payment_method_id LEFT JOIN payment_banks pb ON pb.id=sp.bank_id WHERE sp.sale_id=$1 ORDER BY sp.id`,[req.params.id]);res.json({items:r.rows});}catch(e){next(e);}});
-router.get("/sales/:id",async(req,res,next)=>{
+router.get("/sales/:id/details",async(req,res,next)=>{
  if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid sale id"});
  try{
   const [sale,lines,payments]=await Promise.all([
