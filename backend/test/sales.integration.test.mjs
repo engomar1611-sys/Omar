@@ -489,6 +489,31 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.equal(agingAfterFutureReceipt.statusCode,200,agingAfterFutureReceipt.body);
     assert.equal(Number(agingAfterFutureReceipt.json()[0].outstanding),5);
 
+    const futureInvoiceCustomer = (await pool.query(
+      'INSERT INTO customers(code,name_ar,credit_limit) VALUES($1,$2,30) RETURNING id',
+      [code('FUT-INV-CUST'),'عميل فاتورة مستقبلية']
+    )).rows[0];
+    const futureDatedInvoice = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('FUT-DATED-1'),customerId:futureInvoiceCustomer.id,warehouseId:warehouse.id,
+        invoiceDate:futureDate,lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:20}]}
+    });
+    assert.equal(futureDatedInvoice.statusCode,201,futureDatedInvoice.body);
+    const currentInvoiceBeforeFutureExposure = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('CURR-DATED-1'),customerId:futureInvoiceCustomer.id,warehouseId:warehouse.id,
+        invoiceDate:today,lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:15}]}
+    });
+    assert.equal(currentInvoiceBeforeFutureExposure.statusCode,201,
+      'a future-dated invoice must not consume today credit exposure');
+    const futureInvoiceAfterCurrentExposure = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('FUT-DATED-2'),customerId:futureInvoiceCustomer.id,warehouseId:warehouse.id,
+        invoiceDate:futureDate,lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:10}]}
+    });
+    assert.equal(futureInvoiceAfterCurrentExposure.statusCode,409,
+      'credit exposure on a future invoice date must include invoices effective by that date');
+
   } finally {
     await app.close();
     await pool.end();
