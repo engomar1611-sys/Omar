@@ -58,6 +58,7 @@
           <div class="grand-total"><span>الإجمالي بعد الخصم</span><strong id="grandTotal">0.00 ج.م</strong></div>
           <div class="delivery-checkout">
             <label>العميل (اختياري)<select id="saleCustomer"><option value="">بيع نقدي بدون تسجيل عميل</option></select></label>
+            <div class="payment-row loyalty-pos-row"><label for="saleLoyaltyPoints">استبدال نقاط الولاء</label><input id="saleLoyaltyPoints" type="number" min="0" step="1" value="0" inputmode="numeric" disabled><b id="loyaltyDiscountValue">0.00 ج.م</b></div><div id="loyaltyPosHint" class="muted" aria-live="polite">اختر عميلًا لديه رصيد نقاط لتفعيل الاستبدال.</div>
             <label class="check-label"><input type="checkbox" id="saleIsDelivery"> الطلب توصيل دليفري</label>
             <div id="saleDeliveryFields" class="delivery-checkout-fields hidden">
               <label>عنوان التوصيل<input id="saleDeliveryAddress" maxlength="1000" placeholder="العنوان بالتفصيل"></label>
