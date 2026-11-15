@@ -128,7 +128,7 @@ router.post("/inventory/stocktakes/:id/post",async(req,res,next)=>{
     const avg=await client.query("SELECT COALESCE(SUM(quantity_on_hand*unit_cost)/NULLIF(SUM(quantity_on_hand),0),0) cost FROM stock_lots WHERE product_id=$1 AND warehouse_id=$2",[line.product_id,header.warehouse_id]);
     lotCost=Number(avg.rows[0].cost);
     const lot=await client.query(`INSERT INTO stock_lots(product_id,warehouse_id,lot_number,expiry_date,quantity_on_hand,unit_cost,is_saleable)
-      VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,[line.product_id,header.warehouse_id,line.lot_number||("STK-"+header.reference_no+"-"+line.sku),line.expiry_date,counted,lotCost,!line.expiry_date||line.expiry_date>=new Date().toISOString().slice(0,10)]);
+      VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`,[line.product_id,header.warehouse_id,line.lot_number||("STK-"+header.reference_no+"-"+line.sku).slice(0,100),line.expiry_date,counted,lotCost,!line.expiry_date||line.expiry_date>=new Date().toISOString().slice(0,10)]);
     await client.query(`INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_in,unit_cost,source_type,source_id,created_by)
       VALUES($1,'adjustment',$2,$3,$4,$5,$6,'stocktake',$7,$8)`,[header.reference_no,line.product_id,header.warehouse_id,lot.rows[0].id,counted,lotCost,header.id,req.user.id]);
    }
