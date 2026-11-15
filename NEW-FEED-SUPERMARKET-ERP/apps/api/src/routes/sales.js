@@ -17,7 +17,7 @@ router.post("/sales/complete",async(req,res,next)=>{
  const client=await pool.connect();
  try{
   await client.query("BEGIN");
-  if(idempotency_key){const prior=await client.query("SELECT * FROM sales WHERE idempotency_key=$1",[idempotency_key]);if(prior.rowCount){await client.query("ROLLBACK");return res.json({sale:prior.rows[0],duplicate:true});}}
+  if(idempotency_key){const prior=await client.query("SELECT * FROM sales WHERE idempotency_key=$1",[idempotency_key]);if(prior.rowCount){const existingDelivery=await client.query("SELECT * FROM delivery_orders WHERE sale_id=$1",[prior.rows[0].id]);await client.query("COMMIT");return res.json({sale:prior.rows[0],delivery:existingDelivery.rows[0]||null,duplicate:true});}}
   if(lines.some(x=>Number(x.discount_amount||0)>0)){
    const allowed=await client.query("SELECT 1 FROM user_roles ur JOIN role_permissions rp ON rp.role_id=ur.role_id JOIN permissions p ON p.id=rp.permission_id WHERE ur.user_id=$1 AND p.code='sales.discount' LIMIT 1",[req.user.id]);
    if(!allowed.rowCount)throw Object.assign(new Error("User is not authorized to apply sales discounts"),{statusCode:403});
