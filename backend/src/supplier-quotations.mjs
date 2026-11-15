@@ -178,7 +178,7 @@ export async function supplierQuotationRoutes(app, { db }) {
 
   app.post('/api/v1/purchase-requests/:id/convert-awarded-quote', auth(app, 'PURCHASE_REQUESTS.CONVERT'), async (request, reply) => {
     const body = request.body ?? {};
-    if (!textOk(body.orderNo) || (body.paymentDueDate && !validDate(body.paymentDueDate))) {
+    if (!textOk(body.orderNo) || (body.paymentDueDate != null && body.paymentDueDate !== '' && !validDate(body.paymentDueDate))) {
       return invalid(reply);
     }
     try {
@@ -214,7 +214,7 @@ export async function supplierQuotationRoutes(app, { db }) {
           VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *
         `, [
           body.orderNo.trim(), quote.supplier_id, requestHeader.rows[0].warehouse_id,
-          requestHeader.rows[0].needed_by, body.paymentDueDate ?? null,
+          requestHeader.rows[0].needed_by, body.paymentDueDate || null,
           body.notes ?? quote.notes ?? requestHeader.rows[0].reason, request.authUser.user_id
         ]);
         for (const line of lines.rows) {
