@@ -91,7 +91,9 @@ export async function commercialRoutes(app,{db}){
      let lineNo=0;
      for(const lot of lots.rows){
       if(remaining<=0.000001)break;
+      if(Number(lot.quantity)<=0.000001)continue;
       const q=Math.min(remaining,Number(lot.quantity)),cost=Number(lot.average_unit_cost);
+      if(q<=0.000001)continue;
       await c.query('UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[q,b.warehouseId,l.itemId,lot.lot_no]);
       await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
        VALUES($1,$2,$3,$4,'ADJUSTMENT_OUT',$5,$6,'SALES_INVOICE',$7,$8)`,
