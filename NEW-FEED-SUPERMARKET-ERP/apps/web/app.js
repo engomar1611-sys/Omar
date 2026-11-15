@@ -351,8 +351,8 @@ async function openPurchasing(){
        if(!bankQuery?.trim())return;
        const banks=await api("/api/payment-banks?q="+encodeURIComponent(bankQuery.trim()));
        if(!banks.items.length)return toast("لم يتم العثور على البنك");
-       const bankList=banks.items.map((b,i)=>(i+1)+") "+b.name_ar+" — "+b.name_en).join("\\n");
-       const bankIndex=Number(prompt("اختر البنك بكتابة رقمه:\\n"+bankList))-1;
+       const bankList=banks.items.map((b,i)=>(i+1)+") "+b.name_ar+" — "+b.name_en).join("\n");
+       const bankIndex=Number(prompt("اختر البنك بكتابة رقمه:\n"+bankList))-1;
        const bank=banks.items[bankIndex];if(!bank)return;
        payload.bank_id=bank.id;payload.transaction_reference=prompt("الرقم المرجعي لعملية الفيزا")?.trim();payload.card_last_four=prompt("آخر 4 أرقام من البطاقة")?.trim();
        if(!payload.transaction_reference||!/^\d{4}$/.test(payload.card_last_four||""))return toast("بيانات عملية البطاقة غير مكتملة");
