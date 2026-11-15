@@ -208,7 +208,7 @@ router.post("/sales/returns/:id/approve",async(req,res,next)=>{
 });
 
 router.post("/sales/returns/:id/refund",async(req,res,next)=>{
-  const {payment_method_id,amount,reference_text=null}=req.body??{};
+  const {payment_method_id,amount,reference_text=null,bank_id=null,transaction_reference=null,card_last_four=null}=req.body??{};
   const processed_by=req.user.id;
   if(!uuid.test(req.params.id)||!uuid.test(payment_method_id||"")||
      !Number.isFinite(Number(amount))||Number(amount)<=0||(processed_by&&!uuid.test(processed_by)))
@@ -222,18 +222,41 @@ router.post("/sales/returns/:id/refund",async(req,res,next)=>{
     const total=await client.query("SELECT COALESCE(SUM(refund_amount+tax_refund_amount),0) amount FROM sale_return_lines WHERE return_id=$1",[req.params.id]);
     if(Math.abs(Number(total.rows[0].amount)-Number(amount))>0.01)
       throw Object.assign(new Error("Refund amount must equal the approved return amount"),{statusCode:400});
-    const method=await client.query("SELECT id,account_id FROM payment_methods WHERE id=$1 AND is_active=true",[payment_method_id]);
+    const method=await client.query("SELECT id,account_id,code,name_ar FROM payment_methods WHERE id=$1 AND is_active=true",[payment_method_id]);
     if(!method.rowCount||!method.rows[0].account_id)throw Object.assign(new Error("Active payment method has no ledger account mapping"),{statusCode:400});
+    const isCard=/card|visa|بطاقة|فيزا/i.test(String(method.rows[0].code||"")+" "+String(method.rows[0].name_ar||""));
+    if(isCard){
+      if(!uuid.test(bank_id||"")||!text(transaction_reference,100)||!/^[0-9]{4}$/.test(String(card_last_four||""))||!text(reference_text,120))
+        throw Object.assign(new Error("Card refunds require bank, terminal refund reference, last 4 card digits and receipt reference"),{statusCode:400});
+      const bank=await client.query("SELECT id FROM payment_banks WHERE id=$1 AND is_active=true",[bank_id]);
+      if(!bank.rowCount)throw Object.assign(new Error("Selected card refund bank is inactive"),{statusCode:400});
+    }
     const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
     if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
     const payable=await client.query("SELECT account_id FROM system_account_mappings WHERE mapping_key='refund_payable'");
     if(!payable.rowCount)throw Object.assign(new Error("Refund payable mapping is missing; apply migration 012"),{statusCode:409});
+    let cashSessionId=null;
+    if(String(method.rows[0].code||"").toUpperCase()==="CASH"){
+      const session=await client.query("SELECT * FROM cash_sessions WHERE cashier_id=$1 AND status='open' ORDER BY opened_at DESC LIMIT 1 FOR UPDATE",[processed_by]);
+      if(!session.rowCount)throw Object.assign(new Error("Open a cash session before paying a cash refund"),{statusCode:409});
+      const cashBalance=await client.query(`SELECT $2::numeric
+        +COALESCE((SELECT SUM(CASE WHEN direction='in' THEN amount ELSE -amount END) FROM cash_transactions WHERE cash_session_id=$1),0)
+        +COALESCE((SELECT SUM(sp.amount) FROM sale_payments sp JOIN sales sa ON sa.id=sp.sale_id WHERE sp.cash_session_id=$1 AND sa.status='completed'),0) balance`,
+        [session.rows[0].id,session.rows[0].opening_float]);
+      if(Number(cashBalance.rows[0].balance)+0.000001<Number(amount))
+        throw Object.assign(new Error("Cash session does not have enough available cash for this refund"),{statusCode:409});
+      cashSessionId=session.rows[0].id;
+    }
     const je=await client.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'sale_return_refund',$2,CURRENT_DATE,'posted') RETURNING id",["JER-"+req.params.id,req.params.id]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0)",[je.rows[0].id,payable.rows[0].account_id,amount]);
     await client.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,0,$3)",[je.rows[0].id,method.rows[0].account_id,amount]);
     await client.query(
-      "INSERT INTO sale_return_refunds(return_id,payment_method_id,amount,reference_text,processed_by) VALUES($1,$2,$3,$4,$5)",
-      [req.params.id,payment_method_id,amount,reference_text,processed_by]);
+      "INSERT INTO sale_return_refunds(return_id,payment_method_id,amount,reference_text,processed_by,cash_session_id,bank_id,transaction_reference,card_last_four) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [req.params.id,payment_method_id,amount,reference_text,processed_by,cashSessionId,isCard?bank_id:null,isCard?transaction_reference.trim():null,isCard?card_last_four:null]);
+    if(cashSessionId){
+      await client.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,description,created_by) VALUES($1,$2,$3,'out',$4,'sale_return_refund',$5,$6)",
+        [ (await client.query("SELECT cashbox_id FROM cash_sessions WHERE id=$1",[cashSessionId])).rows[0].cashbox_id,cashSessionId,"RET-"+ret.rows[0].reference_no,amount,"Cash refund for sales return "+ret.rows[0].reference_no,processed_by ]);
+    }
     await client.query("UPDATE sale_returns SET status='refunded' WHERE id=$1",[req.params.id]);
     await client.query("COMMIT");
     res.json({return_id:req.params.id,status:"refunded",amount:Number(amount),journal_entry_id:je.rows[0].id});
