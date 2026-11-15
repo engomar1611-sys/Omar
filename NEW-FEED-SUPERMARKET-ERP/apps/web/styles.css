@@ -33,3 +33,5 @@
 @media(max-width:650px){.report-actions button{flex:1 1 100%}.report-kpis{grid-template-columns:1fr 1fr}.module-toolbar input{max-width:100%;width:100%}}
 
 .card-payment-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0;padding:14px;border:1px solid #b9cde0;border-radius:10px;background:#f5f9fd}.card-payment-fields label{display:flex;flex-direction:column;gap:5px;font-size:13px}.card-payment-fields input,.card-payment-fields select{min-width:0;padding:10px;border:1px solid #cbd5e1;border-radius:7px;background:#fff}.card-payment-fields p{grid-column:1/-1;margin:0}@media(max-width:650px){.card-payment-fields{grid-template-columns:1fr}}
+
+.split-cash-card{display:flex;align-items:center;gap:8px;margin:8px 0}.split-cash-card input{width:auto}#splitCashFields{margin:8px 0}#splitCashFields label{display:flex;flex-direction:column;gap:5px;max-width:260px}
