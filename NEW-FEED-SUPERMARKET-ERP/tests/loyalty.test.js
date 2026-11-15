@@ -16,13 +16,13 @@ test("redemption requires an explicitly enabled conversion rate",()=>{
 });
 
 test("partial returns restore points cumulatively without over-restoring",()=>{
-  const first=calculateReturnPointsRestoration({pointsRedeemed:100,netMerchandiseBase:180,cumulativeApprovedRefund:45,pointsAlreadyRestored:0});
-  const second=calculateReturnPointsRestoration({pointsRedeemed:100,netMerchandiseBase:180,cumulativeApprovedRefund:135,pointsAlreadyRestored:first});
-  const last=calculateReturnPointsRestoration({pointsRedeemed:100,netMerchandiseBase:180,cumulativeApprovedRefund:180,pointsAlreadyRestored:first+second});
+  const first=calculateReturnPointsRestoration({pointsRedeemed:100,originalMerchandiseBase:200,cumulativeReturnedBase:50,pointsAlreadyRestored:0});
+  const second=calculateReturnPointsRestoration({pointsRedeemed:100,originalMerchandiseBase:200,cumulativeReturnedBase:150,pointsAlreadyRestored:first});
+  const last=calculateReturnPointsRestoration({pointsRedeemed:100,originalMerchandiseBase:200,cumulativeReturnedBase:200,pointsAlreadyRestored:first+second});
   assert.deepEqual([first,second,last],[25,50,25]);
 });
 
 test("return restoration never exceeds the original redeemed points",()=>{
-  assert.equal(calculateReturnPointsRestoration({pointsRedeemed:10,netMerchandiseBase:100,cumulativeApprovedRefund:200,pointsAlreadyRestored:10}),0);
-  assert.throws(()=>calculateReturnPointsRestoration({pointsRedeemed:10,netMerchandiseBase:100,cumulativeApprovedRefund:50,pointsAlreadyRestored:11}),/exceed/);
+  assert.equal(calculateReturnPointsRestoration({pointsRedeemed:10,originalMerchandiseBase:100,cumulativeReturnedBase:200,pointsAlreadyRestored:10}),0);
+  assert.throws(()=>calculateReturnPointsRestoration({pointsRedeemed:10,originalMerchandiseBase:100,cumulativeReturnedBase:50,pointsAlreadyRestored:11}),/exceed/);
 });
