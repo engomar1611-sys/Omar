@@ -108,6 +108,23 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     const rawBalances = await pool.query('SELECT lot_no,quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 ORDER BY lot_no',[warehouse.id,raw.id]);
     assert.deepEqual(rawBalances.rows.map(x=>[x.lot_no,Number(x.quantity)]),[['EARLY',0],['LATE',13]]);
 
+    const productionOutputLot = (await pool.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[orderId])).rows[0].lot_no;
+    await pool.query('UPDATE inventory_balances SET quantity=quantity-1 WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',
+      [warehouse.id,finished.id,productionOutputLot]);
+    const costsAfterStockDrift = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/costs',headers,payload:{
+      components:[{componentCode:'LABOR',description:'أجور اختبار',amount:10}]
+    }});
+    assert.equal(costsAfterStockDrift.statusCode,409,
+      'additional production cost must not be capitalized against a lot whose quantity has changed');
+    const noPrematureCostPosting = await pool.query(
+      "SELECT (SELECT COUNT(*) FROM production_cost_components WHERE production_order_id=$1) components, (SELECT COUNT(*) FROM journal_entries WHERE source_type='PRODUCTION_COST' AND source_id=$1) journals",
+      [orderId]
+    );
+    assert.equal(Number(noPrematureCostPosting.rows[0].components),0);
+    assert.equal(Number(noPrematureCostPosting.rows[0].journals),0);
+    await pool.query('UPDATE inventory_balances SET quantity=quantity+1 WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',
+      [warehouse.id,finished.id,productionOutputLot]);
+
     const costs = await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/costs',headers,payload:{
       components:[{componentCode:'LABOR',description:'أجور اختبار',amount:10},{componentCode:'ENERGY',description:'طاقة اختبار',amount:2},{componentCode:'OVERHEAD',description:'صناعي غير مباشر',amount:3},{componentCode:'PACKAGING',description:'تعبئة',amount:4},{componentCode:'WASTE',description:'هالك',amount:1}]
     }});
