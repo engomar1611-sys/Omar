@@ -29,6 +29,53 @@ router.put("/sales/discount-settings",requirePermission("sales.discount.manage")
 });
 router.get("/sales/:id/payments",async(req,res,next)=>{if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid sale id"});try{const r=await pool.query(`SELECT sp.id,sp.amount,sp.reference_text,sp.transaction_reference,sp.card_last_four,sp.terminal_amount,sp.terminal_captured_at,pm.code payment_method_code,pm.name_ar payment_method_name,pb.name_ar bank_name_ar,pb.name_en bank_name_en FROM sale_payments sp JOIN payment_methods pm ON pm.id=sp.payment_method_id LEFT JOIN payment_banks pb ON pb.id=sp.bank_id WHERE sp.sale_id=$1 ORDER BY sp.id`,[req.params.id]);res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/sales",async(_q,res,next)=>{try{const r=await pool.query("SELECT s.*,c.name customer_name,u.display_name cashier_name FROM sales s LEFT JOIN customers c ON c.id=s.customer_id JOIN users u ON u.id=s.cashier_id ORDER BY s.created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
+
+router.post("/sales/:id/void",requirePermission("sales.void.invoice"),async(req,res,next)=>{
+ const {reason,refund_confirmed=false}=req.body??{};
+ if(!uuid.test(req.params.id)||typeof reason!=="string"||!reason.trim()||reason.trim().length>1000)
+  return res.status(400).json({error:"A valid cancellation reason is required"});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const sale=await client.query("SELECT * FROM sales WHERE id=$1 FOR UPDATE",[req.params.id]);
+  if(!sale.rowCount||sale.rows[0].status!=="completed")
+   throw Object.assign(new Error("Only completed invoices can be cancelled"),{statusCode:409});
+  const priorReturns=await client.query("SELECT 1 FROM sale_returns WHERE sale_id=$1 AND status NOT IN ('rejected') LIMIT 1",[req.params.id]);
+  if(priorReturns.rowCount)throw Object.assign(new Error("Invoice has a return in progress or approved; use the return workflow"),{statusCode:409});
+  const card=await client.query(`SELECT 1 FROM sale_payments sp JOIN payment_methods pm ON pm.id=sp.payment_method_id
+    WHERE sp.sale_id=$1 AND (pm.code ILIKE '%card%' OR pm.code ILIKE '%visa%' OR pm.name_ar ILIKE '%بطاقة%' OR pm.name_ar ILIKE '%فيزا%') LIMIT 1`,[req.params.id]);
+  if(card.rowCount)throw Object.assign(new Error("Card-paid invoices must be refunded through the payment terminal and controlled return workflow; direct void is blocked"),{statusCode:409});
+  if(refund_confirmed!==true)throw Object.assign(new Error("Confirm that the cash refund has actually been paid before voiding this invoice"),{statusCode:400});
+  const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
+  if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
+  const original=await client.query("SELECT id FROM journal_entries WHERE source_type='sale' AND source_id=$1 AND status='posted' FOR UPDATE",[req.params.id]);
+  if(!original.rowCount)throw Object.assign(new Error("Original posted accounting entry was not found"),{statusCode:409});
+  const movements=await client.query(`SELECT lot_id,product_id,warehouse_id,unit_cost,SUM(quantity_out)::numeric quantity
+    FROM stock_movements WHERE source_type='sale' AND source_id=$1 AND movement_type='sale_issue'
+    GROUP BY lot_id,product_id,warehouse_id,unit_cost ORDER BY product_id,lot_id`,[req.params.id]);
+  for(const m of movements.rows){
+    if(!m.lot_id)throw Object.assign(new Error("Original stock lot is missing; manual inventory review is required"),{statusCode:409});
+    await client.query("UPDATE stock_lots SET quantity_on_hand=quantity_on_hand+$2 WHERE id=$1",[m.lot_id,m.quantity]);
+    await client.query(`INSERT INTO stock_movements(reference_no,movement_type,product_id,warehouse_id,lot_id,quantity_in,unit_cost,source_type,source_id,created_by)
+      VALUES($1,'adjustment',$2,$3,$4,$5,$6,'sale_void',$7,$8)`,
+      ["VOID-"+sale.rows[0].reference_no,m.product_id,m.warehouse_id,m.lot_id,m.quantity,m.unit_cost,req.params.id,req.user.id]);
+  }
+  const reversal=await client.query(`INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status)
+    VALUES($1,'sale_void',$2,CURRENT_DATE,'posted') RETURNING id`,["VOID-JE-"+sale.rows[0].reference_no,req.params.id]);
+  await client.query(`INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit)
+    SELECT $1,account_id,credit,debit FROM journal_lines WHERE journal_entry_id=$2`,[reversal.rows[0].id,original.rows[0].id]);
+  await client.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
+  await client.query("UPDATE sales SET status='voided' WHERE id=$1",[req.params.id]);
+  await client.query("UPDATE delivery_orders SET status='cancelled',updated_at=now() WHERE sale_id=$1 AND status NOT IN ('delivered','cancelled')",[req.params.id]);
+  await client.query("COMMIT");
+  res.json({sale_id:req.params.id,status:"voided",restored_lots:movements.rowCount,reversal_journal_id:reversal.rows[0].id,reason:reason.trim()});
+ }catch(e){
+  await client.query("ROLLBACK");
+  if(e.statusCode)return res.status(e.statusCode).json({error:e.message});
+  next(e);
+ }finally{client.release();}
+});
+
 router.post("/sales/complete",async(req,res,next)=>{
  const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null,delivery=null}=req.body??{};
  const cashier_id=req.user.id;
