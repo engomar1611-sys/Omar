@@ -10,7 +10,7 @@ router.get("/reports/daily-sales",async(req,res,next)=>{
  if(!dateRe.test(date))return res.status(400).json({error:"Invalid date"});
  try{
   const totals=await pool.query(`SELECT COUNT(*)::int invoice_count,COALESCE(SUM(subtotal),0) subtotal,
-   COALESCE(SUM(discount_total),0) discounts,COALESCE(SUM(delivery_fee),0) delivery_fees,
+   COALESCE(SUM(discount_total),0) discounts,COALESCE(SUM(tax_total),0) taxes,COALESCE(SUM(delivery_fee),0) delivery_fees,
    COALESCE(SUM(grand_total),0) net_sales
    FROM sales WHERE status='completed' AND COALESCE(completed_at,created_at)::date=$1::date`,[date]);
   const payments=await pool.query(`SELECT pm.name_ar payment_method,COUNT(*)::int transactions,COALESCE(SUM(sp.amount),0) amount
@@ -44,6 +44,21 @@ router.get("/reports/product-sales",async(req,res,next)=>{
  }catch(e){next(e);}
 });
 
+router.get("/reports/category-sales",async(req,res,next)=>{
+ const range=dates(req,res);if(!range)return;
+ const category=req.query.category_id;if(category&&!uuid.test(category))return res.status(400).json({error:"Invalid category_id"});
+ try{
+  const r=await pool.query(`SELECT c.id category_id,c.code category_code,c.name_ar category_name,
+   COALESCE(SUM(sl.quantity),0) sold_quantity,COALESCE(SUM(sl.line_total),0) line_net_sales,
+   COUNT(DISTINCT s.id)::int invoice_count
+   FROM categories c JOIN products p ON p.category_id=c.id
+   JOIN sale_lines sl ON sl.product_id=p.id JOIN sales s ON s.id=sl.sale_id
+   WHERE s.status='completed' AND COALESCE(s.completed_at,s.created_at)::date BETWEEN $1::date AND $2::date
+   AND ($3::uuid IS NULL OR c.id=$3)
+   GROUP BY c.id,c.code,c.name_ar ORDER BY line_net_sales DESC`,[range.from,range.to,category||null]);
+  res.json({from:range.from,to:range.to,items:r.rows});
+ }catch(e){next(e);}
+});
 router.get("/reports/inventory",async(req,res,next)=>{
  const warehouse=req.query.warehouse_id;
  if(warehouse&&!uuid.test(warehouse))return res.status(400).json({error:"Invalid warehouse_id"});
