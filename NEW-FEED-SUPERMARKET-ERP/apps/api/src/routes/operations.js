@@ -96,7 +96,38 @@ router.post("/assets/:id/maintenance",async(req,res,next)=>{const {reference_no,
 // Delivery and ecommerce intake
 router.get("/delivery/orders",async(_q,res,next)=>{try{const r=await pool.query("SELECT d.*,c.name customer_name,c.phone customer_phone,e.full_name courier_name,s.reference_no sale_reference,s.grand_total sale_total FROM delivery_orders d JOIN customers c ON c.id=d.customer_id LEFT JOIN employees e ON e.id=d.courier_employee_id LEFT JOIN sales s ON s.id=d.sale_id ORDER BY d.created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/delivery/orders",async(req,res,next)=>{const {reference_no,customer_id,address,sale_id=null,delivery_fee=0,source_channel="pos",external_order_reference=null}=req.body??{};const channels=["pos","phone","talabat","elmenus","breadfast","mrsool","generic"];if(!txt(reference_no,50)||!uuid.test(customer_id||"")||!txt(address,1000)||!num(delivery_fee)||!channels.includes(source_channel)||(sale_id&&!uuid.test(sale_id))||(external_order_reference&&!txt(external_order_reference,160)))return fail(res,"Invalid delivery order");try{const r=await pool.query("INSERT INTO delivery_orders(reference_no,customer_id,address,sale_id,delivery_fee,source_channel,external_order_reference) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[reference_no,customer_id,address,sale_id,delivery_fee,source_channel,external_order_reference]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
-router.patch("/delivery/orders/:id/status",async(req,res,next)=>{const {status,courier_employee_id=null}=req.body??{};const allowed=["pending","assigned","out_for_delivery","delivered","failed","cancelled"];if(!uuid.test(req.params.id)||!allowed.includes(status)||(courier_employee_id&&!uuid.test(courier_employee_id)))return fail(res,"Invalid delivery status");try{const r=await pool.query("UPDATE delivery_orders SET status=$2,courier_employee_id=COALESCE($3,courier_employee_id),delivered_at=CASE WHEN $2='delivered' THEN now() ELSE delivered_at END WHERE id=$1 RETURNING *",[req.params.id,status,courier_employee_id]);if(!r.rowCount)return res.status(404).json({error:"Delivery order not found"});res.json(r.rows[0]);}catch(e){next(e);}});
+router.patch("/delivery/orders/:id/status",async(req,res,next)=>{
+ const {status,courier_employee_id=null,note=null,failure_reason=null,cancelled_reason=null}=req.body??{};
+ const allowed=["assigned","out_for_delivery","delivered","failed","cancelled"];
+ if(!uuid.test(req.params.id)||!allowed.includes(status)||(courier_employee_id&&!uuid.test(courier_employee_id))||(note!==null&&!txt(note,1000)))return fail(res,"Invalid delivery status update");
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const order=await c.query("SELECT * FROM delivery_orders WHERE id=$1 FOR UPDATE",[req.params.id]);
+  if(!order.rowCount)throw Object.assign(new Error("Delivery order not found"),{statusCode:404});
+  const current=order.rows[0].status;
+  const transitions={pending:["assigned","cancelled","failed"],assigned:["out_for_delivery","cancelled","failed"],out_for_delivery:["delivered","failed"],failed:["assigned","cancelled"]};
+  if(!(transitions[current]||[]).includes(status))throw Object.assign(new Error("Delivery status transition is not allowed from "+current+" to "+status),{statusCode:409});
+  let courier=order.rows[0].courier_employee_id;
+  if(courier_employee_id)courier=courier_employee_id;
+  if(status==="assigned"){
+    if(!courier)throw Object.assign(new Error("Assign an active courier before marking the order assigned"),{statusCode:400});
+    const employee=await c.query("SELECT id FROM employees WHERE id=$1 AND employment_status='active' FOR SHARE",[courier]);
+    if(!employee.rowCount)throw Object.assign(new Error("Courier employee is inactive or unavailable"),{statusCode:400});
+  }
+  if(status==="out_for_delivery"&&!courier)throw Object.assign(new Error("A courier must be assigned before dispatch"),{statusCode:409});
+  if(status==="delivered"&&current!=="out_for_delivery")throw Object.assign(new Error("Only dispatched orders can be marked delivered"),{statusCode:409});
+  if(status==="failed"&&!txt(failure_reason,1000))throw Object.assign(new Error("A failure reason is required"),{statusCode:400});
+  if(status==="cancelled"&&!txt(cancelled_reason||note,1000))throw Object.assign(new Error("A cancellation reason is required"),{statusCode:400});
+  const updated=await c.query("UPDATE delivery_orders SET status=$2,courier_employee_id=$3,delivered_at=CASE WHEN $2='delivered' THEN now() ELSE delivered_at END,status_updated_by=$4,status_updated_at=now(),failure_reason=CASE WHEN $2='failed' THEN $5 ELSE NULL END,cancelled_reason=CASE WHEN $2='cancelled' THEN $6 ELSE NULL END WHERE id=$1 RETURNING *",
+    [req.params.id,status,courier,req.user.id,failure_reason||null,cancelled_reason||note||null]);
+  await c.query("INSERT INTO delivery_order_status_history(delivery_order_id,previous_status,new_status,courier_employee_id,note,changed_by) VALUES($1,$2,$3,$4,$5,$6)",
+    [req.params.id,current,status,courier,note||failure_reason||cancelled_reason||null,req.user.id]);
+  await c.query("COMMIT");
+  res.json(updated.rows[0]);
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
+router.get("/delivery/orders/:id/history",async(req,res,next)=>{if(!uuid.test(req.params.id))return fail(res,"Invalid delivery order id");try{const r=await pool.query("SELECT h.*,u.display_name changed_by_name,e.full_name courier_name FROM delivery_order_status_history h LEFT JOIN users u ON u.id=h.changed_by LEFT JOIN employees e ON e.id=h.courier_employee_id WHERE h.delivery_order_id=$1 ORDER BY h.changed_at DESC",[req.params.id]);res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/ecommerce/orders",async(req,res,next)=>{const {reference_no,customer_id=null,customer_name,phone,address,lines}=req.body??{};if(!txt(reference_no,50)||!txt(customer_name)||!txt(phone,40)||!txt(address,1000)||(customer_id&&!uuid.test(customer_id))||!Array.isArray(lines)||!lines.length||lines.length>100||lines.some(x=>!uuid.test(x.product_id||"")||!num(x.quantity,0.000001)))return fail(res,"Invalid ecommerce order");const c=await pool.connect();try{await c.query("BEGIN");const o=await c.query("INSERT INTO ecommerce_orders(reference_no,customer_id,customer_name,phone,address) VALUES($1,$2,$3,$4,$5) RETURNING *",[reference_no,customer_id,customer_name,phone,address]);for(const l of lines)await c.query("INSERT INTO ecommerce_order_lines(order_id,product_id,quantity) VALUES($1,$2,$3)",[o.rows[0].id,l.product_id,l.quantity]);await c.query("COMMIT");res.status(201).json({order:o.rows[0],lines:lines.length});}catch(e){await c.query("ROLLBACK");next(e);}finally{c.release();}});
 router.get("/ecommerce/orders",async(_q,res,next)=>{try{const r=await pool.query("SELECT * FROM ecommerce_orders ORDER BY created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/ecommerce/orders/:id",async(req,res,next)=>{if(!uuid.test(req.params.id))return fail(res,"Invalid ecommerce order id");try{const order=await pool.query("SELECT * FROM ecommerce_orders WHERE id=$1",[req.params.id]);if(!order.rowCount)return res.status(404).json({error:"Ecommerce order not found"});const lines=await pool.query("SELECT el.*,p.sku,p.name_ar,u.code unit_code FROM ecommerce_order_lines el JOIN products p ON p.id=el.product_id JOIN units u ON u.id=p.base_unit_id WHERE el.order_id=$1 ORDER BY p.name_ar",[req.params.id]);res.json({order:order.rows[0],lines:lines.rows});}catch(e){next(e);}});
