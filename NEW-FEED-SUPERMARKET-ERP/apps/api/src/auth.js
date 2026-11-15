@@ -37,7 +37,7 @@ export async function authorizeModule(req,res,next){
   const rules=[
     [/^\/product-imports\/[^/]+\/approve$/,"catalog.import.approve"],
     [/^\/product-imports(\/|$)/,method==="POST"?"catalog.import":"catalog.view"],
-    [/^\/products\/[^/]+\/(prices|internal-barcode|barcodes)$/,"catalog.edit"],
+    [/^\/products\/[^/]+\/(prices|internal-barcode|barcodes)$/,method==="GET"?"catalog.view":"catalog.edit"],
     [/^\/products\/[^/]+\/label$/,"catalog.view"],
     [/^\/products\/[^/]+$/,method==="PATCH"?"catalog.edit":"catalog.view"],
     [/^\/products$/,method==="POST"?"catalog.create":"catalog.view"],
