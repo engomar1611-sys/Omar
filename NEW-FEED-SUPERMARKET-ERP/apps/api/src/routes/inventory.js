@@ -47,7 +47,8 @@ router.get("/inventory/stocktakes/:id",async(req,res,next)=>{
  try{
   const h=await pool.query(`SELECT st.*,w.name warehouse_name FROM stocktakes st JOIN warehouses w ON w.id=st.warehouse_id WHERE st.id=$1`,[req.params.id]);
   if(!h.rowCount)return fail(res,"الجرد غير موجود",404);
-  const lines=await pool.query(`SELECT sl.*,p.sku,p.name_ar,p.tracks_expiry,u.code unit_code
+  const lines=await pool.query(`SELECT sl.*,p.sku,p.name_ar,p.tracks_expiry,u.code unit_code,
+    COALESCE((SELECT json_agg(pb.barcode ORDER BY pb.barcode) FROM product_barcodes pb WHERE pb.product_id=p.id),'[]'::json) barcodes
    FROM stocktake_lines sl JOIN products p ON p.id=sl.product_id JOIN units u ON u.id=p.base_unit_id
    WHERE sl.stocktake_id=$1 ORDER BY p.name_ar,sl.lot_number NULLS FIRST,sl.expiry_date NULLS LAST`,[req.params.id]);
   res.json({stocktake:h.rows[0],items:lines.rows});
