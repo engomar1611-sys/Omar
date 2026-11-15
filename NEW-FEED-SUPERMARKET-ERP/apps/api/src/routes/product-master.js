@@ -71,6 +71,7 @@ router.get("/products/:id/label",async(req,res,next)=>{
     if(!result.rowCount)return res.status(404).send("Product not found");
     const p=result.rows[0];
     const size=getBarcodeLabelSize({preset:req.query.size,width:req.query.width,height:req.query.height});
+  if(!size)return res.status(400).send("Invalid label size. Use a listed preset or custom width and height within supported limits.");
     const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     res.type("html").send(`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>ملصق الصنف</title>
     <style>@page{size:auto;margin:2mm}body{font-family:Arial,sans-serif;margin:0}.label{width:${size.width}mm;min-height:${size.height}mm;border:1px solid #ddd;padding:2mm;text-align:center;break-inside:avoid;box-sizing:border-box}.name{font-weight:bold;font-size:12px}.sku{font-size:9px;color:#555}svg{width:100%;height:${Math.max(7,size.height*.38)}mm}.price{font-size:13px;font-weight:bold}</style>
