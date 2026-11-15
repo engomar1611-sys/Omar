@@ -33,8 +33,15 @@ export function createAccessToken(userId){
 
 
 export async function authorizeModule(req,res,next){
+  const method=req.method.toUpperCase(),path=req.path;
   const rules=[
-    [/^\/(categories|units|products|brands|product-prices|product-imports)(\/|$)/,"catalog.manage"],
+    [/^\/product-imports\/[^/]+\/approve$/,"catalog.import.approve"],
+    [/^\/product-imports(\/|$)/,method==="POST"?"catalog.import":"catalog.view"],
+    [/^\/products\/[^/]+\/(prices|internal-barcode|barcodes)$/,"catalog.edit"],
+    [/^\/products\/[^/]+\/label$/,"catalog.view"],
+    [/^\/products\/[^/]+$/,method==="PATCH"?"catalog.edit":"catalog.view"],
+    [/^\/products$/,method==="POST"?"catalog.create":"catalog.view"],
+    [/^\/(categories|units|brands)(\/|$)/,method==="POST"?"catalog.create":"catalog.view"],
     [/^\/pos(\/|$)/,"sales.manage"],
     [/^\/(purchase-orders|purchase-receipts)(\/|$)/,"purchasing.manage"],
     [/^\/sales\/returns\/[^/]+\/inspect$/,"returns.inspect"],
