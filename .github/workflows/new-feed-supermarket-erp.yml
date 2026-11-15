@@ -232,6 +232,23 @@ jobs:
               RAISE EXCEPTION 'POS loyalty redemption schema is missing';
             END IF;
 
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='payroll_runs' AND column_name='payment_cash_transaction_id'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='payroll_runs' AND column_name='payment_bank_transaction_id'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema='public' AND table_name='payroll_runs' AND column_name='reversal_journal_entry_id'
+            ) OR NOT EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conrelid='public.payroll_runs'::regclass AND conname='payroll_runs_status_check'
+                AND pg_get_constraintdef(oid) LIKE '%reversed%'
+            ) THEN
+              RAISE EXCEPTION 'Payroll payment reversal audit schema is missing';
+            END IF;
+
             IF to_regclass('public.uq_ecommerce_orders_sales_id') IS NULL
               OR to_regclass('public.idx_ecommerce_orders_status_created') IS NULL
               OR to_regclass('public.idx_ecommerce_order_lines_order') IS NULL THEN
