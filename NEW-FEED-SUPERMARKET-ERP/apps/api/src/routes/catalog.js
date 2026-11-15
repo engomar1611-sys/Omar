@@ -9,6 +9,11 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 router.get("/catalog/export-permission",requirePermission("catalog.export"),(_req,res)=>res.json({allowed:true}));
 
+router.get("/catalog/suppliers",requirePermission("catalog.edit"),async(_req,res,next)=>{
+  try{const {rows}=await pool.query("SELECT id,code,name FROM suppliers WHERE is_active=true ORDER BY name");res.json({items:rows});}
+  catch(e){next(e);}
+});
+
 router.get("/categories", async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
