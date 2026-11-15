@@ -71,7 +71,7 @@ function renderCart(){
 async function loadPosData(){
  try{
   const [context,catalog,customers,discounts]=await Promise.all([api("/api/pos/context"),api("/api/products?limit=200"),api("/api/customers"),api("/api/sales/discount-settings")]);
-  posContext=context;posProducts=catalog.items||[];posAllProducts=[...posProducts];posDiscountSettings=discounts.settings||null;const customerSelect=$("saleDeliveryCustomer");if(customerSelect)customerSelect.innerHTML='<option value="">اختر العميل</option>'+(customers.items||[]).map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.name)+' — '+escapeHtml(x.phone||x.code)+'</option>').join("");
+  posContext=context;posProducts=catalog.items||[];posAllProducts=[...posProducts];posDiscountSettings=discounts.settings||null;const customerSelect=$("saleCustomer");if(customerSelect)customerSelect.innerHTML='<option value="">بيع نقدي بدون تسجيل عميل</option>'+(customers.items||[]).map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.customer_number||x.code)+' — '+escapeHtml(x.name)+' — '+escapeHtml(x.phone||"بدون هاتف")+'</option>').join("");
   $("paymentMethod").innerHTML=context.payment_methods.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name_ar)+'</option>').join("");
   renderCategories();renderProducts();
  }catch(e){$("productGrid").innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'<br>تحقق من تهيئة الفرع والصلاحيات والأسعار.</div>';}
@@ -394,11 +394,12 @@ $("completeSale").onclick=async()=>{
  if(!payment_method_id)return toast("اختر طريقة الدفع");
  const lines=cart.map(x=>({product_id:x.product_id,unit_id:x.unit_id,quantity:x.qty,unit_price:x.price,discount_amount:Number((x.price*x.qty*pct/100).toFixed(6))}));
  try{
-  const delivery=deliveryEnabled?{customer_id:$("saleDeliveryCustomer").value,address:$("saleDeliveryAddress").value.trim(),delivery_fee:deliveryFee,source_channel:"pos"}:null;
- if(deliveryEnabled&&(!delivery.customer_id||!delivery.address||!Number.isFinite(delivery.delivery_fee)||delivery.delivery_fee<0))return toast("أدخل عميل التوصيل والعنوان ورسوم توصيل صحيحة");
- const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,customer_id:delivery?.customer_id||null,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],delivery,idempotency_key:(crypto.randomUUID?crypto.randomUUID():"NF-"+Date.now()+"-"+Math.random().toString(36).slice(2))})});
+  const selectedCustomer=$("saleCustomer").value||null;
+  const delivery=deliveryEnabled?{customer_id:selectedCustomer,address:$("saleDeliveryAddress").value.trim(),delivery_fee:deliveryFee,source_channel:"pos"}:null;
+ if(deliveryEnabled&&(!delivery.customer_id||!delivery.address||!Number.isFinite(delivery.delivery_fee)||delivery.delivery_fee<0))return toast("اختر عميل التوصيل وأدخل العنوان ورسوم التوصيل");
+ const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,customer_id:selectedCustomer,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],delivery,idempotency_key:(crypto.randomUUID?crypto.randomUUID():"NF-"+Date.now()+"-"+Math.random().toString(36).slice(2))})});
   toast("تم حفظ الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+(result.discounts?.order_discount_amount?" — خصم الطلب "+money(result.discounts.order_discount_amount):"")+(result.discounts?.delivery_discount_amount?" — خصم التوصيل "+money(result.discounts.delivery_discount_amount):"")+(result.delivery?" — طلب توصيل "+result.delivery.reference_no:""));
-  cart=[];$("discountInput").value="0";$("saleIsDelivery").checked=false;$("saleDeliveryFields").classList.add("hidden");$("saleDeliveryCustomer").value="";$("saleDeliveryAddress").value="";$("saleDeliveryFee").value="0";renderCart();
+  cart=[];$("discountInput").value="0";$("saleIsDelivery").checked=false;$("saleDeliveryFields").classList.add("hidden");$("saleCustomer").value="";$("saleDeliveryAddress").value="";$("saleDeliveryFee").value="0";renderCart();
  }catch(e){toast(e.message);}
 };
 function tick(){const d=new Date();$("dateText").textContent=d.toLocaleDateString("ar-EG",{weekday:"long",year:"numeric",month:"long",day:"numeric"});$("timeText").textContent=d.toLocaleTimeString("ar-EG",{hour:"2-digit",minute:"2-digit"});}
