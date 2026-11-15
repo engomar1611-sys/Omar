@@ -159,9 +159,33 @@ router.get("/reports/accounting",async(req,res,next)=>{
 router.get("/reports/delivery",async(req,res,next)=>{
  const range=dates(req,res);if(!range)return;
  try{
-  const r=await pool.query(`SELECT d.status,COUNT(*)::int orders,COALESCE(SUM(d.delivery_fee),0) delivery_fees
-   FROM delivery_orders d WHERE d.created_at::date BETWEEN $1::date AND $2::date GROUP BY d.status ORDER BY d.status`,[range.from,range.to]);
-  res.json({from:range.from,to:range.to,items:r.rows});
+  const [rows,summary,channels]=await Promise.all([
+   pool.query(`SELECT d.id,d.reference_no,d.status,d.source_channel,d.external_order_reference,
+    d.created_at,d.delivered_at,d.delivery_fee,c.name customer_name,c.phone customer_phone,
+    e.full_name courier_name,s.reference_no sale_reference,COALESCE(s.grand_total,0) sale_total,
+    COALESCE(lines.line_count,0)::int line_count,COALESCE(lines.item_quantity,0) item_quantity
+    FROM delivery_orders d JOIN customers c ON c.id=d.customer_id
+    LEFT JOIN employees e ON e.id=d.courier_employee_id
+    LEFT JOIN sales s ON s.id=d.sale_id
+    LEFT JOIN LATERAL (SELECT COUNT(*) line_count,COALESCE(SUM(quantity),0) item_quantity
+      FROM sale_lines WHERE sale_id=d.sale_id) lines ON TRUE
+    WHERE d.created_at::date BETWEEN $1::date AND $2::date
+    ORDER BY d.created_at DESC LIMIT 5000`,[range.from,range.to]),
+   pool.query(`SELECT COUNT(*)::int order_count,
+    COUNT(*) FILTER(WHERE d.status='delivered')::int delivered_count,
+    COUNT(*) FILTER(WHERE d.status IN ('failed','cancelled'))::int failed_or_cancelled_count,
+    COALESCE(SUM(d.delivery_fee),0) delivery_fees,
+    COALESCE(SUM(CASE WHEN d.status='delivered' THEN s.grand_total ELSE 0 END),0) delivered_sales,
+    COALESCE(SUM(CASE WHEN d.status NOT IN ('cancelled','failed') THEN s.grand_total ELSE 0 END),0) active_order_sales
+    FROM delivery_orders d LEFT JOIN sales s ON s.id=d.sale_id
+    WHERE d.created_at::date BETWEEN $1::date AND $2::date`,[range.from,range.to]),
+   pool.query(`SELECT COALESCE(d.source_channel,'pos') source_channel,COUNT(*)::int orders,
+    COALESCE(SUM(d.delivery_fee),0) delivery_fees,COALESCE(SUM(s.grand_total),0) sales
+    FROM delivery_orders d LEFT JOIN sales s ON s.id=d.sale_id
+    WHERE d.created_at::date BETWEEN $1::date AND $2::date
+    GROUP BY d.source_channel ORDER BY orders DESC`,[range.from,range.to])
+  ]);
+  res.json({from:range.from,to:range.to,items:rows.rows,summary:summary.rows[0],channels:channels.rows});
  }catch(e){next(e);}
 });
 
