@@ -78,7 +78,7 @@ export async function qualityLabRoutes(app,{db}){
      FROM goods_receipt_lines l JOIN goods_receipts g ON g.id=l.goods_receipt_id
      JOIN purchase_orders p ON p.id=g.purchase_order_id JOIN warehouses w ON w.id=p.warehouse_id
      JOIN items i ON i.id=l.item_id
-     WHERE g.status='PENDING_QC' ORDER BY g.received_at,l.id
+     WHERE g.status='PENDING_QC' ORDER BY g.created_at,l.id
     `)).rows;
    }
    if(req.query.sourceType==='PRODUCTION_ORDER'){
@@ -89,7 +89,7 @@ export async function qualityLabRoutes(app,{db}){
      JOIN inventory_balances b ON b.warehouse_id=p.warehouse_id AND b.item_id=o.item_id AND b.lot_no=o.lot_no
      JOIN warehouses w ON w.id=p.warehouse_id JOIN items i ON i.id=o.item_id
      WHERE p.status='COMPLETED' AND b.quality_status IN ('PENDING_QC','QUARANTINED')
-     ORDER BY p.completed_at DESC,o.id
+     ORDER BY p.created_at DESC,o.id
     `)).rows;
    }
    return invalid(reply,'INVALID_SOURCE_TYPE');
