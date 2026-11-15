@@ -28,6 +28,18 @@ router.put("/sales/discount-settings",requirePermission("sales.discount.manage")
  }catch(e){await client.query("ROLLBACK");next(e);}finally{client.release();}
 });
 router.get("/sales/:id/payments",async(req,res,next)=>{if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid sale id"});try{const r=await pool.query(`SELECT sp.id,sp.amount,sp.reference_text,sp.transaction_reference,sp.card_last_four,sp.terminal_amount,sp.terminal_captured_at,pm.code payment_method_code,pm.name_ar payment_method_name,pb.name_ar bank_name_ar,pb.name_en bank_name_en FROM sale_payments sp JOIN payment_methods pm ON pm.id=sp.payment_method_id LEFT JOIN payment_banks pb ON pb.id=sp.bank_id WHERE sp.sale_id=$1 ORDER BY sp.id`,[req.params.id]);res.json({items:r.rows});}catch(e){next(e);}});
+router.get("/sales/:id",async(req,res,next)=>{
+ if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid sale id"});
+ try{
+  const [sale,lines,payments]=await Promise.all([
+   pool.query("SELECT s.*,c.name customer_name,u.display_name cashier_name FROM sales s LEFT JOIN customers c ON c.id=s.customer_id JOIN users u ON u.id=s.cashier_id WHERE s.id=$1",[req.params.id]),
+   pool.query("SELECT sl.id,sl.product_id,p.sku,p.name_ar,sl.quantity,sl.unit_price,sl.discount_amount,sl.line_total FROM sale_lines sl JOIN products p ON p.id=sl.product_id WHERE sl.sale_id=$1 ORDER BY p.name_ar",[req.params.id]),
+   pool.query("SELECT sp.amount,sp.transaction_reference,sp.card_last_four,pm.code payment_method_code,pm.name_ar payment_method,pb.name_ar bank_name FROM sale_payments sp JOIN payment_methods pm ON pm.id=sp.payment_method_id LEFT JOIN payment_banks pb ON pb.id=sp.bank_id WHERE sp.sale_id=$1",[req.params.id])
+  ]);
+  if(!sale.rowCount)return res.status(404).json({error:"Sale not found"});
+  res.json({sale:sale.rows[0],lines:lines.rows,payments:payments.rows});
+ }catch(e){next(e);}
+});
 router.get("/sales",async(_q,res,next)=>{try{const r=await pool.query("SELECT s.*,c.name customer_name,u.display_name cashier_name FROM sales s LEFT JOIN customers c ON c.id=s.customer_id JOIN users u ON u.id=s.cashier_id ORDER BY s.created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 
 router.post("/sales/:id/void",requirePermission("sales.void.invoice"),async(req,res,next)=>{
@@ -66,7 +78,7 @@ router.post("/sales/:id/void",requirePermission("sales.void.invoice"),async(req,
     SELECT $1,account_id,credit,debit FROM journal_lines WHERE journal_entry_id=$2`,[reversal.rows[0].id,original.rows[0].id]);
   await client.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
   await client.query("UPDATE sales SET status='voided' WHERE id=$1",[req.params.id]);
-  await client.query("UPDATE delivery_orders SET status='cancelled',updated_at=now() WHERE sale_id=$1 AND status NOT IN ('delivered','cancelled')",[req.params.id]);
+  await client.query("UPDATE delivery_orders SET status='cancelled' WHERE sale_id=$1 AND status NOT IN ('delivered','cancelled')",[req.params.id]);
   await client.query("COMMIT");
   res.json({sale_id:req.params.id,status:"voided",restored_lots:movements.rowCount,reversal_journal_id:reversal.rows[0].id,reason:reason.trim()});
  }catch(e){
