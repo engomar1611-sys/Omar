@@ -46,7 +46,8 @@ router.post("/sales/complete",async(req,res,next)=>{
    const lineTotal=gross-discount;subtotal+=gross;discountTotal+=discount;cogs+=lineCogs;
    await client.query("INSERT INTO sale_lines(sale_id,product_id,unit_id,quantity,unit_price,discount_amount,line_total) VALUES($1,$2,$3,$4,$5,$6,$7)",[sale.rows[0].id,line.product_id,line.unit_id,qty,unitPrice,discount,lineTotal]);
   }
-  const total=subtotal-discountTotal,paymentTotal=payments.reduce((s,x)=>s+Number(x.amount),0);
+  const deliveryFee=delivery?Number(delivery.delivery_fee||0):0;
+  const total=subtotal-discountTotal+deliveryFee,paymentTotal=payments.reduce((s,x)=>s+Number(x.amount),0);
   if(Math.abs(paymentTotal-total)>0.01)throw Object.assign(new Error("Payment total must equal the sale total"),{statusCode:400});
   const period=await client.query("SELECT 1 FROM accounting_periods WHERE status='closed' AND CURRENT_DATE BETWEEN starts_on AND ends_on LIMIT 1");
   if(period.rowCount)throw Object.assign(new Error("The current accounting period is closed"),{statusCode:409});
