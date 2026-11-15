@@ -66,7 +66,7 @@
           </div>
           <div class="payment-row"><span>طريقة الدفع</span><select id="paymentMethod"><option value="cash">نقدي</option><option value="card">بطاقة</option><option value="wallet">محفظة إلكترونية</option></select></div>
           <div id="cardPaymentFields" class="card-payment-fields hidden">
-            <label>ابحث عن البنك<select id="cardBank"><option value="">اختر البنك</option></select></label>
+            <label>ابحث عن البنك<input id="cardBankSearch" list="cardBankOptions" autocomplete="off" placeholder="اكتب اسم البنك للاختيار"><datalist id="cardBankOptions"></datalist><select id="cardBank" class="hidden"><option value="">اختر البنك</option></select></label>
             <label>الرقم المرجعي للعملية<input id="cardTransactionReference" maxlength="100" autocomplete="off" placeholder="رقم العملية من إيصال ماكينة الدفع"></label>
             <label>آخر 4 أرقام من البطاقة<input id="cardLastFour" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="1234"></label>
             <label>المبلغ المسحوب من الماكينة (ج.م)<input id="cardTerminalAmount" type="number" min="0.01" step="0.01"></label>
