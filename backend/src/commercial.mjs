@@ -673,9 +673,11 @@ export async function commercialRoutes(app,{db}){
       SUM(subtotal)::numeric subtotal,SUM(discount_amount)::numeric discounts,
       SUM(total_amount)::numeric net_sales,SUM(cost_amount)::numeric cost_of_sales,
       0::numeric returns_amount,0::numeric returned_cost
-    FROM sales_invoices WHERE status IN ('POSTED','PARTIALLY_PAID','PAID')
-      AND ($1::date IS NULL OR invoice_date >= $1) AND ($2::date IS NULL OR invoice_date <= $2)
-    GROUP BY invoice_date
+    FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+    WHERE i.status IN ('POSTED','PARTIALLY_PAID','PAID')
+      AND ($1::date IS NULL OR i.invoice_date >= $1) AND ($2::date IS NULL OR i.invoice_date <= $2)
+      AND ($3::text IS NULL OR c.code=$3)
+    GROUP BY i.invoice_date
    ), return_rows AS (
     SELECT COALESCE(sr.accounting_approved_at::date,sr.created_at::date) report_date,
       0::int invoice_count,COUNT(*)::int return_count,
@@ -686,6 +688,8 @@ export async function commercialRoutes(app,{db}){
       SUM(COALESCE(sr.net_amount,COALESCE(sr.gross_amount,ret.gross_amount,0)))::numeric returns_amount,
       SUM(COALESCE(ret.return_cost,0))::numeric returned_cost
     FROM sales_returns sr
+    JOIN sales_invoices i ON i.id=sr.sales_invoice_id
+    JOIN customers c ON c.id=i.customer_id
     LEFT JOIN LATERAL (
       SELECT SUM(l.quantity*l.unit_price)::numeric gross_amount,
         SUM(l.quantity*l.unit_cost)::numeric return_cost
@@ -694,6 +698,7 @@ export async function commercialRoutes(app,{db}){
     WHERE sr.status='APPROVED'
       AND ($1::date IS NULL OR COALESCE(sr.accounting_approved_at::date,sr.created_at::date) >= $1)
       AND ($2::date IS NULL OR COALESCE(sr.accounting_approved_at::date,sr.created_at::date) <= $2)
+      AND ($3::text IS NULL OR c.code=$3)
     GROUP BY COALESCE(sr.accounting_approved_at::date,sr.created_at::date)
    ), movements AS (
     SELECT * FROM invoice_rows
@@ -705,7 +710,7 @@ export async function commercialRoutes(app,{db}){
      SUM(net_sales)::numeric net_sales,SUM(cost_of_sales)::numeric cost_of_sales,
      SUM(net_sales-cost_of_sales)::numeric gross_margin,
      SUM(returns_amount)::numeric returns_amount,SUM(returned_cost)::numeric returned_cost
-   FROM movements GROUP BY report_date ORDER BY report_date DESC`,[req.query?.from??null,req.query?.to??null])).rows;}catch(e){return fail(rep,e);}
+   FROM movements GROUP BY report_date ORDER BY report_date DESC`,[req.query?.from??null,req.query?.to??null,req.query?.customerCode??null])).rows;}catch(e){return fail(rep,e);}
  });
 
  app.get('/api/v1/reports/supplier-aging',auth(app,'REPORTS.READ'),async(req,rep)=>{
