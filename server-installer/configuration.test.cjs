@@ -16,6 +16,7 @@ test('Windows installer does not expose the API port through Windows Firewall', 
 });
 
 test('reverse proxy forwards HTTPS traffic only to the local API listener', () => {
+  assert.match(proxy, /tls internal/);
   assert.match(proxy, /reverse_proxy\s+127\.0\.0\.1:3000/);
   assert.doesNotMatch(proxy, /reverse_proxy\s+(?!127\.0\.0\.1)/);
 });
