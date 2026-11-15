@@ -76,7 +76,8 @@ async function loadPosData(){
  try{
   const [context,catalog,customers,discounts]=await Promise.all([api("/api/pos/context"),api("/api/products?limit=200"),api("/api/customers"),api("/api/sales/discount-settings")]);
   posContext=context;posProducts=catalog.items||[];posAllProducts=[...posProducts];posDiscountSettings=discounts.settings||null;const customerSelect=$("saleCustomer");if(customerSelect)customerSelect.innerHTML='<option value="">بيع نقدي بدون تسجيل عميل</option>'+(customers.items||[]).map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.customer_number||x.code)+' — '+escapeHtml(x.name)+' — '+escapeHtml(x.phone||"بدون هاتف")+'</option>').join("");
-  $("paymentMethod").innerHTML=context.payment_methods.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name_ar)+'</option>').join("");
+  $("paymentMethod").innerHTML=context.payment_methods.map(p=>'<option value="'+p.id+'" data-code="'+escapeHtml(p.code||"") +'">'+escapeHtml(p.name_ar)+'</option>').join("");
+  const bankData=await api("/api/payment-banks");$("cardBank").innerHTML='<option value="">اختر البنك</option>'+(bankData.items||[]).map(b=>'<option value="'+b.id+'">'+escapeHtml(b.name_ar)+' — '+escapeHtml(b.name_en)+'</option>').join("");
   renderCategories();renderProducts();
  }catch(e){$("productGrid").innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'<br>تحقق من تهيئة الفرع والصلاحيات والأسعار.</div>';}
 }
@@ -480,6 +481,8 @@ $("returnSale").onclick=()=>toast("المرتجعات تتطلب فاتورة أ
 $("printReceipt").onclick=()=>toast("الطباعة الفعلية تتطلب ربط طابعة الإيصالات");
 $("noteSale").onclick=()=>{const n=prompt("ملاحظة الفاتورة");if(n)toast("تم إدخال الملاحظة لهذه الجلسة")};
 $("scanButton").onclick=()=>{$("productSearch").focus();$("productSearch").select();toast("امسح الباركود بقارئ متصل بلوحة المفاتيح ثم اضغط Enter");};
+const isCardPayment=()=>/card|visa|بطاقة|فيزا/i.test(($("paymentMethod").selectedOptions[0]?.dataset.code||"")+" "+$("paymentMethod").selectedOptions[0]?.textContent);
+$("paymentMethod").onchange=()=>{$("cardPaymentFields").classList.toggle("hidden",!isCardPayment());if(isCardPayment()){$("cardTerminalAmount").value=$("grandTotal").textContent.replace(/[^0-9.]/g,"");}};
 $("completeSale").onclick=async()=>{
  if(!cart.length)return toast("السلة فارغة");
  if(!posContext)return toast("بيانات نقطة البيع غير جاهزة");
@@ -491,14 +494,15 @@ $("completeSale").onclick=async()=>{
  const total=eligible-orderDiscount+deliveryFee-deliveryDiscount;
  const payment_method_id=$("paymentMethod").value;
  if(!payment_method_id)return toast("اختر طريقة الدفع");
+ const cardPayment=isCardPayment();let cardDetails=null;if(cardPayment){const bank_id=$("cardBank").value,transaction_reference=$("cardTransactionReference").value.trim(),card_last_four=$("cardLastFour").value.trim(),terminal_amount=Number($("cardTerminalAmount").value);if(!bank_id||!transaction_reference||!/^[0-9]{4}$/.test(card_last_four)||!Number.isFinite(terminal_amount)||terminal_amount<=0||Math.abs(terminal_amount-total)>0.01)return toast("أدخل البنك والرقم المرجعي وآخر 4 أرقام والمبلغ المسحوب الصحيح");cardDetails={bank_id,transaction_reference,card_last_four,terminal_amount};}
  const lines=cart.map(x=>({product_id:x.product_id,unit_id:x.unit_id,quantity:x.qty,unit_price:x.price,discount_amount:Number((x.price*x.qty*pct/100).toFixed(6))}));
  try{
   const selectedCustomer=$("saleCustomer").value||null;
   const delivery=deliveryEnabled?{customer_id:selectedCustomer,address:$("saleDeliveryAddress").value.trim(),delivery_fee:deliveryFee,source_channel:"pos"}:null;
  if(deliveryEnabled&&(!delivery.customer_id||!delivery.address||!Number.isFinite(delivery.delivery_fee)||delivery.delivery_fee<0))return toast("اختر عميل التوصيل وأدخل العنوان ورسوم التوصيل");
- const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,customer_id:selectedCustomer,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],delivery,idempotency_key:(crypto.randomUUID?crypto.randomUUID():"NF-"+Date.now()+"-"+Math.random().toString(36).slice(2))})});
+ const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,customer_id:selectedCustomer,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6)),...(cardDetails||{})}],delivery,idempotency_key:(crypto.randomUUID?crypto.randomUUID():"NF-"+Date.now()+"-"+Math.random().toString(36).slice(2))})});
   toast("تم حفظ الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+(result.discounts?.order_discount_amount?" — خصم الطلب "+money(result.discounts.order_discount_amount):"")+(result.discounts?.delivery_discount_amount?" — خصم التوصيل "+money(result.discounts.delivery_discount_amount):"")+(result.delivery?" — طلب توصيل "+result.delivery.reference_no:""));
-  cart=[];$("discountInput").value="0";$("saleIsDelivery").checked=false;$("saleDeliveryFields").classList.add("hidden");$("saleCustomer").value="";$("saleDeliveryAddress").value="";$("saleDeliveryFee").value="0";renderCart();
+  cart=[];$("discountInput").value="0";$("saleIsDelivery").checked=false;$("saleDeliveryFields").classList.add("hidden");$("saleCustomer").value="";$("saleDeliveryAddress").value="";$("saleDeliveryFee").value="0";$("cardTransactionReference").value="";$("cardLastFour").value="";$("cardTerminalAmount").value="";$("cardBank").value="";$("cardPaymentFields").classList.add("hidden");renderCart();
  }catch(e){toast(e.message);}
 };
 function tick(){const d=new Date();$("dateText").textContent=d.toLocaleDateString("ar-EG",{weekday:"long",year:"numeric",month:"long",day:"numeric"});$("timeText").textContent=d.toLocaleTimeString("ar-EG",{hour:"2-digit",minute:"2-digit"});}
