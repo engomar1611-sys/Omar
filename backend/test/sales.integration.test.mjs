@@ -568,7 +568,7 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     const summaryAfter = summaryAfterReturnResponse.json().find(x=>String(x.invoice_date).slice(0,10)===reportDate);
     assert.ok(summaryAfter);
     assert.ok(Math.abs(Number(summaryAfter.net_sales))<0.000001,
-      'a fully returned invoice must not remain in net sales');
+      'a fully returned invoice must not remain in net sales: '+JSON.stringify(summaryAfter));
     assert.ok(Math.abs(Number(summaryAfter.cost_of_sales))<0.000001,
       'returned goods cost must reverse cost of sales');
     assert.ok(Math.abs(Number(summaryAfter.gross_margin))<0.000001,
