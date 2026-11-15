@@ -98,6 +98,7 @@ if(!map.payroll_expense||!offsetAccountId)throw Object.assign(new Error("Payroll
 const je=await c.query("INSERT INTO journal_entries(reference_no,source_type,source_id,entry_date,status) VALUES($1,'payroll_payment',$2,CURRENT_DATE,'posted') RETURNING id",["JE-PAY-"+run.rows[0].reference_no,req.params.id]);
 await c.query("INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit) VALUES($1,$2,$3,0),($1,$4,0,$3)",[je.rows[0].id,map.payroll_expense,total,offsetAccountId]);
 if(bankTransactionId)await c.query("UPDATE bank_transactions SET journal_entry_id=$2 WHERE id=$1",[bankTransactionId,je.rows[0].id]);
+if(cashTransactionId)await c.query("UPDATE cash_transactions SET journal_entry_id=$2 WHERE id=$1",[cashTransactionId,je.rows[0].id]);
 const r=await c.query("UPDATE payroll_runs SET status='paid',payment_method=$2,payment_reference=$3,paid_at=now(),paid_by=$4,payment_journal_entry_id=$5,payment_cash_transaction_id=$6,payment_bank_transaction_id=$7 WHERE id=$1 RETURNING *",[req.params.id,payment_method,payment_reference,req.user.id,je.rows[0].id,cashTransactionId,bankTransactionId]);await c.query("COMMIT");res.json(r.rows[0]);}catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}});
 
 router.post("/hr/payroll-runs/:id/reverse-payment",guarded("hr.payroll"),async(req,res,next)=>{
@@ -122,8 +123,8 @@ router.post("/hr/payroll-runs/:id/reverse-payment",guarded("hr.payroll"),async(r
     if(!originalCash.rowCount)throw Object.assign(new Error("Original payroll cash movement is missing"),{statusCode:409});
     const session=await c.query("SELECT id FROM cash_sessions WHERE cashbox_id=$1 AND cashier_id=$2 AND status='open' FOR UPDATE",[originalCash.rows[0].cashbox_id,req.user.id]);
     if(!session.rowCount)throw Object.assign(new Error("Open a cash session for the original cashbox before reversing this cash payroll payment"),{statusCode:409});
-    await c.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,source_id,description,created_by) VALUES($1,$2,$3,'in',$4,'payroll_reversal',$5,$6,$7)",
-      [originalCash.rows[0].cashbox_id,session.rows[0].id,"REV-"+run.rows[0].id.replaceAll("-",""),run.rows[0].total_net,req.params.id,"Reversal of payroll "+run.rows[0].reference_no,req.user.id]);
+    await c.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,source_id,description,created_by,journal_entry_id) VALUES($1,$2,$3,'in',$4,'payroll_reversal',$5,$6,$7,$8)",
+      [originalCash.rows[0].cashbox_id,session.rows[0].id,"REV-"+run.rows[0].id.replaceAll("-",""),run.rows[0].total_net,req.params.id,"Reversal of payroll "+run.rows[0].reference_no,req.user.id,reversal.rows[0].id]);
   }else{
     const originalBank=await c.query("SELECT * FROM bank_transactions WHERE id=$1 AND source_type='payroll' AND source_id=$2 AND status='posted' FOR UPDATE",[run.rows[0].payment_bank_transaction_id,req.params.id]);
     if(!originalBank.rowCount)throw Object.assign(new Error("Original payroll bank movement is missing or already reversed"),{statusCode:409});
