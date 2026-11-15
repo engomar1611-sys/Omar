@@ -36,9 +36,13 @@ router.post("/sales/:saleId/returns",requirePermission("sales.void.line"),async(
       throw Object.assign(new Error("Only completed sales can be returned"),{statusCode:409});
     const seen=new Set();
     const resolved=[];
-    // Tax was assessed after line discounts and the invoice-level discount.
-    // Use the persisted taxable net base, not the sum of line totals (which omits order discount).
-    const taxableBase=Math.max(0,Number(sale.rows[0].subtotal||0)-Number(sale.rows[0].discount_total||0));
+    // Allocate the invoice-level discount proportionally to each returned line.
+    // This prevents aggregate refunds (including tax) from exceeding the original paid merchandise value.
+    const lineBaseResult=await client.query("SELECT COALESCE(SUM(line_total),0) total FROM sale_lines WHERE sale_id=$1",[req.params.saleId]);
+    const lineBase=Number(lineBaseResult.rows[0].total);
+    const invoiceOrderDiscount=Number(sale.rows[0].order_discount_amount||0);
+    const taxableBase=Math.max(0,lineBase-invoiceOrderDiscount);
+    const invoiceDiscountFactor=lineBase>0?taxableBase/lineBase:0;
     const taxRate=taxableBase>0?Number(sale.rows[0].tax_total||0)/taxableBase:0;
     for(const item of lines){
       if(seen.has(item.sale_line_id)) throw Object.assign(new Error("Duplicate sale line"),{statusCode:400});
@@ -55,7 +59,7 @@ router.post("/sales/:saleId/returns",requirePermission("sales.void.line"),async(
       const row=q.rows[0],qty=Number(item.quantity);
       if(qty>Number(row.quantity)-Number(row.returned_qty)+0.000001)
         throw Object.assign(new Error("Return quantity exceeds the unreturned sold quantity"),{statusCode:409});
-      const refund=Number((Number(row.line_total)*qty/Number(row.quantity)).toFixed(6));
+      const refund=Number((Number(row.line_total)*qty/Number(row.quantity)*invoiceDiscountFactor).toFixed(6));
       const taxRefund=Number((refund*taxRate).toFixed(6));
       resolved.push({row,qty,refund,taxRefund});
     }
