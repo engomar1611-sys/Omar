@@ -149,6 +149,7 @@ router.post("/bank/transfers",guarded("bank.manage"),async(req,res,next)=>{
   res.status(201).json({transfer_reference:reference_no,outgoing:out.rows[0],incoming:incoming.rows[0],journal_entry_id:je.rows[0].id});
  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
 });
+router.get("/bank/offset-accounts",guarded("bank.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT id,code,name_ar,account_type FROM accounts WHERE is_active=true ORDER BY code");res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/bank/accounts",guarded("bank.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT ba.*,b.name branch_name FROM bank_accounts ba JOIN branches b ON b.id=ba.branch_id WHERE ba.is_active ORDER BY ba.bank_name,ba.account_name");res.json({items:r.rows});}catch(e){next(e);}});
 // Bank ledger transactions are auditable operational records. General-ledger posting is not implied by this endpoint.
 router.get("/bank/transactions",guarded("bank.manage"),async(req,res,next)=>{try{const r=await pool.query("SELECT bt.*,ba.code bank_code,ba.bank_name,ba.account_name FROM bank_transactions bt JOIN bank_accounts ba ON ba.id=bt.bank_account_id ORDER BY bt.transaction_date DESC,bt.created_at DESC LIMIT 1000");res.json({items:r.rows});}catch(e){next(e);}});
