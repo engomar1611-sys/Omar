@@ -170,7 +170,7 @@ async function loadOperationalModule(id){
   const renderRows=items=>items.map(row=>'<tr>'+cfg.columns.map(([key])=>'<td>'+escapeHtml(formatModuleValue(row[key]))+'</td>').join("")+'</tr>').join("");
   const header='<thead><tr>'+cfg.columns.map(([,label])=>'<th>'+escapeHtml(label)+'</th>').join("")+'</tr></thead>';
   const content=$("liveModuleContent");
-  content.innerHTML=rows.length?'<table class="module-table">'+header+'<tbody>'+renderRows(rows)+'</tbody></table>':'<div class="empty-state">لا توجد بيانات مسجلة حتى الآن.</div>';
+  content.innerHTML=rows.length?'<table class="module-table">'+header+(id==="sales"?'<thead><tr><th>إجراءات</th></tr></thead>':'')+'<tbody>'+rows.map((row)=>'<tr>'+cfg.columns.map(([key])=>'<td>'+escapeHtml(formatModuleValue(row[key]))+'</td>').join("")+(id==="sales"?'<td>'+(row.status==="completed"?'<button class="small-btn" data-sale-details="'+row.id+'">تفاصيل / إلغاء صنف</button>'+(posContext?.permission_codes?.includes("sales.void.invoice")?'<button class="small-btn danger-btn" data-sale-void="'+row.id+'">إلغاء الفاتورة</button>':''):'—')+'</td>':'')+'</tr>').join("")+'</tbody></table>':'<div class="empty-state">لا توجد بيانات مسجلة حتى الآن.</div>';
   $("moduleSearch").oninput=()=>{
    const q=$("moduleSearch").value.toLowerCase();
    content.querySelectorAll("tbody tr").forEach(tr=>tr.hidden=!tr.textContent.toLowerCase().includes(q));
@@ -181,6 +181,27 @@ async function loadOperationalModule(id){
    content.innerHTML+='<h2 class="module-title">قيود الأستاذ العام</h2>'+(items.length?'<table class="module-table"><thead><tr><th>المرجع</th><th>المصدر</th><th>التاريخ</th><th>الحالة</th><th>مدين</th><th>دائن</th></tr></thead><tbody>'+items.map(x=>'<tr><td>'+escapeHtml(x.reference_no)+'</td><td>'+escapeHtml(x.source_type)+'</td><td>'+escapeHtml(formatModuleValue(x.entry_date))+'</td><td>'+escapeHtml(x.status)+'</td><td>'+money(x.total_debit)+'</td><td>'+money(x.total_credit)+'</td></tr>').join("")+'</tbody></table>':'<div class="empty-state">لا توجد قيود مرحّلة حتى الآن.</div>');
   }
   if(id==="sales"){
+   content.querySelectorAll("[data-sale-void]").forEach(btn=>btn.onclick=async()=>{
+    const reason=prompt("سبب إلغاء الفاتورة");
+    if(!reason?.trim())return;
+    if(!confirm("هل تم رد المبلغ النقدي للعميل بالفعل؟ لن يسمح النظام بإلغاء فاتورة مدفوعة بالفيزا من هذا الإجراء."))return;
+    try{await api("/api/sales/"+btn.dataset.saleVoid+"/void",{method:"POST",body:JSON.stringify({reason,refund_confirmed:true})});toast("تم إلغاء الفاتورة وعكس المخزون والقيد المحاسبي");await loadOperationalModule("sales");}catch(e){toast(e.message);}
+   });
+   content.querySelectorAll("[data-sale-details]").forEach(btn=>btn.onclick=async()=>{
+    try{
+     const d=await api("/api/sales/"+btn.dataset.saleDetails);
+     const list=d.lines.map((x,i)=>(i+1)+". "+x.name_ar+" — الكمية "+x.quantity+" — المتاح للإرجاع "+x.quantity+" — "+money(x.line_total)+" ج.م").join("\\n");
+     alert("بنود الفاتورة:\\n"+list);
+     if(!posContext?.permission_codes?.includes("sales.void.line"))return;
+     const n=Number(prompt("اكتب رقم الصنف من القائمة لطلب إلغائه"));
+     if(!Number.isInteger(n)||n<1||n>d.lines.length)return;
+     const line=d.lines[n-1],qty=Number(prompt("الكمية المطلوب إرجاعها من "+line.name_ar,line.quantity));
+     if(!Number.isFinite(qty)||qty<=0||qty>Number(line.quantity))return;
+     const reason=prompt("سبب إلغاء/استرجاع الصنف");if(!reason?.trim())return;
+     await api("/api/sales/"+btn.dataset.saleDetails+"/returns",{method:"POST",body:JSON.stringify({reference_no:"NF-RET-"+Date.now(),reason,lines:[{sale_line_id:line.id,quantity:qty}]})});
+     toast("تم تسجيل طلب إلغاء الصنف؛ ينتظر فحص المخزن والاعتماد المالي");
+    }catch(e){toast(e.message);}
+   });
    const returns=await api("/api/sales/returns");
    const extra=returns.items||[];
    content.innerHTML+='<h2 class="module-title">طلبات المرتجعات</h2>'+(extra.length?'<table class="module-table"><thead><tr><th>رقم المرتجع</th><th>الفاتورة الأصلية</th><th>العميل</th><th>الحالة</th><th>المبلغ</th></tr></thead><tbody>'+extra.map(x=>'<tr><td>'+escapeHtml(x.reference_no)+'</td><td>'+escapeHtml(x.sale_reference)+'</td><td>'+escapeHtml(x.customer_name||"—")+'</td><td>'+escapeHtml(x.status)+'</td><td>'+money(x.refund_total)+'</td></tr>').join("")+'</tbody></table>':'<div class="empty-state">لا توجد مرتجعات مسجلة.</div>');
