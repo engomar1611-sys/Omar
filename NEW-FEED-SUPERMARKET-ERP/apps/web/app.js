@@ -190,8 +190,8 @@ async function loadOperationalModule(id){
    content.querySelectorAll("[data-sale-details]").forEach(btn=>btn.onclick=async()=>{
     try{
      const d=await api("/api/sales/"+btn.dataset.saleDetails+"/details");
-     const list=d.lines.map((x,i)=>(i+1)+". "+x.name_ar+" — الكمية "+x.quantity+" — المتاح للإرجاع "+x.quantity+" — "+money(x.line_total)+" ج.م").join("\\n");
-     alert("بنود الفاتورة:\\n"+list);
+     const list=d.lines.map((x,i)=>(i+1)+". "+x.name_ar+" — الكمية "+x.quantity+" — المتاح للإرجاع "+x.quantity+" — "+money(x.line_total)+" ج.م").join("\n");
+     alert("بنود الفاتورة:\n"+list);
      if(!posContext?.permission_codes?.includes("sales.void.line"))return;
      const n=Number(prompt("اكتب رقم الصنف من القائمة لطلب إلغائه"));
      if(!Number.isInteger(n)||n<1||n>d.lines.length)return;
@@ -330,8 +330,8 @@ async function openPurchasing(){
       if(amountText===null)return;
       const amount=Number(amountText);
       if(!Number.isFinite(amount)||amount<=0||amount>Number(btn.dataset.due)+0.000001)return toast("أدخل مبلغًا صحيحًا لا يتجاوز الرصيد المستحق");
-      const methodOptions=methods.items.map((m,i)=>(i+1)+") "+m.name_ar+" ["+m.code+"]").join("\\n");
-      const methodIndex=Number(prompt("اختر طريقة الدفع بكتابة رقمها:\\n"+methodOptions))-1;
+      const methodOptions=methods.items.map((m,i)=>(i+1)+") "+m.name_ar+" ["+m.code+"]").join("\n");
+      const methodIndex=Number(prompt("اختر طريقة الدفع بكتابة رقمها:\n"+methodOptions))-1;
       const method=methods.items[methodIndex];if(!method)return;
       const payload={reference_no:"SPAY-"+Date.now(),supplier_id:btn.dataset.supplier,payment_method_id:method.id,amount,payment_date:new Date().toLocaleDateString("en-CA"),allocations:[{invoice_id:btn.dataset.paySupplier,amount}]};
       if(/card|visa|بطاقة|فيزا/i.test(method.code+" "+method.name_ar)){
@@ -340,7 +340,7 @@ async function openPurchasing(){
        const banks=await api("/api/payment-banks?q="+encodeURIComponent(bankQuery.trim()));
        if(!banks.items.length)return toast("لم يتم العثور على البنك");
        const bank=banks.items[0];payload.bank_id=bank.id;payload.transaction_reference=prompt("الرقم المرجعي لعملية الفيزا")?.trim();payload.card_last_four=prompt("آخر 4 أرقام من البطاقة")?.trim();
-       if(!payload.transaction_reference||!/^\\d{4}$/.test(payload.card_last_four||""))return toast("بيانات عملية البطاقة غير مكتملة");
+       if(!payload.transaction_reference||!/^\d{4}$/.test(payload.card_last_four||""))return toast("بيانات عملية البطاقة غير مكتملة");
       }
       await api("/api/supplier-payments",{method:"POST",body:JSON.stringify(payload)});
       toast("تم تسجيل الدفعة وتخصيصها على الفاتورة");
