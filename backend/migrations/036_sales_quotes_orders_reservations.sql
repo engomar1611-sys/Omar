@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_sales_orders_customer_date
 ALTER TABLE sales_invoices
   ADD COLUMN IF NOT EXISTS sales_order_id UUID REFERENCES sales_orders(id) ON DELETE RESTRICT;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sales_invoices_order
-  ON sales_invoices(sales_order_id) WHERE sales_order_id IS NOT NULL;
+  ON sales_invoices(sales_order_id) WHERE sales_order_id IS NOT NULL AND status <> 'CANCELLED';
 ALTER TABLE sales_invoice_lines
   ADD COLUMN IF NOT EXISTS sales_order_line_id UUID REFERENCES sales_order_lines(id) ON DELETE RESTRICT;
 
