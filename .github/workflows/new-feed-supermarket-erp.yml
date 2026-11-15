@@ -85,3 +85,28 @@ jobs:
             END IF;
           END $$;
           SQL
+
+
+  source-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package supermarket ERP source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cd NEW-FEED-SUPERMARKET-ERP
+          zip -r ../dist/NEW-FEED-SUPERMARKET-ERP-source.zip . \
+            -x '*/node_modules/*' '*/.env' '*/.env.*' '*/dist/*' '*/coverage/*'
+          cd ..
+          sha256sum dist/NEW-FEED-SUPERMARKET-ERP-source.zip > dist/SHA256SUMS.txt
+      - name: Upload supermarket ERP source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEW-FEED-SUPERMARKET-ERP-Source
+          path: |
+            dist/NEW-FEED-SUPERMARKET-ERP-source.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
