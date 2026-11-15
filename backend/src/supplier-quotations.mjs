@@ -26,7 +26,7 @@ async function transaction(db, callback) {
 }
 
 export function validateSupplierQuotePayload(body, requestLines) {
-  if (!body || !textOk(body.quoteNo) || !body.supplierId || (body.currencyCode && String(body.currencyCode).toUpperCase() !== 'EGP') || (body.validUntil && !validDate(body.validUntil)) || !Array.isArray(body.lines) ||
+  if (!body || !textOk(body.quoteNo) || !body.supplierId || (body.currencyCode !== undefined && String(body.currencyCode).trim().toUpperCase() !== 'EGP') || (body.validUntil != null && body.validUntil !== '' && !validDate(body.validUntil)) || !Array.isArray(body.lines) ||
       body.lines.length !== requestLines.length) return false;
   const expected = new Map(requestLines.map(line => [line.id, line]));
   const seen = new Set();
@@ -84,7 +84,7 @@ export async function supplierQuotationRoutes(app, { db }) {
             payment_terms, delivery_terms, notes, submitted_by
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
         `, [
-          request.params.id, body.supplierId, body.quoteNo.trim(), body.validUntil ?? null,
+          request.params.id, body.supplierId, body.quoteNo.trim(), body.validUntil || null,
           String(body.currencyCode ?? 'EGP').toUpperCase(), body.paymentTerms ?? null,
           body.deliveryTerms ?? null, body.notes ?? null, request.authUser.user_id
         ]);
