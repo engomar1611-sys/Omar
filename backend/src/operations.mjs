@@ -245,8 +245,8 @@ export async function operationsRoutes(app, { db }) {
           const line=lr.rows[0], a=Number(x.acceptedQty), rej=Number(x.rejectedQty);
           const activeSpec=await c.query("SELECT id FROM quality_specifications WHERE item_id=$1 AND stage='RAW_MATERIAL' AND is_active=TRUE",[line.item_id]);
           if(activeSpec.rowCount){
-            const labSample=await c.query("SELECT id FROM quality_samples WHERE specification_id=$1 AND source_type='GOODS_RECEIPT' AND source_id=$2 AND source_line_id=$3 AND status='PASSED' ORDER BY tested_at DESC LIMIT 1",[activeSpec.rows[0].id,req.params.id,line.id]);
-            if(!labSample.rowCount)throw Object.assign(new Error('يجب إكمال واعتماد عينة المعمل حسب مواصفة الخامة قبل اعتماد الاستلام'),{code:'P0001'});
+            const labSample=await c.query("SELECT id,status FROM quality_samples WHERE specification_id=$1 AND source_type='GOODS_RECEIPT' AND source_id=$2 AND source_line_id=$3 ORDER BY collected_at DESC LIMIT 1",[activeSpec.rows[0].id,req.params.id,line.id]);
+            if(!labSample.rowCount||labSample.rows[0].status!=='PASSED')throw Object.assign(new Error('يجب أن تكون أحدث عينة معمل معتمدة وناجحة حسب مواصفة الخامة قبل اعتماد الاستلام'),{code:'P0001'});
           }
           if(Math.abs((a+rej)-Number(line.received_qty))>0.000001) throw Object.assign(new Error('يجب أن يساوي مجموع المقبول والمرفوض كامل الكمية المستلمة'),{code:'P0001'});
           await c.query(`INSERT INTO quality_inspections(goods_receipt_line_id,inspected_by,result,accepted_qty,rejected_qty,parameters,notes)
@@ -879,8 +879,8 @@ export async function operationsRoutes(app, { db }) {
         if(b.result==='PASS'){
           const activeSpec=await c.query("SELECT id FROM quality_specifications WHERE item_id=$1 AND stage='FINISHED_GOOD' AND is_active=TRUE",[h.rows[0].item_id]);
           if(activeSpec.rowCount){
-            const labSample=await c.query("SELECT id FROM quality_samples WHERE specification_id=$1 AND source_type='PRODUCTION_ORDER' AND source_id=$2 AND source_line_id=$3 AND status='PASSED' ORDER BY tested_at DESC LIMIT 1",[activeSpec.rows[0].id,req.params.id,h.rows[0].output_id]);
-            if(!labSample.rowCount)throw Object.assign(new Error('يجب إكمال واعتماد عينة المعمل وشهادة التحليل قبل الإفراج عن المنتج النهائي'),{code:'P0001'});
+            const labSample=await c.query("SELECT id,status FROM quality_samples WHERE specification_id=$1 AND source_type='PRODUCTION_ORDER' AND source_id=$2 AND source_line_id=$3 ORDER BY collected_at DESC LIMIT 1",[activeSpec.rows[0].id,req.params.id,h.rows[0].output_id]);
+            if(!labSample.rowCount||labSample.rows[0].status!=='PASSED')throw Object.assign(new Error('يجب أن تكون أحدث عينة معمل معتمدة وناجحة قبل الإفراج عن المنتج النهائي'),{code:'P0001'});
           }
         }
         const status=b.result==='PASS'?'RELEASED':b.result==='FAIL'?'QUARANTINED':'PENDING_QC';
