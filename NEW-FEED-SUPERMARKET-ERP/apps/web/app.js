@@ -22,7 +22,7 @@ document.getElementById("bootstrapForm").addEventListener("submit",async e=>{
 if(storedToken){document.getElementById("authGate").style.display="none";const name=sessionStorage.getItem("nf_user_name");const userLabel=document.querySelector(".user b");if(name&&userLabel)userLabel.textContent=name;}
 document.getElementById("logoutButton").onclick=()=>{sessionStorage.removeItem("nf_access_token");sessionStorage.removeItem("nf_user_name");location.reload();};
 let posProducts=[],posContext=null;
-const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["customers","♙","العملاء والولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات والخزينة"],["hr","♙","الموارد البشرية"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["ecommerce","▧","المتجر الإلكتروني"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
+const modules=[["pos","▣","نقطة البيع"],["catalog","▦","الأصناف والباركود"],["inventory","▤","المخازن والمخزون"],["purchasing","🛒","المشتريات وطلبات الشراء"],["sales","🧾","المبيعات والفواتير"],["customers","♙","العملاء والولاء"],["suppliers","♧","الموردون"],["accounting","＄","الحسابات والخزينة"],["hr","♙","الموارد البشرية"],["assets","▣","الأصول والصيانة"],["delivery","➤","التوصيل"],["orderChannels","↔","ربط تطبيقات الطلبات"],["ecommerce","▧","المتجر الإلكتروني"],["users","⚙","المستخدمون والصلاحيات"],["settings","⚙","إعدادات النظام"]];
 const moduleData={catalog:["الأصناف والباركود",["كود الصنف","اسم الصنف","التصنيف","الوحدة الأساسية","باركود","حالة الوزن","الصلاحية"],"لا توجد أصناف مسجلة بعد. أضف بيانات الأصناف المعتمدة أو استوردها من ملف موثوق."],inventory:["المخازن والمخزون",["كود الصنف","الصنف","المخزن","التشغيلة","الصلاحية","الكمية","متوسط التكلفة"],"ستظهر أرصدة المخزون وحركاته بعد تهيئة المخازن وإدخال أرصدة افتتاحية معتمدة."],purchasing:["المشتريات وطلبات الشراء",["الرقم المرجعي","المورد","التاريخ","الحالة","القيمة"],"أنشئ طلب شراء، ثم اعتمده وأصدر أمر الشراء وسجل الاستلام وفحص الجودة."],sales:["المبيعات والفواتير",["الرقم المرجعي","التاريخ","الكاشير","العميل","الإجمالي","الحالة"],"تظهر فواتير البيع المكتملة والمرتجعات بعد ربط نقاط البيع بقاعدة البيانات."],customers:["العملاء والولاء",["كود العميل","اسم العميل","الهاتف","نقاط الولاء","الحالة"],"سجل العملاء وربطهم بالمبيعات ونظام الولاء."],suppliers:["الموردون",["كود المورد","اسم المورد","الهاتف","الرصيد","الحالة"],"سجل الموردين وربطهم بطلبات الشراء والاستلام والمستحقات."],accounting:["الحسابات والخزينة",["كود الحساب","اسم الحساب","نوع الحساب","الحالة"],"دليل الحسابات والقيود اليومية والخزائن والبنوك والتسويات."],hr:["الموارد البشرية",["كود الموظف","اسم الموظف","الوظيفة","الفرع","الحالة"],"ملفات الموظفين والورديات والحضور والإجازات والصلاحيات الوظيفية."],assets:["الأصول والصيانة",["كود الأصل","اسم الأصل","التصنيف","الموقع","الحالة"],"سجل الأصول والترقيم وطباعة ملصقات الباركود والصيانة."],delivery:["التوصيل",["رقم الطلب","العميل","العنوان","مندوب التوصيل","الحالة"],"إدارة طلبات التوصيل وتخصيص المندوب ومتابعة التسليم."],ecommerce:["المتجر الإلكتروني",["رقم الطلب","العميل","قناة الطلب","الدفع","الحالة"],"إدارة كتالوج المتجر والطلبات ومزامنتها مع المخزون ونقاط البيع."],users:["المستخدمون والصلاحيات",["اسم المستخدم","الاسم","الدور","الصلاحيات","الحالة"],"إدارة المستخدمين والأدوار والصلاحيات على مستوى الموديول والإجراء."],settings:["إعدادات النظام",["الإعداد","القيمة","الوصف"],"إعدادات الشركة والفروع والضرائب والترقيم والطباعة والنسخ الاحتياطي والاتصال."]};
 let cart=[],activeCategory="الكل";
 const $=id=>document.getElementById(id),money=n=>Number(n).toFixed(2);
@@ -220,6 +220,49 @@ async function openPurchasing(){
  }catch(e){hostError(root,e.message);}
 }
 function hostError(root,message){root.innerHTML='<div class="empty-state">'+escapeHtml(message)+'</div>';}
+
+async function openDelivery(){
+ const root=$("moduleView");
+ root.innerHTML='<h1 class="module-title">إدارة الدليفري والتوصيل</h1><section class="purchase-panel"><h2>إنشاء طلب توصيل</h2><div class="form-grid"><label>الرقم المرجعي<input id="deliveryRef" value="DLV-'+Date.now()+'"></label><label>العميل<select id="deliveryCustomer"></select></label><label>قناة الطلب<select id="deliverySource"><option value="pos">نقطة البيع</option><option value="phone">طلب هاتفي</option><option value="talabat">طلبات</option><option value="elmenus">المنيوز</option><option value="breadfast">بريدفاست</option><option value="generic">تطبيق آخر</option></select></label><label>عنوان التوصيل<input id="deliveryAddress"></label><label>رسوم التوصيل (ج.م)<input id="deliveryFee" type="number" min="0" step="0.01" value="0"></label></div><button class="primary-btn" id="createDelivery">حفظ طلب التوصيل</button></section><section class="purchase-panel"><h2>طلبات التوصيل ومتابعة المندوبين</h2><div id="deliveryRows" class="empty-state">جارٍ تحميل الطلبات...</div></section>';
+ try{
+  const [customers,employees,orders]=await Promise.all([api("/api/customers"),api("/api/employees"),api("/api/delivery/orders")]);
+  $("deliveryCustomer").innerHTML='<option value="">اختر العميل</option>'+customers.items.map(c=>'<option value="'+c.id+'">'+escapeHtml(c.name)+' — '+escapeHtml(c.phone||c.code)+'</option>').join("");
+  const courierOptions='<option value="">بدون مندوب</option>'+employees.items.filter(e=>e.employment_status==="active").map(e=>'<option value="'+e.id+'">'+escapeHtml(e.full_name)+'</option>').join("");
+  const statuses=[["pending","جديد"],["assigned","تم التخصيص"],["out_for_delivery","خرج للتوصيل"],["delivered","تم التسليم"],["failed","تعذر التسليم"],["cancelled","ملغي"]];
+  const statusName=s=>statuses.find(x=>x[0]===s)?.[1]||s;
+  const render=()=>{
+   $("deliveryRows").innerHTML=orders.items.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>المرجع</th><th>العميل</th><th>العنوان</th><th>القناة</th><th>الرسوم</th><th>المندوب</th><th>الحالة</th><th>حفظ التحديث</th></tr></thead><tbody>'+orders.items.map(o=>'<tr data-delivery-row="'+o.id+'"><td>'+escapeHtml(o.reference_no)+'</td><td>'+escapeHtml(o.customer_name)+'</td><td>'+escapeHtml(o.address)+'</td><td>'+escapeHtml(o.source_channel||"pos")+'</td><td>'+money(o.delivery_fee)+' ج.م</td><td><select class="delivery-courier">'+courierOptions.replace('value="'+(o.courier_employee_id||"__none__")+'"','value="'+(o.courier_employee_id||"__none__")+'"')+'</select></td><td><select class="delivery-status">'+statuses.map(s=>'<option value="'+s[0]+'" '+(s[0]===o.status?"selected":"")+'>'+s[1]+'</option>').join("")+'</select><small class="muted"> '+escapeHtml(statusName(o.status))+'</small></td><td><button class="small-btn" data-save-delivery="'+o.id+'">تحديث</button></td></tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لا توجد طلبات توصيل حتى الآن.</div>';
+   document.querySelectorAll("[data-save-delivery]").forEach(btn=>btn.onclick=async()=>{
+    const row=btn.closest("tr"),courier=row.querySelector(".delivery-courier").value,status=row.querySelector(".delivery-status").value;
+    try{await api("/api/delivery/orders/"+btn.dataset.saveDelivery+"/status",{method:"PATCH",body:JSON.stringify({status,courier_employee_id:courier||null})});toast("تم تحديث حالة طلب التوصيل");await openDelivery();}catch(e){toast(e.message);}
+   });
+   document.querySelectorAll(".delivery-courier").forEach((s,i)=>{const order=orders.items[i];if(order?.courier_employee_id)s.value=order.courier_employee_id;else s.value="";});
+  };
+  render();
+  $("createDelivery").onclick=async()=>{
+   const customer_id=$("deliveryCustomer").value,address=$("deliveryAddress").value.trim(),reference_no=$("deliveryRef").value.trim(),delivery_fee=Number($("deliveryFee").value),source_channel=$("deliverySource").value;
+   if(!customer_id||!address||!reference_no||!Number.isFinite(delivery_fee)||delivery_fee<0)return toast("أكمل العميل والعنوان والرقم المرجعي ورسوم التوصيل");
+   try{await api("/api/delivery/orders",{method:"POST",body:JSON.stringify({reference_no,customer_id,address,delivery_fee,source_channel})});toast("تم إنشاء طلب التوصيل");await openDelivery();}catch(e){toast(e.message);}
+  };
+ }catch(e){hostError(root,e.message);}
+}
+async function openOrderChannels(){
+ const root=$("moduleView");
+ const providers=[["talabat","طلبات"],["elmenus","المنيوز"],["breadfast","بريدفاست"],["mrsool","مرسول"],["generic","تطبيق طلبات آخر"]];
+ root.innerHTML='<h1 class="module-title">ربط تطبيقات الطلبات الخارجية</h1><p class="muted">إعداد قناة لاستقبال الطلبات وربطها بالمخزون ونقطة البيع. حالة «يتطلب موصل API» تعني أن بيانات القناة محفوظة، لكن التبادل الفعلي لم يبدأ بعد.</p><section class="purchase-panel"><h2>إضافة / إعداد قناة طلبات</h2><div class="form-grid"><label>المنصة<select id="channelProvider">'+providers.map(p=>'<option value="'+p[0]+'">'+p[1]+'</option>').join("")+'</select></label><label>اسم العرض<input id="channelName" placeholder="مثال: طلبات - فرع الرئيسي"></label><label>كود المتجر لدى المنصة<input id="channelStore" placeholder="Store ID"></label><label>رابط API الرسمي (HTTPS)<input id="channelUrl" placeholder="https://api.example.com"></label><label>طريقة المزامنة<select id="channelMode"><option value="api">API</option><option value="webhook">Webhook</option><option value="manual">يدوي / استيراد</option></select></label></div><p class="muted">مفاتيح API وكلمات السر لا تُحفظ في هذه الشاشة. يتم إدخالها لاحقًا في إعدادات الخادم الآمنة بعد استلام بيانات الاعتماد الرسمية.</p><button class="primary-btn" id="saveChannel">حفظ إعداد القناة</button></section><section class="purchase-panel"><h2>القنوات المسجلة</h2><div id="channelRows" class="empty-state">جارٍ التحميل...</div></section>';
+ const refresh=async()=>{
+  const data=await api("/api/integrations/order-channels"),items=data.items||[];
+  $("channelRows").innerHTML=items.length?'<div class="table-scroll"><table class="module-table"><thead><tr><th>المنصة</th><th>اسم القناة</th><th>كود المتجر</th><th>المزامنة</th><th>الحالة</th><th>تفعيل إداري</th></tr></thead><tbody>'+items.map(x=>'<tr><td>'+escapeHtml(providers.find(p=>p[0]===x.provider_code)?.[1]||x.provider_code)+'</td><td>'+escapeHtml(x.display_name)+'</td><td>'+escapeHtml(x.store_reference||"—")+'</td><td>'+escapeHtml(x.sync_mode)+'</td><td>'+escapeHtml(x.connection_status)+'</td><td><button class="small-btn" data-toggle-channel="'+x.id+'" data-enabled="'+x.is_enabled+'">'+(x.is_enabled?"إيقاف":"تجهيز")+'</button></td></tr>').join("")+'</tbody></table></div>':'<div class="empty-state">لم تتم إضافة قنوات بعد.</div>';
+  document.querySelectorAll("[data-toggle-channel]").forEach(b=>b.onclick=async()=>{try{await api("/api/integrations/order-channels/"+b.dataset.toggleChannel+"/status",{method:"PATCH",body:JSON.stringify({is_enabled:b.dataset.enabled!=="true"})});await refresh();}catch(e){toast(e.message);}});
+ };
+ $("saveChannel").onclick=async()=>{
+  const provider=$("channelProvider").value,display_name=$("channelName").value.trim()||providers.find(p=>p[0]===provider)[1],store_reference=$("channelStore").value.trim()||null,api_base_url=$("channelUrl").value.trim()||null,sync_mode=$("channelMode").value;
+  if(api_base_url&&!/^https:\/\//i.test(api_base_url))return toast("يجب أن يبدأ رابط API بـ HTTPS");
+  try{await api("/api/integrations/order-channels/"+provider,{method:"PUT",body:JSON.stringify({display_name,store_reference,api_base_url,sync_mode})});toast("تم حفظ إعداد القناة. يلزم تركيب الموصل وبيانات الاعتماد قبل المزامنة.");await refresh();}catch(e){toast(e.message);}
+ };
+ try{await refresh();}catch(e){$("channelRows").textContent=e.message;}
+}
+
 async function openUsers(){
  const root=$("moduleView");
  root.innerHTML='<h1 class="module-title">المستخدمون والصلاحيات</h1><div id="usersContent" class="empty-state">جارٍ تحميل المستخدمين...</div>';
@@ -259,6 +302,8 @@ function openModule(id){
  if(id==="purchasing"){openPurchasing();return;}
  if(id==="customers"||id==="suppliers"){openBusinessMaster(id);return;}
  if(id==="users"){openUsers();return;}
+ if(id==="delivery"){openDelivery();return;}
+ if(id==="orderChannels"){openOrderChannels();return;}
  if(liveModuleConfig[id]){loadOperationalModule(id);return;}
  const d=moduleData[id];$("moduleView").innerHTML='<h1 class="module-title">'+escapeHtml(d[0])+'</h1><div class="empty-state">'+escapeHtml(d[2])+'</div>';
 }
