@@ -35,6 +35,33 @@ router.get("/sales/returns",async(_req,res,next)=>{
   }catch(e){next(e);}
 });
 
+router.get("/sales/:saleId/returnable-lines",async(req,res,next)=>{if(!uuid.test(req.params.saleId))return fail(res,400,"Invalid sale id");try{
+ const sale=await pool.query("SELECT s.id,s.reference_no,s.status,c.name customer_name FROM sales s LEFT JOIN customers c ON c.id=s.customer_id WHERE s.id=$1",[req.params.saleId]);
+ if(!sale.rowCount)return fail(res,404,"Sale not found");
+ const lines=await pool.query(`SELECT sl.id sale_line_id,sl.product_id,p.name_ar product_name,sl.quantity sold_quantity,
+   COALESCE((SELECT SUM(srl.quantity) FROM sale_return_lines srl JOIN sale_returns sr ON sr.id=srl.return_id WHERE srl.sale_line_id=sl.id AND sr.status<>'rejected'),0) returned_quantity,
+   sl.unit_price,sl.line_total,p.tracks_expiry
+   FROM sale_lines sl JOIN products p ON p.id=sl.product_id WHERE sl.sale_id=$1 ORDER BY p.name_ar`,[req.params.saleId]);
+ res.json({sale:sale.rows[0],items:lines.rows.map(x=>({...x,returnable_quantity:Number(x.sold_quantity)-Number(x.returned_quantity)}))});
+}catch(e){next(e);}});
+router.get("/sales/returns/:id/details",async(req,res,next)=>{if(!uuid.test(req.params.id))return fail(res,400,"Invalid return id");try{
+ const header=await pool.query("SELECT sr.*,s.reference_no sale_reference,s.customer_id,c.name customer_name FROM sale_returns sr JOIN sales s ON s.id=sr.sale_id LEFT JOIN customers c ON c.id=s.customer_id WHERE sr.id=$1",[req.params.id]);
+ if(!header.rowCount)return fail(res,404,"Return not found");
+ const lines=await pool.query(`SELECT srl.*,p.name_ar product_name,p.tracks_expiry,sl.quantity sold_quantity
+   FROM sale_return_lines srl JOIN products p ON p.id=srl.product_id JOIN sale_lines sl ON sl.id=srl.sale_line_id
+   WHERE srl.return_id=$1 ORDER BY p.name_ar`,[req.params.id]);
+ res.json({return:header.rows[0],lines:lines.rows});
+}catch(e){next(e);}});
+router.get("/sales/returns/context",async(req,res,next)=>{try{
+ const [warehouses,payments,banks,bankAccounts,cashSession]=await Promise.all([
+  pool.query("SELECT id,code,name FROM warehouses WHERE is_active ORDER BY name"),
+  pool.query("SELECT id,code,name_ar FROM payment_methods WHERE is_active ORDER BY code"),
+  pool.query("SELECT id,code,name_ar,name_en FROM payment_banks WHERE is_active ORDER BY name_ar"),
+  pool.query("SELECT id,code,bank_name,account_name,currency FROM bank_accounts WHERE is_active AND currency='EGP' AND ledger_account_id IS NOT NULL ORDER BY bank_name,account_name"),
+  pool.query("SELECT id,reference_no,cashbox_id FROM cash_sessions WHERE cashier_id=$1 AND status='open' ORDER BY opened_at DESC LIMIT 1",[req.user.id])
+ ]);
+ res.json({warehouses:warehouses.rows,payment_methods:payments.rows,banks:banks.rows,bank_accounts:bankAccounts.rows,cash_session:cashSession.rows[0]||null});
+}catch(e){next(e);}});
 router.post("/sales/:saleId/returns",requirePermission("sales.void.line"),async(req,res,next)=>{
   const {reference_no,reason,lines}=req.body??{};
   const requested_by=req.user.id;
