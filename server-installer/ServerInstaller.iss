@@ -1,6 +1,6 @@
 ; NEW FEED ERP server application installer.
 #define MyAppName "NEW FEED ERP Server"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 [Setup]
 AppId={{D8B87B9A-40E5-4CFB-94B4-7F3D58B4A9F1}
 AppName={#MyAppName}
