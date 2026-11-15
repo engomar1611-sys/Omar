@@ -102,9 +102,8 @@ async function readErpContext(db, request, intent) {
        FROM receipt_allocations a JOIN cash_receipts r ON r.id=a.receipt_id
        WHERE r.status='POSTED' GROUP BY a.sales_invoice_id
      ), returned AS (
-       SELECT sr.sales_invoice_id,SUM(rl.quantity*rl.unit_price)::numeric returned_amount
-       FROM sales_returns sr JOIN sales_return_lines rl ON rl.sales_return_id=sr.id
-       WHERE sr.status='APPROVED' GROUP BY sr.sales_invoice_id
+       SELECT sr.sales_invoice_id,SUM(COALESCE(sr.net_amount,sr.gross_amount))::numeric returned_amount
+       FROM sales_returns sr WHERE sr.status='APPROVED' GROUP BY sr.sales_invoice_id
      ), balances AS (
        SELECT c.code customer_code,c.name_ar customer_name,
          GREATEST(0::numeric,i.total_amount-COALESCE(p.paid_amount,0)-COALESCE(x.returned_amount,0)) outstanding,
