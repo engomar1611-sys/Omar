@@ -153,7 +153,7 @@ export async function inventoryRoutes(app,{db}){
      const held=await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,
       [h.rows[0].source_warehouse_id,l.item_id,l.lot_no]);
-     const available=s?Number(s.quantity)-Number(held.rows[0].held_qty):0;
+     const available=s&&s.quality_status==='RELEASED'?Number(s.quantity)-Number(held.rows[0].held_qty):0;
      if(!s||available+0.000001<Number(l.quantity))
       throw Object.assign(new Error('الرصيد غير كافٍ لإتمام التحويل'),{code:'P0001'});
      const qty=Number(l.quantity),cost=Number(s.average_unit_cost);
