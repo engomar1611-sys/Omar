@@ -53,6 +53,7 @@ router.post("/units", async (req,res,next) => {
 router.get("/products", async (req,res,next) => {
   const limit = Math.min(Math.max(Number(req.query.limit)||50,1),200);
   const offset = Math.max(Number(req.query.offset)||0,0);
+  const term=String(req.query.q||req.query.search||"").trim().slice(0,120);
   try {
     const { rows } = await pool.query(
       `SELECT p.*, c.name_ar AS category_name, u.code AS base_unit_code,
@@ -68,11 +69,30 @@ router.get("/products", async (req,res,next) => {
          ORDER BY observed_at DESC,created_at DESC LIMIT 1
        ) rp ON TRUE
        WHERE ($1::boolean OR p.is_active)
-       ORDER BY p.name_ar LIMIT $2 OFFSET $3`,
-      [req.query.include_inactive === "true",limit,offset]
+         AND ($2='' OR p.name_ar ILIKE '%'||$2||'%' OR COALESCE(p.name_en,'') ILIKE '%'||$2||'%'
+              OR p.sku ILIKE '%'||$2||'%'
+              OR EXISTS(SELECT 1 FROM product_barcodes pb WHERE pb.product_id=p.id AND pb.barcode ILIKE '%'||$2||'%'))
+       ORDER BY p.name_ar LIMIT $3 OFFSET $4`,
+      [req.query.include_inactive === "true",term,limit,offset]
     );
-    res.json({ items: rows, limit, offset });
+    res.json({ items: rows, limit, offset, search:term });
   } catch(e) { next(e); }
+});
+
+router.patch("/products/:id", async(req,res,next) => {
+  if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid product id"});
+  const {sku,name_ar,name_en=null,category_id=null,brand_id=null,base_unit_id,is_weighted,tracks_expiry,pack_size=null,pack_unit_id=null,variant_description=null,is_active=true}=req.body??{};
+  if(!text(name_ar,240)||!uuid.test(base_unit_id||"")||(category_id&&!uuid.test(category_id))||(brand_id&&!uuid.test(brand_id))||(pack_unit_id&&!uuid.test(pack_unit_id))||(pack_size!==null&&!positive(pack_size))||typeof is_weighted!=="boolean"||typeof tracks_expiry!=="boolean"||typeof is_active!=="boolean"||(sku!==undefined&&!text(sku,80)))
+    return res.status(400).json({error:"Invalid product fields"});
+  try{
+    const r=await pool.query(
+      `UPDATE products SET sku=COALESCE($2,sku),name_ar=$3,name_en=$4,category_id=$5,brand_id=$6,base_unit_id=$7,
+       is_weighted=$8,tracks_expiry=$9,pack_size=$10,pack_unit_id=$11,variant_description=$12,is_active=$13
+       WHERE id=$1 RETURNING *`,
+      [req.params.id,sku?.trim()||null,name_ar.trim(),name_en,category_id,brand_id,base_unit_id,is_weighted,tracks_expiry,pack_size,pack_unit_id,variant_description,is_active]);
+    if(!r.rowCount)return res.status(404).json({error:"Product not found"});
+    res.json(r.rows[0]);
+  }catch(e){next(e);}
 });
 
 router.post("/products", async (req,res,next) => {
@@ -175,6 +195,30 @@ router.post("/customers", async (req,res,next) => {
   } catch(e) { next(e); }
 });
 
+router.get("/suppliers/:id/products",async(req,res,next)=>{
+  if(!uuid.test(req.params.id))return res.status(400).json({error:"Invalid supplier id"});
+  try{
+    const {rows}=await pool.query(`SELECT ps.*,p.sku,p.name_ar,p.name_en,u.code base_unit_code
+      FROM product_suppliers ps JOIN products p ON p.id=ps.product_id JOIN units u ON u.id=p.base_unit_id
+      WHERE ps.supplier_id=$1 ORDER BY p.name_ar`,[req.params.id]);
+    res.json({items:rows});
+  }catch(e){next(e);}
+});
+router.post("/suppliers/:id/products",async(req,res,next)=>{
+  const {product_id,supplier_product_code=null,last_purchase_price=null,is_primary=false}=req.body??{};
+  if(!uuid.test(req.params.id)||!uuid.test(product_id||"")||(last_purchase_price!==null&&(!Number.isFinite(Number(last_purchase_price))||Number(last_purchase_price)<0))||typeof is_primary!=="boolean")
+    return res.status(400).json({error:"Invalid supplier product fields"});
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    if(is_primary)await client.query("UPDATE product_suppliers SET is_primary=FALSE WHERE product_id=$1",[product_id]);
+    const r=await client.query(`INSERT INTO product_suppliers(supplier_id,product_id,supplier_product_code,last_purchase_price,is_primary)
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT(supplier_id,product_id) DO UPDATE SET
+      supplier_product_code=EXCLUDED.supplier_product_code,last_purchase_price=EXCLUDED.last_purchase_price,is_primary=EXCLUDED.is_primary
+      RETURNING *`,[req.params.id,product_id,supplier_product_code,last_purchase_price,is_primary]);
+    await client.query("COMMIT");res.status(201).json(r.rows[0]);
+  }catch(e){await client.query("ROLLBACK");next(e);}finally{client.release();}
+});
 router.get("/warehouses", async (_req,res,next) => {
   try {
     const {rows}=await pool.query(
