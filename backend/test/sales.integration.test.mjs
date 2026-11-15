@@ -522,6 +522,60 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.equal(futureInvoiceAfterCurrentExposure.statusCode,409,
       'credit exposure on a future invoice date must include invoices effective by that date');
 
+    const raceCustomer = (await pool.query(
+      'INSERT INTO customers(code,name_ar) VALUES($1,$2) RETURNING id',
+      [code('RACE-CUST'),'عميل اختبار تزامن المرتجعات']
+    )).rows[0];
+    const raceInvoice = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('RACE-INV'),customerId:raceCustomer.id,warehouseId:warehouse.id,
+        lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:10}]}
+    });
+    assert.equal(raceInvoice.statusCode,201,raceInvoice.body);
+    const raceInvoiceLine = (await pool.query(
+      'SELECT id FROM sales_invoice_lines WHERE sales_invoice_id=$1',[raceInvoice.json().id]
+    )).rows[0];
+    const concurrentReturns = await Promise.all([
+      app.inject({method:'POST',url:'/api/v1/sales/returns',headers,payload:{
+        returnNo:code('RACE-RET-A'),invoiceId:raceInvoice.json().id,warehouseId:warehouse.id,
+        lines:[{invoiceLineId:raceInvoiceLine.id,quantity:0.75}]
+      }}),
+      app.inject({method:'POST',url:'/api/v1/sales/returns',headers,payload:{
+        returnNo:code('RACE-RET-B'),invoiceId:raceInvoice.json().id,warehouseId:warehouse.id,
+        lines:[{invoiceLineId:raceInvoiceLine.id,quantity:0.75}]
+      }})
+    ]);
+    assert.deepEqual(concurrentReturns.map(x=>x.statusCode).sort(),[201,409],
+      'concurrent returns must serialize on the invoice and invoice line so aggregate returns cannot exceed sold quantity');
+    const raceReturnedQty = await pool.query(
+      'SELECT COALESCE(SUM(rl.quantity),0)::numeric quantity FROM sales_return_lines rl WHERE rl.invoice_line_id=$1',
+      [raceInvoiceLine.id]
+    );
+    assert.equal(Number(raceReturnedQty.rows[0].quantity),0.75);
+
+    const cancellableInvoice = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices',headers,
+      payload:{invoiceNo:code('CANCEL-INV'),customerId:raceCustomer.id,warehouseId:warehouse.id,
+        lines:[{itemId:item.id,lotNo,quantity:1,unitPrice:10}]}
+    });
+    assert.equal(cancellableInvoice.statusCode,201,cancellableInvoice.body);
+    const cancellableLine = (await pool.query(
+      'SELECT id FROM sales_invoice_lines WHERE sales_invoice_id=$1',[cancellableInvoice.json().id]
+    )).rows[0];
+    const invoiceReversal = await app.inject({
+      method:'POST',url:'/api/v1/sales/invoices/'+cancellableInvoice.json().id+'/reverse',
+      headers,payload:{reason:'اختبار منع المرتجع بعد عكس الفاتورة'}
+    });
+    assert.equal(invoiceReversal.statusCode,200,invoiceReversal.body);
+    const returnOnCancelledInvoice = await app.inject({
+      method:'POST',url:'/api/v1/sales/returns',headers,payload:{
+        returnNo:code('CANCEL-RET'),invoiceId:cancellableInvoice.json().id,warehouseId:warehouse.id,
+        lines:[{invoiceLineId:cancellableLine.id,quantity:0.5}]
+      }
+    });
+    assert.equal(returnOnCancelledInvoice.statusCode,409,
+      'sales returns must not be created against a cancelled/reversed invoice');
+
   } finally {
     await app.close();
     await pool.end();
