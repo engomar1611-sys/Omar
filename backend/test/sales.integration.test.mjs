@@ -250,6 +250,17 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.equal(Number(accountingApproval.json().amount), 24);
     assert.equal(Number(accountingApproval.json().cost), 10);
 
+    const balanceAfterFirstReturn = await app.inject({
+      method: 'GET', url: '/api/v1/inventory/balances?warehouseId=' + warehouse.id, headers
+    });
+    assert.equal(balanceAfterFirstReturn.statusCode, 200, balanceAfterFirstReturn.body);
+    const firstReturnedLot = balanceAfterFirstReturn.json().find(row => row.item_id === item.id && row.lot_no === lotNo);
+    assert.ok(firstReturnedLot);
+    assert.equal(Number(firstReturnedLot.quantity), 12);
+    assert.equal(Number(firstReturnedLot.quality_held_qty), 2);
+    assert.equal(Number(firstReturnedLot.available_quantity), 10,
+      'pending return quantity must not block the original ten released units');
+
     const secondReturn = await app.inject({
       method: 'POST',
       url: '/api/v1/sales/returns',
