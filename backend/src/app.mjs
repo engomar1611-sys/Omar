@@ -9,6 +9,7 @@ import { commercialRoutes } from './commercial.mjs';
 import { formulationRoutes } from './formulations.mjs';
 import { inventoryRoutes } from './inventory.mjs';
 import { procurementRoutes } from './procurement.mjs';
+import { supplierQuotationRoutes } from './supplier-quotations.mjs';
 import { salesDeliveryRoutes } from './sales-deliveries.mjs';
 import { adminRoutes } from './admin.mjs';
 import { hrRoutes, maintenanceRoutes, settingsRoutes } from './hr-maintenance-settings.mjs';
@@ -212,6 +213,7 @@ export function buildApp({ logger = true, db = pool, jwtSecret = process.env.AUT
   app.register(formulationRoutes, { db });
   app.register(inventoryRoutes, { db });
   app.register(procurementRoutes, { db });
+  app.register(supplierQuotationRoutes, { db });
   app.register(salesDeliveryRoutes, { db });
   app.register(adminRoutes, { db });
   app.register(hrRoutes, { db });
