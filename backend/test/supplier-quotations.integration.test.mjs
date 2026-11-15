@@ -48,7 +48,7 @@ test('supplier quotations: complete line coverage, comparison, single award and 
 
     const quoteA = await app.inject({
       method: 'POST', url: '/api/v1/purchase-requests/' + requestId + '/supplier-quotes', headers,
-      payload: { quoteNo: code('QA'), supplierId: supplierA.id, currencyCode: 'EGP', lines: [{ requestLineId: requestLine.id, quantity: 50, unitCost: 12.25 }] }
+      payload: { quoteNo: code('QA'), supplierId: supplierA.id, currencyCode: 'EGP', validUntil: new Date().toISOString().slice(0, 10), lines: [{ requestLineId: requestLine.id, quantity: 50, unitCost: 12.25 }] }
     });
     assert.equal(quoteA.statusCode, 201, quoteA.body);
     const quoteB = await app.inject({
