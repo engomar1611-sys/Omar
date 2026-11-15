@@ -77,6 +77,17 @@ router.post("/sales/:id/void",requirePermission("sales.void.invoice"),async(req,
   await client.query(`INSERT INTO journal_lines(journal_entry_id,account_id,debit,credit)
     SELECT $1,account_id,credit,debit FROM journal_lines WHERE journal_entry_id=$2`,[reversal.rows[0].id,original.rows[0].id]);
   await client.query("UPDATE journal_entries SET status='reversed' WHERE id=$1",[original.rows[0].id]);
+  // Reverse points earned by this invoice. If they have already been spent, block the void
+  // rather than silently allowing a negative loyalty balance or leaving points unbalanced.
+  const earned=await client.query("SELECT customer_id,COALESCE(SUM(points),0)::bigint points FROM customer_loyalty_transactions WHERE source_type='sale' AND source_id=$1 AND transaction_type='earn' GROUP BY customer_id",[req.params.id]);
+  for(const item of earned.rows){
+    const customer=await client.query("SELECT loyalty_points FROM customers WHERE id=$1 FOR UPDATE",[item.customer_id]);
+    if(!customer.rowCount||Number(customer.rows[0].loyalty_points)<Number(item.points))
+      throw Object.assign(new Error("Invoice loyalty points have already been used; reconcile the customer's points before voiding"),{statusCode:409});
+    await client.query("UPDATE customers SET loyalty_points=loyalty_points-$2 WHERE id=$1",[item.customer_id,item.points]);
+    await client.query("INSERT INTO customer_loyalty_transactions(customer_id,reference_no,transaction_type,points,source_type,source_id,notes,created_by) VALUES($1,$2,'redeem',$3,'sale_void',$4,'Reverse points earned by voided sale',$5)",
+      [item.customer_id,"VOID-LOY-"+sale.rows[0].reference_no,item.points,req.params.id,req.user.id]);
+  }
   await client.query("UPDATE sales SET status='voided' WHERE id=$1",[req.params.id]);
   await client.query("UPDATE delivery_orders SET status='cancelled' WHERE sale_id=$1 AND status NOT IN ('delivered','cancelled')",[req.params.id]);
   await client.query("COMMIT");
