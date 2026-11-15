@@ -261,3 +261,14 @@ These capabilities are committed to the main branch. External barcode scanner, r
 - ترحيل الجرد يرفض التنفيذ إذا حدثت حركة مخزنية بعد بدء الجرد، ويطلب بدء جرد جديد لتجنب تسوية فروق غير دقيقة. عند الترحيل تُعدل كميات التشغيلات وتُنشأ حركات adjustment، ويُنشأ قيد محاسبي متوازن لأثر الزيادة أو العجز وفق تكلفة التشغيلات وحسابات تسوية المخزون.
 - مركز التقارير يشمل البيع اليومي وطرق الدفع وأعلى المنتجات مبيعًا، وتحليل مبيعات صنف أو تصنيف خلال فترة، وتقييم المخزون، والمشتريات، والعملاء، والموردين، والقيود، والتوصيل، والمتجر الإلكتروني، والموظفين والأصول.
 - ترحيلات قاعدة البيانات 018 و019 تضيف جلسات الجرد وصلاحيات التقارير وحسابات أرباح وخسائر تسويات المخزون.
+
+
+## POS card payments, bank reporting, and controlled cancellation
+
+- Card tenders record the selected Egyptian bank, terminal transaction reference, last four card digits, and captured terminal amount. Full card numbers and PINs are never collected.
+- The bank directory includes the 36 banks listed by the Central Bank of Egypt for the Instant Payment Network, with additional legacy entries clearly maintained as selectable names. Bank transaction reporting is available to users granted `bank.report`; CSV export follows the `reports.export` permission.
+- Manual invoice discounts require `sales.discount`. Discount controls are hidden for cashiers without that permission, and the API independently enforces it.
+- Completed cash-paid invoices can be voided only by users granted `sales.void.invoice`, with a reason and confirmation that the cash refund was actually paid. The operation restores the original stock lots and posts a reversing journal entry. Card-paid invoices cannot be directly voided; they must follow the payment-terminal refund and controlled returns process.
+- Post-sale item cancellation requests require `sales.void.line` and remain subject to warehouse inspection and financial approval before stock is returned to saleable inventory or a refund is issued.
+
+Bank list reference: Central Bank of Egypt, Instant Payment Network — https://www.cbe.org.eg/en/payment-systems-and-services/instant-payment-network
