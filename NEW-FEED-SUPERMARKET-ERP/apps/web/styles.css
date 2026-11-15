@@ -22,3 +22,12 @@
 .delivery-status,.delivery-courier{max-width:170px;min-width:110px;padding:6px;border:1px solid #cbd8e6;border-radius:6px;background:#fff;font:12px Cairo}.delivery-status{margin-bottom:4px}.delivery-status+small{display:block}.purchase-panel .muted{line-height:1.8}
 
 .delivery-checkout{margin:10px 0;padding:10px;border:1px solid #d5deea;border-radius:10px;background:#f7f9fc}.delivery-checkout-fields{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px}.delivery-checkout-fields label{display:flex;flex-direction:column;gap:4px;font-size:13px}.delivery-checkout-fields input,.delivery-checkout-fields select{width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:white}.delivery-checkout .check-label{display:flex;align-items:center;gap:8px}
+
+.report-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.report-actions button{min-width:145px}
+.report-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
+.report-kpis>div{display:flex;flex-direction:column;gap:6px;padding:14px;border:1px solid #d9e2ec;border-radius:9px;background:#fff}
+.report-kpis small{color:#62748a;font-size:12px}.report-kpis b{font-size:18px;color:#143b63}
+#stocktakeLines input{min-width:105px;max-width:145px;padding:7px;border:1px solid #cbd8e6;border-radius:6px;font:13px Cairo}
+.module-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:12px 0}.module-toolbar input{min-width:180px;max-width:320px;padding:9px;border:1px solid #cbd8e6;border-radius:7px}
+.purchase-panel{margin:14px 0}
+@media(max-width:650px){.report-actions button{flex:1 1 100%}.report-kpis{grid-template-columns:1fr 1fr}.module-toolbar input{max-width:100%;width:100%}}
