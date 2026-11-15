@@ -20,6 +20,7 @@ test('supplier quote accepts exactly one positive quote line for every approved 
 test('supplier quote rejects missing, duplicate, foreign, partial and non-positive lines', () => {
   const base = { quoteNo: 'Q-001', supplierId: 'supplier-1' };
   assert.equal(validateSupplierQuotePayload({ ...base, lines: [{ requestLineId: 'line-1', quantity: 100, unitCost: 12 }] }, requestLines), false);
+  assert.equal(validateSupplierQuotePayload({ ...base, lines: [null, { requestLineId: 'line-2', quantity: 25, unitCost: 8 }] }, requestLines), false);
   assert.equal(validateSupplierQuotePayload({ ...base, lines: [
     { requestLineId: 'line-1', quantity: 100, unitCost: 12 },
     { requestLineId: 'line-1', quantity: 25, unitCost: 8 }
