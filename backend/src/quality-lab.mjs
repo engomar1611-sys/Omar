@@ -183,6 +183,8 @@ export async function qualityLabRoutes(app,{db}){
      if(!p)return {conflict:'PARAMETER_NOT_IN_SPECIFICATION'};
      const value=finiteOrNull(r.numericValue);
      if(Number.isNaN(value))return {conflict:'INVALID_NUMERIC_RESULT'};
+     if((p.minimum_value!=null||p.maximum_value!=null)&&value==null)return {conflict:'NUMERIC_RESULT_REQUIRED'};
+     if(r.textValue!=null&&typeof r.textValue!=='string')return {conflict:'INVALID_TEXT_RESULT'};
      let status='PASS';
      if(value!=null&&((p.minimum_value!=null&&value<Number(p.minimum_value))||(p.maximum_value!=null&&value>Number(p.maximum_value))))status='FAIL';
      await c.query(`
