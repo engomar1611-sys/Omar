@@ -3,7 +3,12 @@ const invalid = (reply, error = 'VALIDATION_ERROR') => reply.code(400).send({ er
 const conflict = (reply, error = 'BUSINESS_RULE') => reply.code(409).send({ error });
 const positive = value => Number.isFinite(Number(value)) && Number(value) > 0;
 const textOk = (value, max = 40) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
-const validDate = value => /^\\d{4}-\\d{2}-\\d{2}$/.test(String(value)) && !Number.isNaN(Date.parse(String(value) + 'T00:00:00Z'));
+const validDate = value => {
+  const text = String(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const date = new Date(text + 'T00:00:00.000Z');
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === text;
+};
 
 async function transaction(db, callback) {
   const client = await db.connect();
@@ -173,7 +178,7 @@ export async function supplierQuotationRoutes(app, { db }) {
 
   app.post('/api/v1/purchase-requests/:id/convert-awarded-quote', auth(app, 'PURCHASE_REQUESTS.CONVERT'), async (request, reply) => {
     const body = request.body ?? {};
-    if (!textOk(body.orderNo) || (body.paymentDueDate && !/^\\d{4}-\\d{2}-\\d{2}$/.test(String(body.paymentDueDate)))) {
+    if (!textOk(body.orderNo) || (body.paymentDueDate && !validDate(body.paymentDueDate))) {
       return invalid(reply);
     }
     try {
