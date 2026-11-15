@@ -297,6 +297,22 @@ test('PostgreSQL sales workflow: discounted invoice, collection allocation, part
     assert.equal(Number(returnedBalance.rows[0].held_qty), 1,
       'passing one return must leave the other return held for inspection');
 
+    const balances = await app.inject({
+      method: 'GET', url: '/api/v1/inventory/balances?warehouseId=' + warehouse.id, headers
+    });
+    assert.equal(balances.statusCode, 200, balances.body);
+    const displayedLot = balances.json().find(row => row.item_id === item.id && row.lot_no === lotNo);
+    assert.ok(displayedLot);
+    assert.equal(Number(displayedLot.available_quantity), 12);
+    assert.equal(Number(displayedLot.quality_held_qty), 1);
+
+    const duplicateInspection = await app.inject({
+      method: 'POST', url: '/api/v1/quality/sales-returns/' + returnId + '/inspect',
+      headers, payload: { result: 'PASS' }
+    });
+    assert.equal(duplicateInspection.statusCode, 409,
+      'a return inspection cannot release or reclassify its quantity twice');
+
     const cannotSellHeldReturn = await app.inject({
       method: 'POST', url: '/api/v1/sales/invoices', headers,
       payload: {
