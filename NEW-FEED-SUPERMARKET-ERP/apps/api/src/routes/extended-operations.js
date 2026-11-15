@@ -1,5 +1,6 @@
 import {Router} from "express";
 import {pool} from "../db.js";
+import {createDatabaseBackup,verifyDatabaseBackup,backupDirectory} from "../services/backups.js";
 import {requirePermission} from "../auth.js";
 const router=Router();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -9,6 +10,9 @@ const date=v=>typeof v==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(v);
 const bad=(res,error)=>res.status(400).json({error});
 const guarded=(permission)=>requirePermission(permission);
 
+router.get("/system/backups",guarded("backup.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT id,file_name,sha256,size_bytes,status,created_at,created_by FROM system_backups ORDER BY created_at DESC LIMIT 100");res.json({items:r.rows,backup_directory:backupDirectory()});}catch(e){next(e);}});
+router.post("/system/backups",guarded("backup.manage"),async(req,res,next)=>{try{const backup=await createDatabaseBackup(req.user.id);res.status(201).json({backup});}catch(e){next(e);}});
+router.post("/system/backups/:id/verify",guarded("backup.manage"),async(req,res,next)=>{if(!uuid.test(req.params.id))return bad(res,"Invalid backup id");try{const r=await pool.query("SELECT file_name,sha256 FROM system_backups WHERE id=$1 AND status='completed'",[req.params.id]);if(!r.rowCount)return res.status(404).json({error:"Completed backup not found"});const result=await verifyDatabaseBackup(r.rows[0].file_name,r.rows[0].sha256);res.json({verified:true,file_name:r.rows[0].file_name,sha256:result.sha256});}catch(e){next(e);}});
 router.get("/accounting/accounts",guarded("accounting.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT * FROM accounts ORDER BY code");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/accounting/accounts",guarded("accounting.manage"),async(req,res,next)=>{const {code,name_ar,name_en=null,account_type}=req.body??{};if(!txt(code,40)||!txt(name_ar,160)||!["asset","liability","equity","revenue","expense"].includes(account_type))return bad(res,"Invalid chart of accounts entry");try{const r=await pool.query("INSERT INTO accounts(code,name_ar,name_en,account_type) VALUES($1,$2,$3,$4) RETURNING *",[code.trim(),name_ar.trim(),name_en,account_type]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
 router.get("/loyalty/settings",guarded("loyalty.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT points_per_egp,egp_per_point,is_active,updated_at FROM loyalty_program_settings WHERE id=1");res.json({settings:r.rows[0]||{points_per_egp:0,egp_per_point:0,is_active:false}});}catch(e){next(e);}});
