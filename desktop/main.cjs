@@ -15,6 +15,26 @@ autoUpdater.on('update-downloaded',async info=>{if(!mainWindow||mainWindow.isDes
 autoUpdater.on('error',error=>{if(mainWindow&&!mainWindow.isDestroyed())dialog.showErrorBox('فشل التحقق من التحديث',error.message||'حدث خطأ غير معروف');});
 function openSetup(){if(setupWindow&&!setupWindow.isDestroyed()){setupWindow.focus();return;}setupWindow=new BrowserWindow({width:620,height:610,resizable:false,title:'تعريف النظام - NEW FEED ERP',webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});setupWindow.on('closed',()=>setupWindow=null);setupWindow.loadFile(path.join(__dirname,'setup.html'));}
 function installMenu(){Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'النظام',submenu:[{label:'تعريف النظام / إعداد السيرفر',click:openSetup},{label:'إعادة تحميل النظام',click:()=>mainWindow?.reload()},{type:'separator'},{role:'quit',label:'خروج'}]},{label:'التحديثات',submenu:[{label:'التحقق من وجود تحديث',click:async()=>{try{await checkForAppUpdates();}catch(error){dialog.showErrorBox('تعذر التحقق من التحديث',error.message);}}}]}]));}
-async function openMain(){const cfg=readConfig();if(!cfg.serverUrl){openSetup();return;}mainWindow=new BrowserWindow({width:1440,height:920,minWidth:1050,minHeight:700,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});mainWindow.webContents.setWindowOpenHandler(({url})=>{if(url.startsWith('https://'))shell.openExternal(url);return {action:'deny'};});mainWindow.webContents.on('will-navigate',(event,url)=>{if(url!==cfg.serverUrl&&!url.startsWith(cfg.serverUrl+'/'))event.preventDefault();});mainWindow.on('closed',()=>mainWindow=null);try{await mainWindow.loadURL(cfg.serverUrl);}catch{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.destroy();mainWindow=null;openSetup();}}
+async function openMain(){const cfg=readConfig();if(!cfg.serverUrl){openSetup();return;}mainWindow=new BrowserWindow({width:1440,height:920,minWidth:1050,minHeight:700,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});mainWindow.webContents.setWindowOpenHandler(({url})=>{if(url.startsWith('https://'))shell.openExternal(url);return {action:'deny'};});mainWindow.webContents.on('will-navigate',(event,url)=>{if(url!==cfg.serverUrl&&!url.startsWith(cfg.serverUrl+'/'))event.preventDefault();});
+mainWindow.webContents.on('did-finish-load',()=>{
+  mainWindow.webContents.executeJavaScript(`(()=>{
+    if(document.getElementById('erpDesktopUpdateButton'))return;
+    const button=document.createElement('button');
+    button.id='erpDesktopUpdateButton';
+    button.type='button';
+    button.textContent='⟳ تحديث النظام';
+    button.title='التحقق من تحديث تطبيق الموظفين';
+    button.style.cssText='position:fixed;z-index:2147483000;top:12px;left:150px;border:0;border-radius:8px;padding:8px 12px;background:#145b78;color:#fff;font:600 13px Segoe UI,Tahoma,sans-serif;cursor:pointer;box-shadow:0 2px 8px #0002';
+    button.addEventListener('click',async()=>{
+      button.disabled=true;button.textContent='جارٍ الفحص...';
+      try{await window.erpDesktop.checkForUpdates();}
+      catch(error){alert(error.message||'تعذر فحص التحديثات');}
+      finally{button.disabled=false;button.textContent='⟳ تحديث النظام';}
+    });
+    document.body.appendChild(button);
+  })()`).catch(()=>{});
+});
+mainWindow.on('closed',()=>mainWindow=null);try{await mainWindow.loadURL(cfg.serverUrl);}catch{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.destroy();mainWindow=null;openSetup();}}
+ipcMain.handle('erp:check-updates',async()=>checkForAppUpdates());
 ipcMain.handle('erp:get-config',()=>readConfig());ipcMain.handle('erp:test-server',(_e,url)=>checkServer(url));ipcMain.handle('erp:save-config',async(_e,url)=>{const result=await checkServer(url);writeConfig(result.serverUrl);if(setupWindow&&!setupWindow.isDestroyed())setupWindow.close();if(mainWindow&&!mainWindow.isDestroyed())await mainWindow.loadURL(result.serverUrl);else await openMain();return result;});
 app.whenReady().then(()=>{installMenu();openMain();app.on('activate',()=>{if(!BrowserWindow.getAllWindows().length)openMain();});});app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit();});
