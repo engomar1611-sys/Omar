@@ -82,7 +82,18 @@ const r=await c.query("UPDATE payroll_runs SET status='paid',payment_method=$2,p
 
 // Cashbox session close records the counted cash and the variance against movements posted to this box.
 router.post("/cashboxes",guarded("cash.manage"),async(req,res,next)=>{const {branch_id,code,name}=req.body??{};if(!uuid.test(branch_id||"")||!txt(code,40)||!txt(name,120))return bad(res,"Invalid cashbox");try{const r=await pool.query("INSERT INTO cashboxes(branch_id,code,name) VALUES($1,$2,$3) RETURNING *",[branch_id,code.trim(),name.trim()]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
-router.post("/cash/transactions",guarded("cash.manage"),async(req,res,next)=>{const {cashbox_id,reference_no,direction,amount:amt,source_type="manual",description=null}=req.body??{};if(!uuid.test(cashbox_id||"")||!txt(reference_no,50)||!["in","out"].includes(direction)||!Number.isFinite(Number(amt))||Number(amt)<=0||!txt(source_type,40))return bad(res,"Invalid cash transaction");try{const r=await pool.query("INSERT INTO cash_transactions(cashbox_id,reference_no,direction,amount,source_type,description,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[cashbox_id,reference_no,direction,amt,source_type,description,req.user.id]);res.status(201).json(r.rows[0]);}catch(e){next(e);}});
+router.post("/cash/transactions",guarded("cash.manage"),async(req,res,next)=>{
+ const {cashbox_id,reference_no,direction,amount:amt,source_type="manual",description=null}=req.body??{};
+ if(!uuid.test(cashbox_id||"")||!txt(reference_no,50)||!["in","out"].includes(direction)||!Number.isFinite(Number(amt))||Number(amt)<=0||!txt(source_type,40))return bad(res,"Invalid cash transaction");
+ const c=await pool.connect();
+ try{
+  await c.query("BEGIN");
+  const session=await c.query("SELECT id FROM cash_sessions WHERE cashbox_id=$1 AND cashier_id=$2 AND status='open' FOR UPDATE",[cashbox_id,req.user.id]);
+  if(!session.rowCount)throw Object.assign(new Error("Open cashier session for this cashbox is required"),{statusCode:409});
+  const r=await c.query("INSERT INTO cash_transactions(cashbox_id,cash_session_id,reference_no,direction,amount,source_type,description,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",[cashbox_id,session.rows[0].id,reference_no,direction,amt,source_type,description,req.user.id]);
+  await c.query("COMMIT");res.status(201).json(r.rows[0]);
+ }catch(e){await c.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{c.release();}
+});
 router.get("/cashboxes",guarded("cash.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT cb.*,b.name branch_name FROM cashboxes cb JOIN branches b ON b.id=cb.branch_id WHERE cb.is_active ORDER BY cb.name");res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/cash/sessions",guarded("cash.manage"),async(_req,res,next)=>{try{const r=await pool.query("SELECT cs.*,cb.code cashbox_code,cb.name cashbox_name,u.display_name cashier_name FROM cash_sessions cs JOIN cashboxes cb ON cb.id=cs.cashbox_id JOIN users u ON u.id=cs.cashier_id ORDER BY cs.opened_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.post("/cash/sessions",guarded("cash.manage"),async(req,res,next)=>{const {reference_no,cashbox_id,opening_float=0}=req.body??{};if(!txt(reference_no,50)||!uuid.test(cashbox_id||"")||!amount(opening_float))return bad(res,"Invalid cash session");try{const r=await pool.query("INSERT INTO cash_sessions(reference_no,cashbox_id,cashier_id,opening_float) VALUES($1,$2,$3,$4) RETURNING *",[reference_no,cashbox_id,req.user.id,opening_float]);res.status(201).json(r.rows[0]);}catch(e){if(e.code==="23505")return res.status(409).json({error:"Cashbox already has an open session or reference is duplicated"});next(e);}});
@@ -96,7 +107,7 @@ router.post("/cash/sessions/:id/close",guarded("cash.manage"),async(req,res,next
   const s=await c.query("SELECT * FROM cash_sessions WHERE id=$1 AND status='open' FOR UPDATE",[req.params.id]);
   if(!s.rowCount)throw Object.assign(new Error("Open cash session not found"),{statusCode:409});
   const movement=await c.query(`SELECT
-   COALESCE((SELECT SUM(CASE WHEN direction='in' THEN amount ELSE -amount END) FROM cash_transactions WHERE cashbox_id=$1 AND created_at >= $2),0)
+   COALESCE((SELECT SUM(CASE WHEN direction='in' THEN amount ELSE -amount END) FROM cash_transactions WHERE cash_session_id=$3),0)
    +COALESCE((SELECT SUM(sp.amount) FROM sale_payments sp JOIN sales sa ON sa.id=sp.sale_id WHERE sp.cash_session_id=$3 AND sa.status='completed'),0) movement`,
    [s.rows[0].cashbox_id,s.rows[0].opened_at,s.rows[0].id]);
   const expected=Number(s.rows[0].opening_float)+Number(movement.rows[0].movement);
