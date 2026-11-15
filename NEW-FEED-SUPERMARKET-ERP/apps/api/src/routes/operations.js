@@ -101,6 +101,19 @@ router.post("/ecommerce/orders",async(req,res,next)=>{const {reference_no,custom
 router.get("/ecommerce/orders",async(_q,res,next)=>{try{const r=await pool.query("SELECT * FROM ecommerce_orders ORDER BY created_at DESC LIMIT 300");res.json({items:r.rows});}catch(e){next(e);}});
 router.get("/ecommerce/orders/:id",async(req,res,next)=>{if(!uuid.test(req.params.id))return fail(res,"Invalid ecommerce order id");try{const order=await pool.query("SELECT * FROM ecommerce_orders WHERE id=$1",[req.params.id]);if(!order.rowCount)return res.status(404).json({error:"Ecommerce order not found"});const lines=await pool.query("SELECT el.*,p.sku,p.name_ar,u.code unit_code FROM ecommerce_order_lines el JOIN products p ON p.id=el.product_id JOIN units u ON u.id=p.base_unit_id WHERE el.order_id=$1 ORDER BY p.name_ar",[req.params.id]);res.json({order:order.rows[0],lines:lines.rows});}catch(e){next(e);}});
 router.patch("/ecommerce/orders/:id/status",async(req,res,next)=>{const {status}=req.body??{};if(!uuid.test(req.params.id)||!["confirmed","preparing","cancelled"].includes(status))return fail(res,"Invalid ecommerce status transition");try{const r=await pool.query("UPDATE ecommerce_orders SET status=$2 WHERE id=$1 AND ((status='new' AND $2 IN ('confirmed','cancelled')) OR (status='confirmed' AND $2 IN ('preparing','cancelled'))) RETURNING *",[req.params.id,status]);if(!r.rowCount)return res.status(409).json({error:"Order not found or transition is not allowed"});res.json(r.rows[0]);}catch(e){next(e);}});
+router.get("/ecommerce/conversion-context",async(req,res,next)=>{
+ try{
+  const [branches,payments,taxCodes,banks,cashSession]=await Promise.all([
+    pool.query("SELECT id,code,name FROM branches WHERE is_active ORDER BY name"),
+    pool.query("SELECT id,code,name_ar FROM payment_methods WHERE is_active ORDER BY code"),
+    pool.query("SELECT id,code,name_ar,rate FROM tax_codes WHERE is_active ORDER BY code"),
+    pool.query("SELECT id,code,name_ar,name_en FROM payment_banks WHERE is_active ORDER BY name_ar"),
+    pool.query("SELECT id,reference_no,cashbox_id,opened_at FROM cash_sessions WHERE cashier_id=$1 AND status='open' ORDER BY opened_at DESC LIMIT 1",[req.user.id])
+  ]);
+  const main=branches.rows.find(x=>x.code==="MAIN")||branches.rows[0]||null;
+  res.json({branches:branches.rows,branch:main,payment_methods:payments.rows,tax_codes:taxCodes.rows,banks:banks.rows,cash_session:cashSession.rows[0]||null});
+ }catch(e){next(e);}
+});
 router.post("/ecommerce/orders/:id/quote",async(req,res,next)=>{
  const {delivery_fee=0,tax_code_id=null}=req.body??{};
  if(!uuid.test(req.params.id)||!Number.isFinite(Number(delivery_fee))||Number(delivery_fee)<0||(tax_code_id&&!uuid.test(tax_code_id)))return fail(res,"Invalid ecommerce quote request");
