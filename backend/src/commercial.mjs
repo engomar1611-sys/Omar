@@ -64,27 +64,42 @@ export async function commercialRoutes(app,{db}){
    GROUP BY i.id,c.code,c.name_ar,p.paid_amount ORDER BY i.invoice_date DESC,i.invoice_no DESC`)).rows;}catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/sales/invoices',auth(app,'SALES.MANAGE'),async(req,rep)=>{
-  const b=req.body??{};if(!txt(b.invoiceNo,40)||!b.customerId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||
-   b.lines.some(l=>!l.itemId||!pos(l.quantity)||!Number.isFinite(Number(l.unitPrice))||Number(l.unitPrice)<0)||(b.dueDate&&!/^\d{4}-\d{2}-\d{2}$/.test(String(b.dueDate))))return bad(rep);
-  const discount=Number(b.discountAmount??0);if(!Number.isFinite(discount)||discount<0)return bad(rep);
+  const b=req.body??{};const orderConversion=typeof b.salesOrderId==='string';
+  if(!txt(b.invoiceNo,40)||(!orderConversion&&(!b.customerId||!b.warehouseId||!Array.isArray(b.lines)||!b.lines.length||b.lines.some(l=>!l||!l.itemId||!pos(l.quantity)||!Number.isFinite(Number(l.unitPrice))||Number(l.unitPrice)<0)))||(b.dueDate&&!/^\d{4}-\d{2}-\d{2}$/.test(String(b.dueDate))))return bad(rep);
+  const requestedDiscount=Number(b.discountAmount??0);if(!Number.isFinite(requestedDiscount)||requestedDiscount<0)return bad(rep);
   try{
    const out=await tx(db,async c=>{
-    const cust=await c.query('SELECT id,credit_limit FROM customers WHERE id=$1 AND is_active=TRUE FOR UPDATE',[b.customerId]);
+    let customerId=b.customerId,warehouseId=b.warehouseId,invoiceDate=b.invoiceDate??null,dueDate=b.dueDate??null,invoiceLines=b.lines??[],invoiceDiscount=requestedDiscount,salesOrder=null;
+    if(orderConversion){
+     const order=await c.query("SELECT * FROM sales_orders WHERE id=$1 AND status='OPEN' FOR UPDATE",[b.salesOrderId]);
+     if(!order.rowCount)throw Object.assign(new Error('أمر البيع غير مفتوح أو غير موجود'),{code:'P0001'});
+     const existingInvoice=await c.query("SELECT id FROM sales_invoices WHERE sales_order_id=$1 AND status<>'CANCELLED'",[b.salesOrderId]);
+     if(existingInvoice.rowCount)throw Object.assign(new Error('تم إصدار فاتورة لهذا الأمر من قبل'),{code:'P0001'});
+     const orderLines=await c.query('SELECT * FROM sales_order_lines WHERE sales_order_id=$1 ORDER BY line_no FOR UPDATE',[b.salesOrderId]);
+     const reservations=await c.query("SELECT r.*,l.unit_price FROM sales_order_reservations r JOIN sales_order_lines l ON l.id=r.sales_order_line_id WHERE r.sales_order_id=$1 AND r.status='RESERVED' ORDER BY l.line_no,r.lot_no FOR UPDATE OF r",[b.salesOrderId]);
+     if(!orderLines.rowCount||!reservations.rowCount)throw Object.assign(new Error('لا توجد حجوزات مخزون صالحة لأمر البيع'),{code:'P0001'});
+     for(const line of orderLines.rows){const qty=reservations.rows.filter(r=>r.sales_order_line_id===line.id).reduce((sum,r)=>sum+Number(r.reserved_qty),0);if(Math.abs(qty-Number(line.ordered_qty))>0.000001||Number(line.invoiced_qty)>0)throw Object.assign(new Error('حجز المخزون لا يطابق كمية أمر البيع'),{code:'P0001'});}
+     salesOrder=order.rows[0];customerId=salesOrder.customer_id;warehouseId=salesOrder.warehouse_id;invoiceDiscount=Number(salesOrder.discount_amount);
+     invoiceLines=reservations.rows.map(r=>({itemId:r.item_id,lotNo:r.lot_no,quantity:r.reserved_qty,unitPrice:r.unit_price,salesOrderLineId:r.sales_order_line_id}));
+    }
+    const cust=await c.query('SELECT id,credit_limit FROM customers WHERE id=$1 AND is_active=TRUE FOR UPDATE',[customerId]);
     if(!cust.rowCount)throw Object.assign(new Error('العميل غير موجود أو غير نشط'),{code:'P0001'});
-    const h=await c.query(`INSERT INTO sales_invoices(invoice_no,customer_id,warehouse_id,invoice_date,due_date,subtotal,discount_amount,total_amount,created_by)
-     VALUES($1,$2,$3,COALESCE($4::date,CURRENT_DATE),$5,$6,$6,0,$7) RETURNING *`,[b.invoiceNo.trim(),b.customerId,b.warehouseId,b.invoiceDate??null,b.dueDate??null,discount,req.authUser.user_id]);
+    const h=await c.query(`INSERT INTO sales_invoices(invoice_no,customer_id,warehouse_id,sales_order_id,invoice_date,due_date,subtotal,discount_amount,total_amount,created_by)
+     VALUES($1,$2,$3,$4,COALESCE($5::date,CURRENT_DATE),$6,$7,$7,0,$8) RETURNING *`,[b.invoiceNo.trim(),customerId,warehouseId,salesOrder?.id??null,invoiceDate,dueDate,invoiceDiscount,req.authUser.user_id]);
     let subtotal=0,costTotal=0;
-    for(let i=0;i<b.lines.length;i++){
-     const l=b.lines[i];let remaining=Number(l.quantity),lineCost=0,weightedQty=0,chosenLot=l.lotNo??'';
+    for(let i=0;i<invoiceLines.length;i++){
+     const l=invoiceLines[i];let remaining=Number(l.quantity),lineCost=0,weightedQty=0,chosenLot=l.lotNo??'';
      const lots=await c.query(`SELECT b.lot_no,b.quantity,b.average_unit_cost
       FROM inventory_balances b
       WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.quantity>0 AND b.quality_status='RELEASED'
         AND ($3='' OR b.lot_no=$3)
-      ORDER BY b.expiry_date ASC NULLS LAST,b.lot_no FOR UPDATE OF b`,[b.warehouseId,l.itemId,chosenLot]);
+      ORDER BY b.expiry_date ASC NULLS LAST,b.lot_no FOR UPDATE OF b`,[warehouseId,l.itemId,chosenLot]);
      const held=await c.query(`SELECT lot_no,COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
-       WHERE warehouse_id=$1 AND item_id=$2 AND status IN ('PENDING_QC','QUARANTINED') GROUP BY lot_no`,[b.warehouseId,l.itemId]);
+       WHERE warehouse_id=$1 AND item_id=$2 AND status IN ('PENDING_QC','QUARANTINED') GROUP BY lot_no`,[warehouseId,l.itemId]);
+     const reserved=await c.query(`SELECT lot_no,COALESCE(SUM(reserved_qty),0) reserved_qty FROM sales_order_reservations WHERE warehouse_id=$1 AND item_id=$2 AND status='RESERVED' AND ($3::uuid IS NULL OR sales_order_id<>$3) GROUP BY lot_no`,[warehouseId,l.itemId,salesOrder?.id??null]);
      const heldByLot=new Map(held.rows.map(x=>[x.lot_no,Number(x.held_qty)]));
-     for(const lot of lots.rows)lot.quantity=Math.max(0,Number(lot.quantity)-(heldByLot.get(lot.lot_no)??0));
+     const reservedByLot=new Map(reserved.rows.map(x=>[x.lot_no,Number(x.reserved_qty)]));
+     for(const lot of lots.rows)lot.quantity=Math.max(0,Number(lot.quantity)-(heldByLot.get(lot.lot_no)??0)-(reservedByLot.get(lot.lot_no)??0));
      const avail=lots.rows.reduce((s,x)=>s+Number(x.quantity),0);
      if(avail+0.000001<remaining)throw Object.assign(new Error('رصيد غير كافٍ للصنف '+l.itemId),{code:'P0001'});
      const price=Number(l.unitPrice);
@@ -94,20 +109,20 @@ export async function commercialRoutes(app,{db}){
       if(Number(lot.quantity)<=0.000001)continue;
       const q=Math.min(remaining,Number(lot.quantity)),cost=Number(lot.average_unit_cost);
       if(q<=0.000001)continue;
-      await c.query('UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[q,b.warehouseId,l.itemId,lot.lot_no]);
+      await c.query('UPDATE inventory_balances SET quantity=quantity-$1,updated_at=NOW() WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[q,warehouseId,l.itemId,lot.lot_no]);
       await c.query(`INSERT INTO stock_movements(movement_no,warehouse_id,item_id,lot_no,movement_type,quantity_out,unit_cost,reference_type,reference_id,created_by)
        VALUES($1,$2,$3,$4,'ADJUSTMENT_OUT',$5,$6,'SALES_INVOICE',$7,$8)`,
-       [`SI-${h.rows[0].id.slice(0,8)}-${i+1}-${++lineNo}`,b.warehouseId,l.itemId,lot.lot_no,q,cost,h.rows[0].id,req.authUser.user_id]);
+       [`SI-${h.rows[0].id.slice(0,8)}-${i+1}-${++lineNo}`,warehouseId,l.itemId,lot.lot_no,q,cost,h.rows[0].id,req.authUser.user_id]);
       const lineCost=q*cost,lineTotal=q*price;
       subtotal+=lineTotal;costTotal+=lineCost;
-      await c.query(`INSERT INTO sales_invoice_lines(sales_invoice_id,item_id,lot_no,quantity,unit_price,unit_cost,line_total,cost_total)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[h.rows[0].id,l.itemId,lot.lot_no,q,price,cost,lineTotal,lineCost]);
+      await c.query(`INSERT INTO sales_invoice_lines(sales_invoice_id,item_id,lot_no,quantity,unit_price,unit_cost,line_total,cost_total,sales_order_line_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,[h.rows[0].id,l.itemId,lot.lot_no,q,price,cost,lineTotal,lineCost,l.salesOrderLineId??null]);
       remaining-=q;
      }
 
     }
-    if(discount>subtotal)throw Object.assign(new Error('الخصم أكبر من إجمالي الفاتورة'),{code:'P0001'});
-    const total=subtotal-discount;
+    if(invoiceDiscount>subtotal)throw Object.assign(new Error('الخصم أكبر من إجمالي الفاتورة'),{code:'P0001'});
+    const total=subtotal-invoiceDiscount;
     const outstanding=await c.query(`SELECT
       COALESCE(SUM(total_amount),0)
       -COALESCE((SELECT SUM(a.amount) FROM receipt_allocations a
@@ -119,13 +134,18 @@ export async function commercialRoutes(app,{db}){
         WHERE x.customer_id=$1 AND sr.status='APPROVED'
           AND COALESCE(sr.accounting_approved_at::date,sr.created_at::date)<=COALESCE($2::date,CURRENT_DATE)),0) due
       FROM sales_invoices WHERE customer_id=$1 AND status IN ('POSTED','PARTIALLY_PAID','PAID')
-        AND invoice_date<=COALESCE($2::date,CURRENT_DATE)`,[b.customerId,b.invoiceDate??null]);
+        AND invoice_date<=COALESCE($2::date,CURRENT_DATE)`,[customerId,invoiceDate]);
     if(Number(cust.rows[0].credit_limit)>0&&Number(outstanding.rows[0].due)+total>Number(cust.rows[0].credit_limit))throw Object.assign(new Error('تجاوز الحد الائتماني للعميل'),{code:'P0001'});
+    if(salesOrder){
+     await c.query("UPDATE sales_order_reservations SET status='CONSUMED' WHERE sales_order_id=$1 AND status='RESERVED'",[salesOrder.id]);
+     await c.query('UPDATE sales_order_lines SET invoiced_qty=ordered_qty WHERE sales_order_id=$1',[salesOrder.id]);
+     await c.query("UPDATE sales_orders SET status='INVOICED' WHERE id=$1",[salesOrder.id]);
+    }
     await c.query(`UPDATE sales_invoices SET subtotal=$1,total_amount=$2,cost_amount=$3,status='POSTED',posted_at=NOW() WHERE id=$4`,[subtotal,total,costTotal,h.rows[0].id]);
     const ar=await account(c,'1100'),sales=await account(c,'4000'),cogs=await account(c,'5000'),inventory=await account(c,'1200');
     const lines=[];if(total>0)lines.push({account:ar,debit:total});if(total>0)lines.push({account:sales,credit:total});
     if(costTotal>0){lines.push({account:cogs,debit:costTotal});lines.push({account:inventory,credit:costTotal});}
-    if(lines.length)await journal(c,{no:'J-SI-'+b.invoiceNo,date:b.invoiceDate,sourceType:'SALES_INVOICE',sourceId:h.rows[0].id,description:'ترحيل فاتورة مبيعات '+b.invoiceNo,actor:req.authUser.user_id,lines});
+    if(lines.length)await journal(c,{no:'J-SI-'+b.invoiceNo,date:invoiceDate,sourceType:'SALES_INVOICE',sourceId:h.rows[0].id,description:'ترحيل فاتورة مبيعات '+b.invoiceNo,actor:req.authUser.user_id,lines});
     return {id:h.rows[0].id,invoiceNo:b.invoiceNo,subtotal,totalAmount:total,costAmount:costTotal,status:'POSTED'};
    });
    return rep.code(201).send(out);
@@ -327,7 +347,8 @@ export async function commercialRoutes(app,{db}){
        WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 AND b.quality_status='RELEASED' FOR UPDATE OF b`,[b.warehouseId,l.itemId,l.lotNo??'']);
     const held=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[b.warehouseId,l.itemId,l.lotNo??'']):{rows:[{held_qty:0}]};
-    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty):0;
+    const reserved=bal.rowCount?await c.query(`SELECT COALESCE(SUM(reserved_qty),0) reserved_qty FROM sales_order_reservations WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status='RESERVED'`,[b.warehouseId,l.itemId,l.lotNo??'']):{rows:[{reserved_qty:0}]};
+    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty)-Number(reserved.rows[0].reserved_qty):0;
     if(!bal.rowCount||available<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لمرتجع المشتريات'),{code:'P0001'});
     await c.query('INSERT INTO purchase_return_lines(purchase_return_id,item_id,lot_no,quantity,unit_cost) VALUES($1,$2,$3,$4,$5)',[h.rows[0].id,l.itemId,l.lotNo??'',l.quantity,bal.rows[0].average_unit_cost]);
    }
@@ -343,7 +364,8 @@ export async function commercialRoutes(app,{db}){
     const bal=await c.query("SELECT b.quantity,b.average_unit_cost FROM inventory_balances b WHERE b.warehouse_id=$1 AND b.item_id=$2 AND b.lot_no=$3 AND b.quality_status='RELEASED' FOR UPDATE OF b",[h.rows[0].warehouse_id,l.item_id,l.lot_no]);
     const held=bal.rowCount?await c.query(`SELECT COALESCE(SUM(held_qty),0) held_qty FROM inventory_quality_holds
       WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status IN ('PENDING_QC','QUARANTINED')`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{held_qty:0}]};
-    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty):0;
+    const reserved=bal.rowCount?await c.query(`SELECT COALESCE(SUM(reserved_qty),0) reserved_qty FROM sales_order_reservations WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3 AND status='RESERVED'`,[h.rows[0].warehouse_id,l.item_id,l.lot_no]):{rows:[{reserved_qty:0}]};
+    const available=bal.rowCount?Number(bal.rows[0].quantity)-Number(held.rows[0].held_qty)-Number(reserved.rows[0].reserved_qty):0;
     if(!bal.rowCount||available+0.000001<Number(l.quantity))throw Object.assign(new Error('الرصيد المتاح غير كافٍ لاعتماد المرتجع'),{code:'P0001'});
     const cost=Number(bal.rows[0].average_unit_cost);
     await c.query('UPDATE purchase_return_lines SET unit_cost=$1 WHERE id=$2',[cost,l.id]);
@@ -525,6 +547,11 @@ export async function commercialRoutes(app,{db}){
    }
    await reverseJournal(c,{sourceType:'SALES_INVOICE',sourceId:req.params.id,reversalType:'SALES_INVOICE_REVERSAL',reversalNo:'J-RSI-'+req.params.id.slice(0,12),actor:req.authUser.user_id,reason});
    await c.query("UPDATE sales_invoices SET status='CANCELLED' WHERE id=$1",[req.params.id]);
+   if(h.rows[0].sales_order_id){
+    await c.query("UPDATE sales_order_reservations SET status='RESERVED' WHERE sales_order_id=$1 AND status='CONSUMED'",[h.rows[0].sales_order_id]);
+    await c.query('UPDATE sales_order_lines SET invoiced_qty=0 WHERE sales_order_id=$1',[h.rows[0].sales_order_id]);
+    await c.query("UPDATE sales_orders SET status='OPEN' WHERE id=$1",[h.rows[0].sales_order_id]);
+   }
    return {invoiceId:req.params.id,status:'CANCELLED',restoredLines:lines.rowCount};
   });return out;}catch(e){return fail(rep,e);}
  });
