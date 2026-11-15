@@ -65,8 +65,8 @@ function renderCart(){
 }
 async function loadPosData(){
  try{
-  const [context,catalog]=await Promise.all([api("/api/pos/context"),api("/api/products?limit=200")]);
-  posContext=context;posProducts=catalog.items||[];
+  const [context,catalog,customers]=await Promise.all([api("/api/pos/context"),api("/api/products?limit=200"),api("/api/customers")]);
+  posContext=context;posProducts=catalog.items||[];const customerSelect=$("saleDeliveryCustomer");if(customerSelect)customerSelect.innerHTML='<option value="">اختر العميل</option>'+(customers.items||[]).map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.name)+' — '+escapeHtml(x.phone||x.code)+'</option>').join("");
   $("paymentMethod").innerHTML=context.payment_methods.map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name_ar)+'</option>').join("");
   renderCategories();renderProducts();
  }catch(e){$("productGrid").innerHTML='<div class="empty-state">'+escapeHtml(e.message)+'<br>تحقق من تهيئة الفرع والصلاحيات والأسعار.</div>';}
@@ -308,6 +308,7 @@ function openModule(id){
  const d=moduleData[id];$("moduleView").innerHTML='<h1 class="module-title">'+escapeHtml(d[0])+'</h1><div class="empty-state">'+escapeHtml(d[2])+'</div>';
 }
 
+$("saleIsDelivery").addEventListener("change",()=>{$("saleDeliveryFields").classList.toggle("hidden",!$("saleIsDelivery").checked);});
 $("productSearch").addEventListener("input",renderProducts);$("discountInput").addEventListener("input",renderCart);
 $("clearCart").onclick=()=>{cart=[];renderCart();toast("تم إفراغ السلة المحلية")};
 $("discountFocus").onclick=()=>{$("discountInput").focus();$("discountInput").select()};
@@ -325,9 +326,11 @@ $("completeSale").onclick=async()=>{
  if(!payment_method_id)return toast("اختر طريقة الدفع");
  const lines=cart.map(x=>({product_id:x.product_id,unit_id:x.unit_id,quantity:x.qty,unit_price:x.price,discount_amount:Number((x.price*x.qty*pct/100).toFixed(6))}));
  try{
-  const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,cashier_id:posContext.user.id,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],idempotency_key:(crypto.randomUUID?crypto.randomUUID():"NF-"+Date.now()+"-"+Math.random().toString(36).slice(2))})});
-  toast("تم حفظ الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+" ج.م");
-  cart=[];$("discountInput").value="0";renderCart();
+  const deliveryEnabled=$("saleIsDelivery").checked;const delivery=deliveryEnabled?{customer_id:$("saleDeliveryCustomer").value,address:$("saleDeliveryAddress").value.trim(),delivery_fee:Number($("saleDeliveryFee").value||0),source_channel:"pos"}:null;
+ if(deliveryEnabled&&(!delivery.customer_id||!delivery.address||!Number.isFinite(delivery.delivery_fee)||delivery.delivery_fee<0))return toast("أدخل عميل التوصيل والعنوان ورسوم توصيل صحيحة");
+ const result=await api("/api/sales/complete",{method:"POST",body:JSON.stringify({reference_no:"NF-POS-"+Date.now(),branch_id:posContext.branch.id,customer_id:delivery?.customer_id||null,lines,payments:[{payment_method_id,amount:Number(total.toFixed(6))}],delivery,idempotency_key:(crypto.randomUUID?crypto.randomUUID():"NF-"+Date.now()+"-"+Math.random().toString(36).slice(2))})});
+  toast("تم حفظ الفاتورة "+result.sale.reference_no+" بإجمالي "+money(result.sale.grand_total)+(result.delivery?" — طلب توصيل "+result.delivery.reference_no:""));
+  cart=[];$("discountInput").value="0";$("saleIsDelivery").checked=false;$("saleDeliveryFields").classList.add("hidden");$("saleDeliveryCustomer").value="";$("saleDeliveryAddress").value="";$("saleDeliveryFee").value="0";renderCart();
  }catch(e){toast(e.message);}
 };
 function tick(){const d=new Date();$("dateText").textContent=d.toLocaleDateString("ar-EG",{weekday:"long",year:"numeric",month:"long",day:"numeric"});$("timeText").textContent=d.toLocaleTimeString("ar-EG",{hour:"2-digit",minute:"2-digit"});}
