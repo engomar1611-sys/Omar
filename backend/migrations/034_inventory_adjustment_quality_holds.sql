@@ -54,3 +54,10 @@ INSERT INTO role_permissions(role_id,permission_id)
 SELECT r.id,p.id FROM roles r JOIN permissions p ON p.code='QUALITY.INVENTORY_HOLD_INSPECT'
 WHERE r.code='SYSTEM_ADMIN'
 ON CONFLICT(role_id,permission_id) DO NOTHING;
+
+INSERT INTO role_permissions(role_id,permission_id)
+SELECT rp.role_id,inspection.id
+FROM role_permissions rp
+JOIN permissions existing ON existing.id=rp.permission_id AND existing.code='QUALITY.MANAGE'
+JOIN permissions inspection ON inspection.code='QUALITY.INVENTORY_HOLD_INSPECT'
+ON CONFLICT(role_id,permission_id) DO NOTHING;
