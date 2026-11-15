@@ -19,7 +19,7 @@ function dateRange(req,res){
 }
 async function accountBalancesThrough(asOf){
  const result=await pool.query(
-  \`SELECT a.id account_id,a.code,a.name_ar,a.account_type,
+  `SELECT a.id account_id,a.code,a.name_ar,a.account_type,
     COALESCE(SUM(posted.debit),0)::numeric total_debit,
     COALESCE(SUM(posted.credit),0)::numeric total_credit
    FROM accounts a
@@ -31,14 +31,14 @@ async function accountBalancesThrough(asOf){
    ) posted ON posted.account_id=a.id
    WHERE a.is_active=true
    GROUP BY a.id,a.code,a.name_ar,a.account_type
-   ORDER BY a.code\`,
+   ORDER BY a.code`,
   [asOf]
  );
  return result.rows;
 }
 async function accountBalancesForPeriod(from,to){
  const result=await pool.query(
-  \`SELECT a.id account_id,a.code,a.name_ar,a.account_type,
+  `SELECT a.id account_id,a.code,a.name_ar,a.account_type,
     COALESCE(SUM(posted.debit),0)::numeric total_debit,
     COALESCE(SUM(posted.credit),0)::numeric total_credit
    FROM accounts a
@@ -50,7 +50,7 @@ async function accountBalancesForPeriod(from,to){
    ) posted ON posted.account_id=a.id
    WHERE a.is_active=true
    GROUP BY a.id,a.code,a.name_ar,a.account_type
-   ORDER BY a.code\`,
+   ORDER BY a.code`,
   [from,to]
  );
  return result.rows;
