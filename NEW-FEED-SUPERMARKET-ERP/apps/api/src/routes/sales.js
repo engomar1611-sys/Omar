@@ -106,7 +106,7 @@ router.post("/sales/:id/void",requirePermission("sales.void.invoice"),async(req,
  }finally{client.release();}
 });
 
-router.post("/sales/complete",async(req,res,next)=>{
+export async function completeSaleHandler(req,res,next){
  const {reference_no,branch_id,customer_id=null,lines,payments,idempotency_key=null,delivery=null,tax_code_id=null,loyalty_points_to_redeem=0}=req.body??{};
  const cashier_id=req.user.id;
  const deliveryCustomerId=delivery?.customer_id||customer_id;
@@ -251,5 +251,6 @@ router.post("/sales/complete",async(req,res,next)=>{
   await client.query("COMMIT");
   res.status(201).json({sale:done.rows[0],delivery:deliveryOrder,loyalty_earned:loyaltyEarned,loyalty_redeemed:{points:loyaltyPointsRedeemed,discount_amount:Number(loyaltyDiscount.toFixed(6))},discounts:{order_discount_amount:Number(orderDiscount.toFixed(6)),loyalty_discount_amount:Number(loyaltyDiscount.toFixed(6)),delivery_discount_amount:Number(deliveryDiscount.toFixed(6)),delivery_fee_before_discount:deliveryFee,delivery_fee_after_discount:netDeliveryFee},cogs:Number(cogs.toFixed(6)),payment_total:paymentTotal,tax_total:Number(taxTotal.toFixed(6)),tax_code_id,journal_entry_id:journal.rows[0].id});
  }catch(e){await client.query("ROLLBACK");if(e.statusCode)return res.status(e.statusCode).json({error:e.message});next(e);}finally{client.release();}
-});
+}
+router.post("/sales/complete",completeSaleHandler);
 export default router;
