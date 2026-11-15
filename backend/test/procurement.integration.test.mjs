@@ -276,6 +276,27 @@ test('PostgreSQL procurement workflow: request, approval, order, receipt, QC qua
     assert.equal(Number(agingRow.returned_amount), 10);
     assert.equal(Number(agingRow.paid_amount), 10);
     assert.equal(Number(agingRow.outstanding), 20);
+
+    const asOfDate = new Date().toISOString().slice(0, 10);
+    const futureDueDate = new Date(Date.parse(asOfDate + 'T00:00:00.000Z') + 15 * 86400000).toISOString().slice(0, 10);
+    await pool.query('UPDATE purchase_orders SET payment_due_date=$1 WHERE id=$2', [futureDueDate, orderId]);
+    const notYetDue = await app.inject({
+      method: 'GET', url: '/api/v1/reports/supplier-aging?asOf=' + asOfDate, headers
+    });
+    assert.equal(notYetDue.statusCode, 200, notYetDue.body);
+    const notYetDueRow = notYetDue.json().find(x => x.purchase_order_id === orderId);
+    assert.ok(notYetDueRow);
+    assert.equal(Number(notYetDueRow.age_days), -15);
+    assert.equal(notYetDueRow.aging_bucket, 'غير مستحق',
+      'supplier liabilities with a future contractual due date must not be labeled overdue 0-30');
+
+    const dueDateReport = await app.inject({
+      method: 'GET', url: '/api/v1/reports/supplier-aging?asOf=' + futureDueDate, headers
+    });
+    assert.equal(dueDateReport.statusCode, 200, dueDateReport.body);
+    const dueDateRow = dueDateReport.json().find(x => x.purchase_order_id === orderId);
+    assert.equal(Number(dueDateRow.age_days), 0);
+    assert.equal(dueDateRow.aging_bucket, '0-30');
   } finally {
     await app.close();
     await pool.end();

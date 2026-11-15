@@ -681,10 +681,11 @@ export async function commercialRoutes(app,{db}){
    SELECT s.code supplier_code,s.name_ar supplier_name,r.purchase_order_id,r.order_no,r.aging_date,
     r.received_amount,COALESCE(p.paid_amount,0) paid_amount,COALESCE(x.returned_amount,0) returned_amount,
     GREATEST(0::numeric,r.received_amount-COALESCE(p.paid_amount,0)-COALESCE(x.returned_amount,0)) outstanding,
-    GREATEST(0,($1::date-r.aging_date))::int age_days,
-    CASE WHEN GREATEST(0,($1::date-r.aging_date))<=30 THEN '0-30'
-      WHEN GREATEST(0,($1::date-r.aging_date))<=60 THEN '31-60'
-      WHEN GREATEST(0,($1::date-r.aging_date))<=90 THEN '61-90' ELSE 'أكثر من 90' END aging_bucket
+    ($1::date-r.aging_date)::int age_days,
+    CASE WHEN $1::date<r.aging_date THEN 'غير مستحق'
+      WHEN ($1::date-r.aging_date)<=30 THEN '0-30'
+      WHEN ($1::date-r.aging_date)<=60 THEN '31-60'
+      WHEN ($1::date-r.aging_date)<=90 THEN '61-90' ELSE 'أكثر من 90' END aging_bucket
    FROM received r JOIN suppliers s ON s.id=r.supplier_id
    LEFT JOIN paid p ON p.purchase_order_id=r.purchase_order_id LEFT JOIN returned x ON x.purchase_order_id=r.purchase_order_id
    WHERE GREATEST(0::numeric,r.received_amount-COALESCE(p.paid_amount,0)-COALESCE(x.returned_amount,0))>0
