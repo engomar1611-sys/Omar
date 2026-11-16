@@ -500,26 +500,33 @@ export async function commercialRoutes(app,{db}){
   }catch(e){return fail(rep,e);}
  });
  app.post('/api/v1/production/orders/:id/losses',auth(app,'PRODUCTION.LOSSES.MANAGE'),async(req,rep)=>{
-  const b=req.body??{};if(!['PROCESS','MOISTURE','DAMAGE','OTHER'].includes(b.lossType)||!pos(b.quantity)||!txt(b.reason,500)||!Number.isFinite(Number(b.lossCost??0))||Number(b.lossCost??0)<0)return bad(rep);
+  const b=req.body??{};
+  if(!['PROCESS','MOISTURE','DAMAGE','OTHER'].includes(b.lossType)||!pos(b.quantity)||!txt(b.reason,500)||
+     (b.lossCost!==undefined&&(!Number.isFinite(Number(b.lossCost))||Number(b.lossCost)<0)))return bad(rep);
+  if(Number(b.lossCost??0)>0)return bad(rep,'لا تُرحّل تكلفة الفاقد يدوياً؛ تُحتسب قيمة الفاقد من تكلفة التشغيلة عند الاعتماد');
   try{
    const out=await tx(db,async c=>{
-    const p=await c.query("SELECT * FROM production_orders WHERE id=$1 AND status='COMPLETED' FOR UPDATE",[req.params.id]);
-    if(!p.rowCount)throw Object.assign(new Error('أمر التشغيل غير مكتمل'),{code:'P0001'});
-    const loss=await c.query(`INSERT INTO production_losses(production_order_id,loss_type,quantity,reason,approved_by,approved_at,created_by)
-      VALUES($1,$2,$3,$4,$5,NOW(),$5) RETURNING *`,[req.params.id,b.lossType,b.quantity,b.reason,req.authUser.user_id]);
-    if(Number(b.lossCost??0)>0){
-     const output=await c.query('SELECT quantity FROM production_outputs WHERE production_order_id=$1',[req.params.id]);
-     const qty=Number(output.rows[0].quantity),amount=Number(b.lossCost),newTotal=Number(p.rows[0].total_material_cost)+amount;
-     await c.query('INSERT INTO production_cost_components(production_order_id,component_code,description,amount,created_by) VALUES($1,\'WASTE\',$2,$3,$4)',[req.params.id,b.reason,amount,req.authUser.user_id]);
-     await c.query('UPDATE production_orders SET total_material_cost=$1,unit_production_cost=$2 WHERE id=$3',[newTotal,newTotal/qty,req.params.id]);
-     await c.query('UPDATE production_outputs SET total_cost=$1,unit_cost=$2 WHERE production_order_id=$3',[newTotal,newTotal/qty,req.params.id]);
-     await c.query('UPDATE inventory_balances SET average_unit_cost=average_unit_cost+$1 WHERE warehouse_id=$2 AND item_id=$3 AND lot_no=$4',[amount/qty,p.rows[0].warehouse_id,output.rows[0].item_id,(await c.query('SELECT lot_no FROM production_outputs WHERE production_order_id=$1',[req.params.id])).rows[0].lot_no]);
-    }
-    return loss.rows[0];
-   });return rep.code(201).send(out);
+    const h=await c.query(`SELECT p.id,p.status,p.warehouse_id,o.item_id,o.lot_no,o.quantity output_quantity,
+      bal.quantity balance_qty,bal.quality_status
+      FROM production_orders p JOIN production_outputs o ON o.production_order_id=p.id
+      JOIN inventory_balances bal ON bal.warehouse_id=p.warehouse_id AND bal.item_id=o.item_id AND bal.lot_no=o.lot_no
+      WHERE p.id=$1 FOR UPDATE OF p,bal`,[req.params.id]);
+    if(!h.rowCount||h.rows[0].status!=='COMPLETED'||h.rows[0].quality_status!=='RELEASED')
+      throw Object.assign(new Error('يجب أن يكون أمر الإنتاج مكتملاً والمنتج النهائي مجتازاً للجودة'),{code:'P0001'});
+    const held=await c.query(`SELECT COALESCE(SUM(qh.held_qty),0) held_qty FROM inventory_quality_holds qh
+      JOIN production_outputs o ON o.item_id=qh.item_id AND o.lot_no=qh.lot_no
+      WHERE o.production_order_id=$1 AND qh.warehouse_id=$2
+        AND qh.status IN ('PENDING_QC','QUARANTINED')`,[req.params.id,h.rows[0].warehouse_id]);
+    const available=Number(h.rows[0].balance_qty)-Number(held.rows[0].held_qty);
+    if(Number(b.quantity)>available+0.000001)
+      throw Object.assign(new Error('كمية الفاقد تتجاوز الرصيد المتاح بعد استبعاد كميات الجودة المحجوزة'),{code:'P0001'});
+    const loss=await c.query(`INSERT INTO production_losses(production_order_id,loss_type,quantity,reason,created_by)
+      VALUES($1,$2,$3,$4,$5) RETURNING *`,[req.params.id,b.lossType,b.quantity,b.reason.trim(),req.authUser.user_id]);
+    return {...loss.rows[0],status:'PENDING_APPROVAL'};
+   });
+   return rep.code(201).send(out);
   }catch(e){return fail(rep,e);}
  });
-
  app.post('/api/v1/sales/invoices/:id/reverse',auth(app,'SALES.REVERSE'),async(req,rep)=>{
   const reason=req.body?.reason;if(!txt(reason,500))return bad(rep,'سبب العكس مطلوب');
   try{const out=await tx(db,async c=>{

@@ -231,12 +231,41 @@ test('PostgreSQL production workflow: formulation, FEFO, actual costing and fini
     assert.equal(Number(yieldReport.json().totals.approvedProcessLoss),0.5);
     assert.equal(Number(yieldReport.json().totals.approvedProcessLossCost),2.5);
     assert.equal(Number(yieldReport.json().totals.approvedFinishedLoss),1,'post-production approved losses are reported separately');
+    const legacyLossWithManualCost=await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/losses',headers,payload:{
+      lossType:'DAMAGE',quantity:1,reason:'فاقد عبر المسار القديم',lossCost:1
+    }});
+    assert.equal(legacyLossWithManualCost.statusCode,400,'manual loss cost must not bypass inventory costing and GL posting');
+    const legacyLoss=await app.inject({method:'POST',url:'/api/v1/production/orders/'+orderId+'/losses',headers,payload:{
+      lossType:'DAMAGE',quantity:1,reason:'فاقد عبر المسار القديم'
+    }});
+    assert.equal(legacyLoss.statusCode,201,legacyLoss.body);
+    assert.equal(legacyLoss.json().status,'PENDING_APPROVAL');
+    assert.equal(legacyLoss.json().approved_by,null);
+    const legacyLossBeforeApproval=await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',
+      [warehouse.id,finished.id,productionOutputLot]);
+    assert.equal(Number(legacyLossBeforeApproval.rows[0].quantity),9,'legacy loss creation must not mutate inventory');
+    const legacyLossUnpostedJournal=await pool.query("SELECT id FROM journal_entries WHERE source_type='PRODUCTION_LOSS' AND source_id=$1",[legacyLoss.json().id]);
+    assert.equal(legacyLossUnpostedJournal.rowCount,0,'pending legacy loss must not create a journal');
+    const legacyLossApproved=await app.inject({method:'POST',url:'/api/v1/production/losses/'+legacyLoss.json().id+'/approve',headers,payload:{}});
+    assert.equal(legacyLossApproved.statusCode,200,legacyLossApproved.body);
+    assert.equal(legacyLossApproved.json().status,'POSTED');
+    assert.equal(Number(legacyLossApproved.json().totalCost),8.4);
+    const legacyLossAfterApproval=await pool.query('SELECT quantity FROM inventory_balances WHERE warehouse_id=$1 AND item_id=$2 AND lot_no=$3',
+      [warehouse.id,finished.id,productionOutputLot]);
+    assert.equal(Number(legacyLossAfterApproval.rows[0].quantity),8);
+    const legacyLossJournal=await pool.query("SELECT total_debit,total_credit FROM journal_entries WHERE source_type='PRODUCTION_LOSS' AND source_id=$1",[legacyLoss.json().id]);
+    assert.equal(legacyLossJournal.rowCount,1);
+    assert.equal(Number(legacyLossJournal.rows[0].total_debit),8.4);
+    assert.equal(Number(legacyLossJournal.rows[0].total_credit),8.4);
+
     const invalidYieldDates=await app.inject({method:'GET',url:'/api/v1/reports/production-yield?from=2026-12-31&to=2026-01-01',headers});
     assert.equal(invalidYieldDates.statusCode,400);
     const detailsAfterLoss=await app.inject({method:'GET',url:'/api/v1/production/orders/'+orderId+'/details',headers});
     assert.equal(detailsAfterLoss.statusCode,200,detailsAfterLoss.body);
-    assert.equal(detailsAfterLoss.json().losses.length,1);
-    assert.equal(detailsAfterLoss.json().losses[0].entry_no,'J-LOSS-'+productionLoss.json().id.slice(0,12));
+    assert.equal(detailsAfterLoss.json().losses.length,2,'both the modern and legacy loss requests must appear in production order details');
+    const originalLossDetail=detailsAfterLoss.json().losses.find(x=>x.id===productionLoss.json().id);
+    assert.ok(originalLossDetail);
+    assert.equal(originalLossDetail.entry_no,'J-LOSS-'+productionLoss.json().id.slice(0,12));
 
     const secondOrder=await app.inject({method:'POST',url:'/api/v1/production/orders',headers,payload:{orderNo:code('POREV'),feedProductId:product.id,formulationId,warehouseId:warehouse.id,plannedQty:5}});
     assert.equal(secondOrder.statusCode,201,secondOrder.body);
